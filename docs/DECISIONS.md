@@ -304,3 +304,61 @@ check; **it is not called anywhere yet**, because there is no exporter.
 Whoever builds the export flow has to decide: refuse, drop the unrepresentable
 objects, or write scenery to the server's own format instead of `.loc`. The last
 is probably right — it is where the game keeps it.
+
+## 13. Game `x` increases WESTWARD, so every map mirrors it
+
+Walking east in RuneScape Classic *decreases* your x coordinate. Canonical maps
+are therefore drawn with the x axis reversed, and rsc-landscape's own painter
+does it in two places:
+
+```js
+for (let i = maxX; i >= minX; i -= 1) { … x += sectorWidth * TILE_SIZE; }  // sectors
+x = this.imageWidth - x - 2;                                               // objects
+```
+
+Our world map painted `pixelX = gameX` directly and came out **horizontally
+flipped** — the Wilderness on the left instead of the right. Corrected to a
+single uniform mirror across the whole axis:
+
+```
+pixelX = image.width - 1 - gameX * tileSize
+```
+
+`docs/CACHE-ASSET-API.md` holds the full formula; `meta.xAxis` is `"mirrored"`.
+
+### Two different mirrors, and they are not the same mirror
+
+This lives dangerously close to §12, where the conclusion was "there is **no** x
+mirror". Both are true, because they are different spaces:
+
+- **Lane space** (`packages/cache/src/scenery.ts`): the lane column is plainly
+  `x % 48`. rsc-landscape's `tiles[47 - x % 48]` cancels against its own
+  `tiles.reverse()`. No mirror.
+- **Map-image space** (`tools/import-cache/src/world-map.ts`): mirrored, as
+  above.
+
+Anyone reading one and "fixing" the other to match will break the one they did
+not read. Both files carry a comment saying so.
+
+### Why every test passed
+
+This is the important part. **The sector data is internally consistent either
+way.** Every existing map test compared the image to the landscape lanes through
+a shared `pixelOf` helper — mirror the painter and the helper together and all
+of them stay green while the picture is backwards. The lanes carry no absolute
+sense of east and west, so no amount of internal checking can decide the
+question.
+
+It needed a judge from outside our own arithmetic. The test now uses one:
+rsc-landscape's `inWilderness(x, y)` box, which states *in image pixels* where
+the Wilderness lands on a correctly oriented map. In that box our plane 0 is
+99.6% opaque and 95.2% brown; reflected across x it is 4.5% opaque and 1.2%
+brown — open sea. A flip swaps those exactly. A second test lands 108 of 110 of
+upstream's place labels on drawn ground, versus 83 when reflected.
+
+The teeth were verified rather than assumed: with the painter reverted, both
+tests fail.
+
+**The bug was found by a human looking at the picture and recognising the
+world.** No test we owned could have caught it, and that is worth remembering
+next time something is "proven correct" against only its own inputs.

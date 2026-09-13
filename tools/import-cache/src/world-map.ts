@@ -48,6 +48,35 @@ import { encodePng } from './png.js';
  * one pixel; that is what makes a town read as a town at this scale instead of
  * as a slightly browner field.
  *
+ * ## The x axis is MIRRORED
+ *
+ * In RuneScape Classic game `x` increases **westward**: walking east decreases
+ * it. A map drawn with `pixelX = gameX` is therefore the world seen from
+ * underneath -- the Wilderness lands on the left instead of the right. This code
+ * shipped that way once, and nothing in the sector data could catch it, because
+ * the data is internally consistent under either orientation. Only a reference
+ * render or a human looking at the picture can tell.
+ *
+ * rsc-landscape's own painter mirrors in two places (`map-painter.js`: it walks
+ * sectors from `maxX` down to `minX`, and then does
+ * `x = this.imageWidth - x - 2` for objects). We do it once, uniformly, across
+ * the whole axis:
+ *
+ *   gameX  = (sx - originSector.x) * 48 + tileX
+ *   pixelX = image.width - 1 - gameX * tileSize
+ *   pixelY = ((sy - originSector.y) * 48 + tileY) * tileSize
+ *
+ * A *per-sector* flip -- mirroring the sector grid but not the tiles inside it,
+ * or the reverse -- produces an image that is right at 48-tile granularity and
+ * shredded within each sector, which reads as "the map looks a bit odd" rather
+ * than as an obvious flip. One mirror, applied to the combined coordinate.
+ *
+ * y is unchanged: it increases downward, southward, as usual.
+ *
+ * Every overlay the client draws on top of this image has to use the same
+ * formula (docs/CACHE-ASSET-API.md), so `meta` carries `"xAxis": "mirrored"`
+ * rather than leaving the convention implicit.
+ *
  * ## Planes 1-3
  *
  * Upper storeys have no ground of their own -- `buildTerrain` sets plane 1 and
@@ -67,6 +96,12 @@ export interface WorldMapMetaJson {
   /** pixels per tile */
   tileSize: number;
   image: { width: number; height: number };
+  /**
+   * Always `"mirrored"`. Game x increases westward, so pixelX counts down from
+   * the right edge: `pixelX = image.width - 1 - gameX * tileSize`. Declared in
+   * the payload so an overlay cannot assume the naive mapping and still parse.
+   */
+  xAxis: 'mirrored';
 }
 
 export interface BuiltWorldMapPlane {
@@ -162,7 +197,10 @@ function drawPlane(
     }
     sectorsDrawn++;
 
-    const originX = sectorX * SECTOR_WIDTH * MAP_TILE_SIZE;
+    // Game-coordinate origin of this sector, NOT a pixel origin: x is mirrored
+    // below, after the tile offset has been added, so that the sector grid and
+    // the tiles within it are flipped by one and the same operation.
+    const gameOriginX = sectorX * SECTOR_WIDTH;
     const originY = sectorY * SECTOR_HEIGHT * MAP_TILE_SIZE;
     const buffers = sector.buffers;
 
@@ -202,10 +240,14 @@ function drawPlane(
 
         if (!colour) continue;
 
-        const at =
-          ((originX + tileX * MAP_TILE_SIZE) +
-            (originY + tileY * MAP_TILE_SIZE) * width) *
-          4;
+        // `width - 1 - gameX * tileSize` is the RIGHTMOST pixel of the tile
+        // once mirrored, so a tile wider than one pixel is filled leftwards
+        // from there. At tileSize 1 the two are the same pixel.
+        const gameX = gameOriginX + tileX;
+        const right = width - 1 - gameX * MAP_TILE_SIZE;
+        const left = right - (MAP_TILE_SIZE - 1);
+
+        const at = (left + (originY + tileY * MAP_TILE_SIZE) * width) * 4;
         for (let py = 0; py < MAP_TILE_SIZE; py++) {
           for (let px = 0; px < MAP_TILE_SIZE; px++) {
             const pixel = at + (px + py * width) * 4;
@@ -227,7 +269,8 @@ function drawPlane(
     originSector: { x: ORIGIN_SECTOR.x, y: ORIGIN_SECTOR.y },
     sectors: { width: SECTORS_WIDE, height: SECTORS_HIGH },
     tileSize: MAP_TILE_SIZE,
-    image: { width, height }
+    image: { width, height },
+    xAxis: 'mirrored'
   };
 
   return {

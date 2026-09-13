@@ -12,6 +12,7 @@ import {
 } from '@rsc-editor/cache';
 import {
   OBJECT_OFFSET,
+  SECTOR_HEIGHT,
   SECTOR_WIDTH,
   emptySectorBuffers,
   sectorKey,
@@ -40,6 +41,13 @@ import { TERRAIN_COLOURS as RENDER_TERRAIN_COLOURS } from '../../../packages/ren
  * the wrong colours, flipped in y, or with every sector one place to the left
  * looks entirely plausible and is catastrophic for navigation. So these check
  * named tiles whose content is known from the landscape lanes.
+ *
+ * ...and that is still not enough on its own. This map shipped **horizontally
+ * flipped** with every assertion below passing, because they all compare the
+ * image against the sector data and the sector data is self-consistent under
+ * either orientation: mirror the image and the expectations mirror with it. See
+ * `describe('orientation')`, which brings in a judge from outside our own
+ * arithmetic.
  */
 
 const ROOT = join(__dirname, '../../..');
@@ -112,11 +120,32 @@ function decodePng(png: Uint8Array): {
 
 const PLANE_0 = decodePng(PLANES[0]!.png);
 
-/** The contract's own sector -> pixel formula, restated. */
-function sectorOrigin(sx: number, sy: number): { x: number; y: number } {
+const IMAGE_WIDTH = SECTORS_WIDE * SECTOR_WIDTH * MAP_TILE_SIZE;
+
+/**
+ * The contract's own game -> pixel formula, restated by hand from
+ * docs/CACHE-ASSET-API.md rather than imported from `world-map.ts`, so that a
+ * change to the painter has to be matched here deliberately.
+ *
+ *   gameX  = (sx - originSector.x) * 48 + tileX
+ *   pixelX = image.width - 1 - gameX * tileSize
+ *   pixelY = ((sy - originSector.y) * 48 + tileY) * tileSize
+ *
+ * x is MIRRORED because game x increases westward; y is not. Note there is no
+ * "sector origin" in x any more -- the mirror is applied to the combined
+ * coordinate, so a sector's leftmost pixel belongs to its LAST tile.
+ */
+function pixelOf(
+  sx: number,
+  sy: number,
+  tx: number,
+  ty: number
+): { x: number; y: number } {
+  const gameX = (sx - ORIGIN_SECTOR.x) * SECTOR_WIDTH + tx;
+  const gameY = (sy - ORIGIN_SECTOR.y) * SECTOR_HEIGHT + ty;
   return {
-    x: (sx - ORIGIN_SECTOR.x) * SECTOR_WIDTH * MAP_TILE_SIZE,
-    y: (sy - ORIGIN_SECTOR.y) * SECTOR_WIDTH * MAP_TILE_SIZE
+    x: IMAGE_WIDTH - 1 - gameX * MAP_TILE_SIZE,
+    y: gameY * MAP_TILE_SIZE
   };
 }
 
@@ -148,6 +177,10 @@ describe('world map geometry', () => {
       expect(plane.meta.sectors).toEqual({ width: 17, height: 19 });
       expect(plane.meta.tileSize).toBe(1);
       expect(plane.meta.image).toEqual({ width: 816, height: 912 });
+      // The convention is declared, not implied. Every overlay the client
+      // draws has to mirror x too, and a client that silently assumed the
+      // naive mapping would line up perfectly on a flipped image.
+      expect(plane.meta.xAxis).toBe('mirrored');
     }
     expect(SECTORS_WIDE).toBe(17);
     expect(SECTORS_HIGH).toBe(19);
@@ -170,6 +203,7 @@ describe('world map geometry', () => {
     expect(text.startsWith('{"plane":0,"originSector":{"x":48,"y":37}')).toBe(
       true
     );
+    expect(text.endsWith(',"xAxis":"mirrored"}')).toBe(true);
   });
 
   it('draws every imported sector, and every sector on its own plane', () => {
@@ -200,25 +234,68 @@ describe('the sector -> pixel mapping the contract promises', () => {
       buildWorldMaps([marked], CONFIG, ATLAS.images)[0]!.png
     );
 
-    const origin = sectorOrigin(50, 40);
-    expect(origin).toEqual({ x: 2 * 48, y: 3 * 48 });
+    const at = pixelOf(50, 40, 7, 11);
+    // game x 2*48 + 7 = 103, mirrored to 816 - 1 - 103 = 712; y is untouched.
+    expect(at).toEqual({ x: 712, y: 3 * 48 + 11 });
 
-    // x increases right and y increases down, same as `sectorKey` ordering and
-    // the editor's existing minimap. An image flipped in y is plausible and
-    // catastrophic, so both axes are pinned by asymmetric coordinates (7, 11).
+    // y increases down; x increases LEFT. Asymmetric tile coordinates (7, 11)
+    // so a transposed image cannot pass either.
     const expected = rgb(terrainRgb(0));
-    expect(image.pixel(origin.x + 7, origin.y + 11)).toEqual(expected);
-
-    // ...and NOT at the transpose, which is the mistake this guards against.
-    expect(image.pixel(origin.x + 11, origin.y + 7)).not.toEqual(expected);
+    expect(image.pixel(at.x, at.y)).toEqual(expected);
+    expect(image.pixel(pixelOf(50, 40, 11, 7).x, pixelOf(50, 40, 11, 7).y))
+      .not.toEqual(expected);
   });
 
-  it('places sector (48, 37) at the image origin', () => {
+  it('places sector (48, 37) tile (0, 0) at the TOP RIGHT corner', () => {
+    // Sector 48/37 is the lowest x and lowest y the format uses. Low game x is
+    // the EAST edge of the world, so it is the right-hand edge of the image.
     const marked = probe(ORIGIN_SECTOR.x, ORIGIN_SECTOR.y, 0, 0);
     const image = decodePng(
       buildWorldMaps([marked], CONFIG, ATLAS.images)[0]!.png
     );
-    expect(image.pixel(0, 0)).toEqual(rgb(terrainRgb(0)));
+    expect(pixelOf(ORIGIN_SECTOR.x, ORIGIN_SECTOR.y, 0, 0)).toEqual({
+      x: IMAGE_WIDTH - 1,
+      y: 0
+    });
+    expect(image.pixel(IMAGE_WIDTH - 1, 0)).toEqual(rgb(terrainRgb(0)));
+    // and not the top left, which is where the unmirrored painter put it
+    expect(image.pixel(0, 0).a).toBe(0);
+  });
+
+  it('mirrors the whole axis at once, not each sector separately', () => {
+    // The half-fix worth guarding against: flip the sector grid but keep tiles
+    // running left-to-right inside each sector (or the reverse). Both produce
+    // an image that is correct at 48-tile granularity and shredded within it,
+    // which does not read as a flip -- it reads as "the map looks a bit odd".
+    //
+    // Under one uniform mirror, tile 0 of sector x is immediately to the RIGHT
+    // of tile 47 of sector x-1... in pixels, they are adjacent with no seam:
+    const a = pixelOf(51, 40, 0, 0); // game x 144
+    const b = pixelOf(50, 40, 47, 0); // game x 143, one tile further east
+    expect(b.x - a.x).toBe(1);
+
+    // ...and within one sector, tile 0 is 47 pixels to the right of tile 47.
+    expect(pixelOf(50, 40, 0, 0).x - pixelOf(50, 40, 47, 0).x).toBe(47);
+
+    // Read off the image rather than the formula: one synthetic sector with
+    // its four corners marked, drawn for real.
+    const buffers = emptySectorBuffers();
+    buffers.colour.fill(128);
+    buffers.colour[tileIndex(0, 0)] = 0;
+    const image = decodePng(
+      buildWorldMaps(
+        [{ coord: { plane: 0, x: 50, y: 40 }, members: false, buffers }],
+        CONFIG,
+        ATLAS.images
+      )[0]!.png
+    );
+    const corner = pixelOf(50, 40, 0, 0);
+    expect(image.pixel(corner.x, corner.y)).toEqual(rgb(terrainRgb(0)));
+    // the sector's span is [corner.x - 47, corner.x]; one past it is a
+    // different sector's territory and must be untouched
+    expect(image.pixel(corner.x + 1, corner.y).a).toBe(0);
+    expect(image.pixel(corner.x - 47, corner.y)).toEqual(rgb(terrainRgb(128)));
+    expect(image.pixel(corner.x - 48, corner.y).a).toBe(0);
   });
 });
 
@@ -237,16 +314,13 @@ describe('what a pixel is', () => {
     // is visible here rather than only in a screenshot
     expect(water).toEqual({ r: 95, g: 155, b: 255 });
 
-    const origin = sectorOrigin(59, 45);
     for (const [tx, ty] of [
       [0, 0],
       [24, 24],
       [47, 47]
     ] as const) {
-      expect(
-        PLANE_0.pixel(origin.x + tx, origin.y + ty),
-        `${tx},${ty}`
-      ).toEqual(rgb(water));
+      const at = pixelOf(59, 45, tx, ty);
+      expect(PLANE_0.pixel(at.x, at.y), `${tx},${ty}`).toEqual(rgb(water));
     }
   });
 
@@ -255,13 +329,13 @@ describe('what a pixel is', () => {
     // overlays, would still be a plausible green square -- so the assertion is
     // that the sector contains terrain AND wall pixels, not merely that it
     // varies.
-    const origin = sectorOrigin(50, 47);
     const image = PLANE_0;
 
     const seen = new Map<string, number>();
     for (let ty = 0; ty < SECTOR_WIDTH; ty++) {
       for (let tx = 0; tx < SECTOR_WIDTH; tx++) {
-        const p = image.pixel(origin.x + tx, origin.y + ty);
+        const at = pixelOf(50, 47, tx, ty);
+        const p = image.pixel(at.x, at.y);
         const key = `${p.r},${p.g},${p.b},${p.a}`;
         seen.set(key, (seen.get(key) ?? 0) + 1);
       }
@@ -279,8 +353,8 @@ describe('what a pixel is', () => {
     // Sector 48/37 is not in the cache. Inventing ground for it would put a
     // green square in the middle of the sea.
     expect(LANDSCAPE.has('0/48/37')).toBe(false);
-    const origin = sectorOrigin(48, 37);
-    expect(PLANE_0.pixel(origin.x + 10, origin.y + 10).a).toBe(0);
+    const at = pixelOf(48, 37, 10, 10);
+    expect(PLANE_0.pixel(at.x, at.y).a).toBe(0);
   });
 
   it('draws no invented ground on planes 1 and 2', () => {
@@ -292,12 +366,12 @@ describe('what a pixel is', () => {
 
     const image = decodePng(PLANES[1]!.png);
     const sector = upper[0]!;
-    const origin = sectorOrigin(sector.coord.x, sector.coord.y);
 
     let opaque = 0;
     for (let ty = 0; ty < SECTOR_WIDTH; ty++) {
       for (let tx = 0; tx < SECTOR_WIDTH; tx++) {
-        if (image.pixel(origin.x + tx, origin.y + ty).a > 0) opaque++;
+        const at = pixelOf(sector.coord.x, sector.coord.y, tx, ty);
+        if (image.pixel(at.x, at.y).a > 0) opaque++;
       }
     }
     expect(opaque).toBeLessThan(SECTOR_WIDTH * SECTOR_WIDTH);
@@ -346,7 +420,6 @@ describe('the wallsDiagonal lane', () => {
 
     for (const key of LOC_SECTORS) {
       const sector = sectorAt(key);
-      const origin = sectorOrigin(sector.coord.x, sector.coord.y);
 
       for (let tx = 0; tx < SECTOR_WIDTH; tx++) {
         for (let ty = 0; ty < SECTOR_WIDTH; ty++) {
@@ -354,7 +427,8 @@ describe('the wallsDiagonal lane', () => {
           const d = sector.buffers.wallsDiagonal[index]!;
           if (d === 0) continue;
 
-          const p = image.pixel(origin.x + tx, origin.y + ty);
+          const at = pixelOf(sector.coord.x, sector.coord.y, tx, ty);
+          const p = image.pixel(at.x, at.y);
 
           if (d >= OBJECT_OFFSET) {
             // A scenery tile with no wall on it must be scenery-coloured. One
@@ -399,23 +473,181 @@ describe('the wallsDiagonal lane', () => {
     const image = decodePng(
       buildWorldMaps([sector], CONFIG, ATLAS.images)[0]!.png
     );
-    const origin = sectorOrigin(50, 40);
+    const px = (tx: number, ty: number) => {
+      const at = pixelOf(50, 40, tx, ty);
+      return image.pixel(at.x, at.y);
+    };
 
-    expect(image.pixel(origin.x + 1, origin.y + 2)).toEqual(rgb(SCENERY_RGB));
-    expect(image.pixel(origin.x + 3, origin.y + 4)).toEqual(rgb(WALL_RGB));
-    expect(image.pixel(origin.x + 5, origin.y + 6)).toEqual(rgb(WALL_RGB));
+    expect(px(1, 2)).toEqual(rgb(SCENERY_RGB));
+    expect(px(3, 4)).toEqual(rgb(WALL_RGB));
+    expect(px(5, 6)).toEqual(rgb(WALL_RGB));
     // untouched neighbours keep their terrain
-    expect(image.pixel(origin.x + 1, origin.y + 3)).toEqual(rgb(terrainRgb(96)));
+    expect(px(1, 3)).toEqual(rgb(terrainRgb(96)));
   });
 });
 
 describe('sector key ordering', () => {
   it('agrees with the pixel layout', () => {
-    // `sectorKey` is plane/x/y and the image is x-right, y-down, so a sector
-    // with a larger x is to the RIGHT of one with a smaller x at the same y.
+    // `sectorKey` is plane/x/y. The image is y-down and x-LEFT: game x grows
+    // westward, so a sector with a larger x is to the LEFT of one with a
+    // smaller x at the same y. This is the line that used to say "RIGHT".
     expect(sectorKey({ plane: 0, x: 50, y: 40 })).toBe('0/50/40');
-    expect(sectorOrigin(51, 40).x).toBeGreaterThan(sectorOrigin(50, 40).x);
-    expect(sectorOrigin(50, 41).y).toBeGreaterThan(sectorOrigin(50, 40).y);
-    expect(sectorOrigin(51, 40).y).toBe(sectorOrigin(50, 40).y);
+    expect(pixelOf(51, 40, 0, 0).x).toBeLessThan(pixelOf(50, 40, 0, 0).x);
+    expect(pixelOf(50, 41, 0, 0).y).toBeGreaterThan(pixelOf(50, 40, 0, 0).y);
+    expect(pixelOf(51, 40, 0, 0).y).toBe(pixelOf(50, 40, 0, 0).y);
+  });
+});
+
+/**
+ * ORIENTATION -- the test that would have caught the horizontal flip.
+ *
+ * ## Why everything above has no teeth here
+ *
+ * Every other assertion in this file compares the produced image against the
+ * landscape lanes via `pixelOf`. The lanes carry no absolute sense of east and
+ * west, so mirroring the painter and mirroring `pixelOf` together keeps all of
+ * them green while the picture the user sees is backwards. That is exactly what
+ * happened: the map shipped flipped with a full suite passing. Size checks
+ * ("816x912 and not uniform") are weaker still -- a mirrored image is the same
+ * size and just as varied.
+ *
+ * So the judge has to come from outside our coordinate arithmetic, and must
+ * itself know which way round the real world is.
+ *
+ * ## The judge
+ *
+ * `@2003scape/rsc-landscape`'s own `map-painter.js`, which draws the canonical
+ * RSC world map, hardcodes:
+ *
+ *     function inWilderness(x, y) {
+ *         return x >= 1440 && x <= 2304 && y >= 286 && y <= 1286;
+ *     }
+ *
+ * Those are IMAGE pixels in the painter's space: 3 px per tile, same origin
+ * sector, same 17x19 grid. It is upstream stating, in image coordinates, where
+ * the Wilderness lands on a correctly oriented map -- and since its painter
+ * mirrors x, that statement is orientation-bearing. Divided by 3 it is our
+ * x 480..768 of 816: right of centre, upper. `tools/reference/map-labels.json`
+ * is the same package's shipped place-name list in the same space and agrees.
+ *
+ * ## What it measures
+ *
+ * Inside that box our plane 0 is 99.6% opaque and 95.2% of those pixels are
+ * brown (r > g > b) -- wilderness dirt, mean rgb(137, 90, 8). In the
+ * horizontally mirrored box it is 4.5% opaque and bluish: open sea off the
+ * north-west coast. A flipped image swaps those two figures exactly, so the
+ * bounds below (0.9 / 0.8 against 0.2 / 0.2) are nowhere near each other and
+ * the test fails in the direction that names the fault.
+ */
+describe('orientation', () => {
+  /** rsc-landscape map-painter.js: TILE_SIZE and the inWilderness bounds. */
+  const PAINTER_TILE_SIZE = 3;
+  const PAINTER_WILDERNESS = { x0: 1440, x1: 2304, y0: 286, y1: 1286 };
+
+  const WILDERNESS = {
+    x0: Math.ceil(PAINTER_WILDERNESS.x0 / PAINTER_TILE_SIZE) * MAP_TILE_SIZE,
+    x1: Math.floor(PAINTER_WILDERNESS.x1 / PAINTER_TILE_SIZE) * MAP_TILE_SIZE,
+    y0: Math.ceil(PAINTER_WILDERNESS.y0 / PAINTER_TILE_SIZE) * MAP_TILE_SIZE,
+    y1: Math.floor(PAINTER_WILDERNESS.y1 / PAINTER_TILE_SIZE) * MAP_TILE_SIZE
+  };
+
+  /** Fraction of the box that is drawn at all, and of that, how much is dirt. */
+  function survey(box: { x0: number; x1: number; y0: number; y1: number }): {
+    opaque: number;
+    brown: number;
+  } {
+    let total = 0;
+    let opaque = 0;
+    let brown = 0;
+    for (let y = box.y0; y <= box.y1; y++) {
+      for (let x = box.x0; x <= box.x1; x++) {
+        total++;
+        const p = PLANE_0.pixel(x, y);
+        if (p.a === 0) continue;
+        opaque++;
+        // The wilderness ramp is dirt: red strongest, blue weakest. Green
+        // grass and blue water both fail it.
+        if (p.r > p.g && p.g > p.b) brown++;
+      }
+    }
+    return { opaque: opaque / total, brown: opaque === 0 ? 0 : brown / opaque };
+  }
+
+  it('puts the Wilderness on the RIGHT, where rsc-landscape puts it', () => {
+    expect(WILDERNESS).toEqual({ x0: 480, x1: 768, y0: 96, y1: 428 });
+
+    const wilderness = survey(WILDERNESS);
+    expect(wilderness.opaque).toBeGreaterThan(0.9); // measured 0.996
+    expect(wilderness.brown).toBeGreaterThan(0.8); // measured 0.952
+
+    // The same box reflected across the x axis is open sea. If the image were
+    // flipped, THIS is where the Wilderness would be, and the two assertions
+    // would trade places.
+    const reflected = survey({
+      x0: PLANE_0.width - 1 - WILDERNESS.x1,
+      x1: PLANE_0.width - 1 - WILDERNESS.x0,
+      y0: WILDERNESS.y0,
+      y1: WILDERNESS.y1
+    });
+    expect(reflected.opaque).toBeLessThan(0.2); // measured 0.045
+    expect(reflected.brown).toBeLessThan(0.2); // measured 0.012
+  });
+
+  it('lands rsc-landscape\'s own place labels on land', () => {
+    // A second, independent witness in the same space: the shipped label list.
+    // A place name is written over the place, so every one of them should fall
+    // on a drawn pixel. 108 of 110 do. Reflect them and only 83 do -- the rest
+    // fall in the sea. The two are far enough apart to be a gate.
+    //
+    // (The 2 that miss are labels for regions whose anchor sits just off the
+    // coast; asserting 110/110 would be asserting a coincidence.)
+    const labels = JSON.parse(
+      readFileSync(join(ROOT, 'tools/reference/map-labels.json'), 'utf8')
+    ) as Array<{ text: string; x: number; y: number }>;
+
+    // painter space is offset by the origin sector and scaled by 3
+    const toOurs = (label: { x: number; y: number }) => ({
+      x: Math.round(
+        (label.x - ORIGIN_SECTOR.x * SECTOR_WIDTH * PAINTER_TILE_SIZE) /
+          PAINTER_TILE_SIZE
+      ),
+      y: Math.round(
+        (label.y - ORIGIN_SECTOR.y * SECTOR_HEIGHT * PAINTER_TILE_SIZE) /
+          PAINTER_TILE_SIZE
+      )
+    });
+
+    let onLand = 0;
+    let reflectedOnLand = 0;
+    for (const label of labels) {
+      const at = toOurs(label);
+      expect(at.x, label.text).toBeGreaterThanOrEqual(0);
+      expect(at.x, label.text).toBeLessThan(PLANE_0.width);
+      if (PLANE_0.pixel(at.x, at.y).a > 0) onLand++;
+      if (PLANE_0.pixel(PLANE_0.width - 1 - at.x, at.y).a > 0) {
+        reflectedOnLand++;
+      }
+    }
+
+    expect(labels.length).toBe(110);
+    expect(onLand).toBeGreaterThanOrEqual(105);
+    expect(reflectedOnLand).toBeLessThan(95);
+
+    // ...and the west-to-east ordering the label list encodes is reproduced:
+    // Falador is west of Varrock is west of Al Kharid, so in a mirrored image
+    // their pixel x increases in that order.
+    const xOf = (text: string) => {
+      const label = labels.find((l) => l.text === text);
+      expect(label, text).toBeDefined();
+      return toOurs(label!).x;
+    };
+    expect(xOf('Falador')).toBeLessThan(xOf('Varrock'));
+    expect(xOf('Varrock')).toBeLessThan(xOf('Al Kharid'));
+    // and those are genuinely our pixels, not just label arithmetic: all three
+    // sit on drawn ground
+    for (const name of ['Falador', 'Varrock', 'Al Kharid']) {
+      const at = toOurs(labels.find((l) => l.text === name)!);
+      expect(PLANE_0.pixel(at.x, at.y).a, name).toBe(255);
+    }
   });
 });

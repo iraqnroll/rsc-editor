@@ -99,6 +99,13 @@ export interface SceneryTile {
  * sector and still look like a plausible town -- it is only when you compare
  * against the two sectors that carry a real `.loc` that it is obviously wrong.
  *
+ * Do not confuse this with the mirror the **world map image** applies. Game x
+ * increases westward, so `tools/import-cache/src/world-map.ts` draws
+ * `pixelX = width - 1 - gameX`. That is a presentation flip applied once, at
+ * the end, to every lane alike. It says nothing about which lane column a
+ * coordinate lives in, which is what this function answers -- and which the
+ * `.loc` oracle settles exactly.
+ *
  * Returns null when the coordinate is outside the sector grid.
  */
 export function tileAtGameCoords(x: number, y: number): SceneryTile | null {

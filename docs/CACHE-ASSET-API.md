@@ -71,18 +71,50 @@ about 17×19 sectors, so each plane is roughly 816×912 px.
 ```jsonc
 {
   "plane": 0,
-  "originSector": { "x": 48, "y": 37 },   // top-left sector the image covers
+  "originSector": { "x": 48, "y": 37 },
   "sectors":      { "width": 17, "height": 19 },
   "tileSize": 1,                           // pixels per tile
-  "image":        { "width": 816, "height": 912 }
+  "image":        { "width": 816, "height": 912 },
+  "xAxis": "mirrored"                      // see below; always "mirrored"
 }
 ```
 
-The client maps a sector to image pixels as
-`((sx - originSector.x) * 48 * tileSize, (sy - originSector.y) * 48 * tileSize)`.
+### The x axis is MIRRORED, and this is not optional
 
-Pixel orientation must match the editor's existing minimap: x increases right,
-y increases down, same as `sectorKey` ordering. Say so in a test.
+**In RuneScape Classic, game `x` increases westward.** Walking east *decreases*
+your x coordinate. Every canonical map of the world is therefore drawn with the
+x axis reversed relative to raw coordinates, and rsc-landscape's own painter
+does exactly that in two places:
+
+```js
+for (let i = maxX; i >= minX; i -= 1) { … x += sectorWidth * TILE_SIZE; }  // sectors
+x = this.imageWidth - x - 2;                                               // objects
+```
+
+Drawing `pixelX = gameX` produces a map that looks plausible and is
+**horizontally flipped** — the Wilderness ends up on the left instead of the
+right. That is exactly what happened, and nothing in the sector data can catch
+it, because the data is internally consistent either way.
+
+So the mapping is:
+
+```
+gameX  = (sx - originSector.x) * 48 + tileX
+pixelX = image.width - 1 - gameX * tileSize
+pixelY = ((sy - originSector.y) * 48 + tileY) * tileSize
+```
+
+One uniform mirror across the whole axis — sectors and tiles alike, not a
+per-sector flip. y is unmirrored: it increases downward, southward, as usual.
+
+**Both the producer and every overlay must use this same formula.** A mirrored
+image with unmirrored grid, lock or cursor overlays is worse than either,
+because the errors are no longer visible as a flip.
+
+To check a change against the reference rather than against memory, render
+rsc-landscape's own map — `scratchpad/spike/canonical-map.js` does it, stubbing
+`drawPoints`/`drawLabels` because the published package ships `res/key/` empty.
+The Wilderness belongs in the **top right**.
 
 ## New: entity sprites
 

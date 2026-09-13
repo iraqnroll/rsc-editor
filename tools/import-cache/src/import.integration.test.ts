@@ -815,13 +815,17 @@ describe.skipIf(!available)('cache import against a real database', () => {
         sectors: { width: number; height: number };
         tileSize: number;
         image: { width: number; height: number };
+        xAxis: string;
       };
       expect(body).toEqual({
         plane,
         originSector: { x: 48, y: 37 },
         sectors: { width: 17, height: 19 },
         tileSize: 1,
-        image: { width: 816, height: 912 }
+        image: { width: 816, height: 912 },
+        // Game x increases westward, so the painter mirrors it and every
+        // overlay has to as well. Served, not implied.
+        xAxis: 'mirrored'
       });
 
       // The image really is the size /meta claims: the client sizes its canvas
@@ -835,19 +839,19 @@ describe.skipIf(!available)('cache import against a real database', () => {
       expect(view.getUint32(16)).toBe(body.image.width);
       expect(view.getUint32(20)).toBe(body.image.height);
 
-      // ...and the contract's own sector -> pixel formula lands inside it.
-      const last = {
-        x:
-          (body.originSector.x + body.sectors.width - 1 - body.originSector.x) *
-          48 *
-          body.tileSize,
-        y:
-          (body.originSector.y + body.sectors.height - 1 - body.originSector.y) *
-          48 *
-          body.tileSize
-      };
-      expect(last.x + 48 * body.tileSize).toBe(body.image.width);
-      expect(last.y + 48 * body.tileSize).toBe(body.image.height);
+      // ...and the contract's own game -> pixel formula spans it exactly, with
+      // x mirrored:
+      //   pixelX = image.width - 1 - gameX * tileSize
+      //   pixelY = gameY * tileSize
+      const maxGameX = body.sectors.width * 48 - 1;
+      const maxGameY = body.sectors.height * 48 - 1;
+      // lowest game x -- the EAST edge of the world -- is the right edge
+      expect(body.image.width - 1 - 0 * body.tileSize).toBe(
+        body.image.width - 1
+      );
+      // highest game x is pixel 0, so the axis is covered with nothing spare
+      expect(body.image.width - 1 - maxGameX * body.tileSize).toBe(0);
+      expect(maxGameY * body.tileSize + body.tileSize).toBe(body.image.height);
 
       const etag = png.headers.etag as string;
       const revalidated = await app.inject({
