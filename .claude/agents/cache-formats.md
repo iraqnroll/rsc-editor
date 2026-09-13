@@ -16,7 +16,7 @@ product here; everything else in the app is downstream of it.
 
 ## Non-negotiables
 
-- **594/594 byte-exact, always.** Every `.hei`/`.dat`/`.loc` in
+- **596/596 byte-exact, always.** Every `.hei`/`.dat`/`.loc` in
   `fixtures/data204` must re-encode to identical bytes. This is CI's hard gate.
   If a change cannot hold it, the change is wrong.
 - **The codec is a verbatim port.** `decodeHei` contains a real asymmetry between

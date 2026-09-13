@@ -34,7 +34,7 @@ import { assertConfigRoundTrip, loadConfig } from './config.js';
  * "cleanup" corrupts real maps in ways no unit test on synthetic data would
  * catch. So the contract is absolute and measured against the real cache: every
  * landscape file in fixtures/data204 must re-encode to the exact same bytes it
- * was decoded from. 594 files, zero tolerance.
+ * was decoded from. 596 entries, zero tolerance.
  */
 
 const FIXTURES = join(__dirname, '../../../fixtures/data204');
@@ -75,6 +75,33 @@ function collect(landFile: string, mapFile: string): Entry[] {
 
 const FREE = collect('land63.jag', 'maps63.jag');
 const MEMBERS = collect('land63.mem', 'maps63.mem');
+
+function tally(entries: Entry[]) {
+  return {
+    hei: entries.filter((e) => e.hei).length,
+    dat: entries.filter((e) => e.dat).length,
+    loc: entries.filter((e) => e.loc).length
+  };
+}
+
+/**
+ * The size of the gate, asserted rather than remembered.
+ *
+ * "594 files" was carried in the docs for a while and was wrong -- the cache
+ * holds 596 landscape entries. Numbers quoted in prose rot; this one now fails
+ * a test if the fixture is ever swapped, which is also exactly what a fixture
+ * swap should do.
+ */
+describe('the fidelity gate covers the whole cache', () => {
+  it('counts every landscape entry in the shipped archives', () => {
+    expect(tally(FREE)).toEqual({ hei: 120, dat: 171, loc: 2 });
+    expect(tally(MEMBERS)).toEqual({ hei: 122, dat: 181, loc: 0 });
+
+    const total = Object.values(tally(FREE)).reduce((a, b) => a + b, 0)
+      + Object.values(tally(MEMBERS)).reduce((a, b) => a + b, 0);
+    expect(total).toBe(596);
+  });
+});
 
 describe.each([
   ['free (.jag)', FREE],
@@ -187,6 +214,69 @@ describe('archive-level import/export', () => {
         Array.from(original.buffers.wallsDiagonal)
       );
     }
+  });
+});
+
+/**
+ * Sector 3/55/55 is the one coordinate in the shipped cache whose data is
+ * split across BOTH archive sets: its `.hei` (terrain) is in `land63.jag` and
+ * its `.dat` (walls) is in `maps63.mem`.
+ *
+ * An earlier version of `loadLandscape` rebuilt the lanes for each archive set
+ * and replaced the map entry, so the members pass threw away the free terrain
+ * and the sector loaded with zero elevation. It is one sector out of 350, and
+ * nothing else in the suite would have noticed.
+ */
+describe('a sector split across the free and members archives', () => {
+  const SPLIT = '3/55/55';
+
+  it('keeps terrain from one archive set and walls from the other', () => {
+    const sectors = loadLandscape({
+      landJag: read('land63.jag'),
+      mapsJag: read('maps63.jag'),
+      landMem: read('land63.mem'),
+      mapsMem: read('maps63.mem')
+    });
+
+    const sector = sectors.get(SPLIT);
+    expect(sector, `${SPLIT} should load`).toBeDefined();
+
+    // terrain, which only the free .hei carries
+    const elevation = sector!.buffers.elevation;
+    expect(
+      elevation.some((v) => v !== 0),
+      'terrain from land63.jag was discarded'
+    ).toBe(true);
+
+    // walls, which only the members .dat carries
+    const walls =
+      sector!.buffers.wallsVertical.some((v) => v !== 0) ||
+      sector!.buffers.wallsHorizontal.some((v) => v !== 0);
+    expect(walls, 'walls from maps63.mem were discarded').toBe(true);
+
+    // any members entry contributing marks the sector members-only
+    expect(sector!.members).toBe(true);
+  });
+
+  it('loads identically whichever order the archives are given in', () => {
+    const both = loadLandscape({
+      landJag: read('land63.jag'),
+      mapsJag: read('maps63.jag'),
+      landMem: read('land63.mem'),
+      mapsMem: read('maps63.mem')
+    }).get(SPLIT);
+
+    // free alone has only the terrain
+    const freeOnly = loadLandscape({
+      landJag: read('land63.jag'),
+      mapsJag: read('maps63.jag')
+    }).get(SPLIT);
+
+    expect(freeOnly).toBeDefined();
+    expect(Buffer.from(freeOnly!.buffers.elevation)).toEqual(
+      Buffer.from(both!.buffers.elevation)
+    );
+    expect(freeOnly!.buffers.wallsVertical.some((v) => v !== 0)).toBe(false);
   });
 });
 

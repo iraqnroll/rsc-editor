@@ -19,7 +19,7 @@ import {
  * one genuine asymmetry, documented at `decodeHei` -- determine whether real
  * map files survive a round trip. "Tidying" any of this silently corrupts maps,
  * so the port is faithful and the test suite proves it byte-for-byte against
- * all 594 landscape files in fixtures/data204.
+ * all 596 landscape files in fixtures/data204.
  *
  * We own this rather than calling rsc-landscape because:
  *   1. rsc-landscape's `toDat()` corrupts object tiles (see `encodeDat`)

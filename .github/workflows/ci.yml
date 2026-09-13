@@ -61,7 +61,7 @@ jobs:
       - name: Typecheck
         run: pnpm -r exec tsc --noEmit
 
-      # The fidelity gate: all 594 landscape files in fixtures/data204 must
+      # The fidelity gate: all 596 landscape files in fixtures/data204 must
       # re-encode byte-identically. Zero tolerance -- a regression here means
       # the editor silently corrupts people's maps on export.
       - name: Test

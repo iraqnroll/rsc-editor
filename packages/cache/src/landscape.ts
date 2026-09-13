@@ -53,8 +53,16 @@ function readEntry(archive: JagArchive | null, name: string): Uint8Array | null 
  * Decode every populated sector out of the land/maps archives.
  *
  * Free-world (.jag) and members (.mem) archives are loaded together, matching
- * the client: a sector present in both is taken from the members set, which is
- * the superset.
+ * the client: the two sets are applied to ONE set of lanes per coordinate, in
+ * free-then-members order, so a later entry overrides an earlier one.
+ *
+ * Applying them to one sector rather than building a sector per archive set is
+ * not a detail. Sector 3/55/55 in the shipped cache keeps its `.hei` in
+ * `land63.jag` (free) and its `.dat` in `maps63.mem` (members) -- the terrain
+ * and the walls of a single sector live in different archive sets. Rebuilding
+ * the lanes for the members pass and replacing the entry, which is what this
+ * function used to do, silently discarded that sector's entire terrain. This
+ * mirrors rsc-landscape's own `parseArchives`, which has always merged.
  */
 export function loadLandscape(archives: LandscapeArchives): Map<string, LoadedSector> {
   const land = openArchive(archives.landJag);
@@ -70,7 +78,11 @@ export function loadLandscape(archives: LandscapeArchives): Map<string, LoadedSe
         const coord: SectorCoord = { plane, x, y };
         const entry = sectorEntryName(coord);
 
-        for (const [landArchive, mapArchive, members] of [
+        const buffers = emptySectorBuffers();
+        let found = false;
+        let members = false;
+
+        for (const [landArchive, mapArchive, isMembers] of [
           [land, maps, false],
           [landMem, mapsMem, true]
         ] as const) {
@@ -80,14 +92,17 @@ export function loadLandscape(archives: LandscapeArchives): Map<string, LoadedSe
 
           if (!hei && !dat && !loc) continue;
 
-          const buffers = emptySectorBuffers();
           if (hei) decodeHei(hei, buffers);
           if (dat) decodeDat(dat, buffers);
           if (loc) decodeLoc(loc, buffers);
 
-          if (isEmptySector(buffers)) continue;
-          sectors.set(sectorKey(coord), { coord, members, buffers });
+          found = true;
+          // A sector is members content if any members entry contributed to it.
+          if (isMembers) members = true;
         }
+
+        if (!found || isEmptySector(buffers)) continue;
+        sectors.set(sectorKey(coord), { coord, members, buffers });
       }
     }
   }

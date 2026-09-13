@@ -38,7 +38,7 @@ makes the test meaningless. Generate altered data inside the test instead.
 **3. The landscape codec is a verbatim port. Keep it that way.** The `.hei` and
 `.dat` encodings contain an asymmetry that looks like a bug and is not. Tidying
 it corrupts real maps. Any change to `packages/cache/src/landscape-codec.ts`
-must keep all 594 files byte-exact.
+must keep all 596 files byte-exact.
 
 **4. `packages/schema` is frozen and single-owner.** Every package depends on it;
 it is the seam that lets work happen in parallel. If you need a change there,
@@ -83,7 +83,7 @@ change there, say so in your report rather than making it.
 ## Status
 
 - Phase 0 (foundations, contracts) — done
-- Phase 1 (cache fidelity gate) — **passed**, 594/594 byte-exact
+- Phase 1 (cache fidelity gate) — **passed**, 596/596 byte-exact
 - Phase 2 — done: models/textures, client-accurate geometry (visually verified),
   db + API + Discord auth (verified against real Postgres), editor shell
 - Phase 3 (editing + realtime: locks, presence, op broadcast) — next

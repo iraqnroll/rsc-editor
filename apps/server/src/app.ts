@@ -18,6 +18,7 @@ import { isHttpError } from './errors.js';
 import { registerDevLogin } from './auth/dev-login.js';
 import { registerDiscordAuth } from './auth/discord.js';
 import { registerSessionAuth } from './auth/session.js';
+import { registerCacheAssetRoutes } from './routes/cache-assets.js';
 import { registerDefinitionRoutes } from './routes/definitions.js';
 import { registerMeRoutes } from './routes/me.js';
 import { registerMemberRoutes } from './routes/members.js';
@@ -86,6 +87,7 @@ export async function buildApp(
   await registerSectorRoutes(app, ctx);
   await registerOpRoutes(app, ctx);
   await registerDefinitionRoutes(app, ctx);
+  await registerCacheAssetRoutes(app, ctx);
 
   app.get('/api/health', async () => ({ ok: true }));
 

@@ -9,7 +9,7 @@ change production code to make a test pass — report it instead.
 
 ## What actually needs proving
 
-**1. Cache fidelity (the hard gate).** All 594 landscape files byte-exact. Plus a
+**1. Cache fidelity (the hard gate).** All 596 landscape files byte-exact. Plus a
 dedicated regression test for the object-id leak (DECISIONS §2) — the
 round-trip test alone would catch a recurrence but would not explain it.
 

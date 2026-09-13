@@ -17,7 +17,7 @@ path, for three reasons:
    Converting between the two on every read would dominate the cost of a read.
 
 `packages/cache/src/landscape-codec.ts` is a deliberate, verbatim port of its
-codec, proven byte-exact against all 594 landscape files in `fixtures/data204`.
+codec, proven byte-exact against all 596 landscape files in `fixtures/data204`.
 
 It stays a *verbatim* port. The encodings contain at least one genuine asymmetry
 (documented at `decodeHei`) that looks like a bug and is not — "fixing" it breaks
@@ -51,7 +51,14 @@ intent survives a refactor.
 ## 3. Byte-exact for landscape, semantic for config
 
 - **Landscape**: every `.hei`/`.dat`/`.loc` must re-encode to identical bytes.
-  594/594. Zero tolerance — this is CI's hard gate.
+  596/596. Zero tolerance — this is CI's hard gate. The count is asserted in
+  `roundtrip.test.ts` (120/171/2 free, 122/181/0 members), not quoted from
+  memory: it was carried as "594" here for a while and was simply wrong.
+
+  Whole-**archive** byte equality is a different and impossible claim: repacking
+  `land63.jag` gives 184,498 bytes against the original 142,383, because bzip2
+  frames the blocks differently. Measured, not assumed. The guarantee is
+  per-entry, which is what the client actually reads.
 - **Config**: `config85.jag` does *not* repack byte-identically (58,819 →
   59,086 bytes) because bzip2 block framing differs. That is cosmetic; the client
   parses the archive, it does not checksum it. The guarantee is **semantic**:
@@ -157,7 +164,32 @@ Alongside the `transparent` colour keyword in §6:
   through whatever is behind it. Exactly six sprites rely on it: `doorway`,
   `crumbled`, `tentbottom`, `tentdoor`, `lowcrumbled`, `flames`.
 
-## 9. Toolchain is user-local and portable
+## 9. One sector lives in BOTH archive sets
+
+Sector `3/55/55` keeps its `.hei` (terrain) in `land63.jag` — the **free**
+archive — and its `.dat` (walls) in `maps63.mem` — the **members** one. A single
+sector's data is split across the two sets.
+
+`loadLandscape` originally built a fresh set of lanes for each archive set and
+replaced the map entry, so the members pass silently discarded that sector's
+entire terrain. It loaded with zero elevation and nothing else in the suite
+noticed: one sector out of 350, and every per-entry round-trip still passed,
+because the *entries* were fine — it was the merge that lost data.
+
+The lanes are now built once per coordinate and both sets are applied to them,
+free then members, which is what rsc-landscape's own `parseArchives` always did.
+A sector is marked `members` if any members entry contributed to it.
+
+Pinned by `roundtrip.test.ts` → "a sector split across the free and members
+archives".
+
+Consequence for export: `exportLandscape` writes each sector to exactly one
+archive pair, so re-exporting `3/55/55` puts its terrain and walls together in
+the members set rather than restoring the original split. Per-entry bytes are
+preserved; the original *distribution across archives* is not. That matters only
+if you diff archives rather than sectors.
+
+## 10. Toolchain is user-local and portable
 
 This machine had no Node, Git or Docker. Rather than machine-wide installers
 needing admin, everything lives under `~\.local` and is on the user PATH:
@@ -170,7 +202,7 @@ Docker Desktop is installed **per-user**, not machine-wide:
 `%LOCALAPPDATA%\Programs\DockerDesktop\resources\bin`. It is on the user PATH,
 but a shell started before the install will not see it.
 
-## 10. Integration tests skip themselves without a database
+## 11. Integration tests skip themselves without a database
 
 `packages/db` and `apps/server` each carry an `integration.test.ts` that talks to
 a real Postgres. They decide at collection time, with a top-level `await` probe,

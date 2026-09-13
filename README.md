@@ -14,7 +14,7 @@ concurrent editing from the ground up.
 | Phase | State |
 |---|---|
 | 0 — Foundations, frozen contracts | done |
-| 1 — Cache fidelity gate | **passed** — 594/594 files byte-exact |
+| 1 — Cache fidelity gate | **passed** — 596/596 files byte-exact |
 | 2 — Cache assets, renderer, API/DB, editor shell | in progress |
 | 3–5 — Editing + realtime, definitions, export | see [`PLAN.md`](PLAN.md) |
 
