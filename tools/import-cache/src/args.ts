@@ -13,6 +13,8 @@ export interface CliOptions {
   projectName: string;
   slug?: string;
   ownerId?: string;
+  /** path to a scenery placement list; absent means no scenery is imported */
+  sceneryPath?: string;
   databaseUrl: string;
   replace: boolean;
   dryRun: boolean;
@@ -32,6 +34,13 @@ Options
   --slug <slug>        override the derived slug
   --owner <uuid>       user id to own the project. Defaults to a
                        "cache-importer" service account, created on demand.
+  --scenery <file>     also place scenery from a placement list
+                       (fixtures/scenery/object-locs.json). OFF by default:
+                       scenery is NOT in the cache -- the server sends it, and
+                       the archives carry .loc for two sectors only. Without
+                       this flag an import is byte-exact against the source
+                       archives; with it, an export gains .loc entries the
+                       original cache did not have.
   --database-url <url> Postgres URL. Defaults to $DATABASE_URL.
   --replace            re-import into the existing project with this slug.
                        Without it, an existing slug is an error. Re-import is
@@ -48,6 +57,7 @@ const NEEDS_VALUE = new Set([
   '--project',
   '--slug',
   '--owner',
+  '--scenery',
   '--database-url'
 ]);
 
@@ -142,6 +152,11 @@ export function parseArgs(
   if (slug) options.slug = slug;
   const ownerId = values.get('--owner');
   if (ownerId) options.ownerId = ownerId;
+  // Absent, not empty: the importer treats "no path" as "import no scenery",
+  // which is the default and the only state in which the byte-exactness
+  // guarantee holds.
+  const sceneryPath = values.get('--scenery');
+  if (sceneryPath) options.sceneryPath = sceneryPath;
 
   return options;
 }

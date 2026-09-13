@@ -1,5 +1,11 @@
 import { JagArchive, hashFilename } from '@2003scape/rsc-archiver';
 import type { TextureDef } from '@rsc-editor/schema';
+import {
+  blitSpriteFrame,
+  parseSpriteGroup,
+  type RgbaImage,
+  type SpriteFrame
+} from './sprites.js';
 
 /**
  * textures17.jag -> raw RGBA, with no canvas anywhere.
@@ -23,27 +29,11 @@ import type { TextureDef } from '@rsc-editor/schema';
  *                 u16 height, u8 indexOrder
  *
  * Every texture sprite in the 204 cache has exactly one frame, so we read one.
+ * The container itself -- header layout, palette, index order, the `clearRect`
+ * meaning of pure green -- is shared with entity24.jag and media58.jag and
+ * lives in `sprites.ts`; this file is the single-frame, texture-shaped view of
+ * it. The two used to be separate decoders that happened to agree.
  */
-
-/** Palette slot 0 is never stored; it is the transparency key. */
-const TRANSPARENT_KEY = 0xff00ff;
-
-/**
- * Pure green does not mean green. rsc-sprites' `plotTexture` calls
- * `clearRect` on it, i.e. it punches a hole through whatever is already there.
- * It appears in exactly six sub-texture palettes in the real cache -- doorway,
- * crumbled, tentbottom, tentdoor, lowcrumbled and flames -- which are precisely
- * the overlays that need to cut an opening in the wall behind them. Same
- * load-bearing "transparent" idea as the tile overlays in DECISIONS §6.
- */
-const CUTOUT_KEY = 0x00ff00;
-
-export interface RgbaImage {
-  width: number;
-  height: number;
-  /** `width * height * 4`, row-major, non-premultiplied. */
-  data: Uint8Array;
-}
 
 /** One decoded `<name>.dat` + its slice of index.dat, before compositing. */
 export interface TextureSprite {
@@ -62,86 +52,36 @@ export interface TextureSprite {
   indices: Uint8Array;
 }
 
-class Cursor {
-  offset = 0;
-  constructor(private readonly data: Uint8Array) {}
-
-  u8(): number {
-    return this.data[this.offset++]! & 0xff;
-  }
-
-  u16(): number {
-    const hi = this.data[this.offset++]! & 0xff;
-    const lo = this.data[this.offset++]! & 0xff;
-    return (hi << 8) | lo;
-  }
-}
-
-/**
- * Decode one sprite.
- *
- * `indexOrder` selects the storage order of the index bytes: 0 is row-major,
- * anything else is column-major. Both appear in textures17.jag (24 of the 51
- * sprites are column-major), so getting this wrong transposes half the atlas
- * rather than failing loudly -- the byte count is identical either way.
- */
+/** A texture entry is a one-frame sprite group, flattened. */
 function parseSprite(
   name: string,
   spriteData: Uint8Array,
   indexData: Uint8Array
 ): TextureSprite {
-  const sprite = new Cursor(spriteData);
-  const index = new Cursor(indexData);
-
-  index.offset = sprite.u16();
-
-  const fullWidth = index.u16();
-  const fullHeight = index.u16();
-
-  const paletteLength = index.u8();
-  if (paletteLength < 1) {
-    throw new RangeError(`texture sprite "${name}" has an empty palette`);
-  }
-
-  const palette = new Int32Array(paletteLength);
-  palette[0] = TRANSPARENT_KEY;
-  for (let i = 1; i < paletteLength; i++) {
-    palette[i] = (index.u8() << 16) | (index.u8() << 8) | index.u8();
-  }
-
-  const offsetX = index.u8();
-  const offsetY = index.u8();
-  const width = index.u16();
-  const height = index.u16();
-  const indexOrder = index.u8();
-
-  const indices = new Uint8Array(width * height);
-  if (indexOrder === 0) {
-    for (let i = 0; i < indices.length; i++) indices[i] = sprite.u8();
-  } else {
-    for (let x = 0; x < width; x++) {
-      for (let y = 0; y < height; y++) {
-        indices[x + y * width] = sprite.u8();
-      }
-    }
-  }
-
-  if (sprite.offset > spriteData.length) {
-    throw new RangeError(
-      `texture sprite "${name}" wanted ${sprite.offset} bytes, entry has ${spriteData.length}`
-    );
-  }
+  const group = parseSpriteGroup(name, spriteData, indexData, 1);
+  const frame = group.frames[0]!;
 
   return {
     name,
-    fullWidth,
-    fullHeight,
-    offsetX,
-    offsetY,
-    width,
-    height,
-    palette,
-    indices
+    fullWidth: group.fullWidth,
+    fullHeight: group.fullHeight,
+    offsetX: frame.offsetX,
+    offsetY: frame.offsetY,
+    width: frame.width,
+    height: frame.height,
+    palette: group.palette,
+    indices: frame.indices
+  };
+}
+
+/** The flat `TextureSprite` seen as the frame record the blit expects. */
+function frameOf(sprite: TextureSprite): SpriteFrame {
+  return {
+    offsetX: sprite.offsetX,
+    offsetY: sprite.offsetY,
+    width: sprite.width,
+    height: sprite.height,
+    indices: sprite.indices
   };
 }
 
@@ -194,43 +134,9 @@ export function renderSprite(sprite: TextureSprite): RgbaImage {
   return image;
 }
 
-/**
- * Composite a sprite onto an existing image at its stored offset.
- *
- * Three outcomes per pixel, matching the reference renderer:
- *   - palette index 0: leave the destination alone (see-through)
- *   - pure green: clear the destination (cut a hole)
- *   - otherwise: opaque colour
- */
+/** Composite a sprite onto an existing image at its stored offset. */
 function blitSprite(target: RgbaImage, sprite: TextureSprite): void {
-  for (let y = 0; y < sprite.height; y++) {
-    const destY = y + sprite.offsetY;
-    if (destY < 0 || destY >= target.height) continue;
-
-    for (let x = 0; x < sprite.width; x++) {
-      const destX = x + sprite.offsetX;
-      if (destX < 0 || destX >= target.width) continue;
-
-      const paletteIndex = sprite.indices[x + y * sprite.width]!;
-      if (paletteIndex === 0) continue;
-
-      const colour = sprite.palette[paletteIndex] ?? TRANSPARENT_KEY;
-      const at = (destX + destY * target.width) * 4;
-
-      if (colour === TRANSPARENT_KEY || colour === CUTOUT_KEY) {
-        target.data[at] = 0;
-        target.data[at + 1] = 0;
-        target.data[at + 2] = 0;
-        target.data[at + 3] = 0;
-        continue;
-      }
-
-      target.data[at] = (colour >> 16) & 0xff;
-      target.data[at + 1] = (colour >> 8) & 0xff;
-      target.data[at + 2] = colour & 0xff;
-      target.data[at + 3] = 0xff;
-    }
-  }
+  blitSpriteFrame(target, sprite.palette, frameOf(sprite));
 }
 
 /** Repeat `source` across `target`, which is what `createPattern(.., 'repeat')` did. */

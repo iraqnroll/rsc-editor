@@ -22,7 +22,10 @@ export type ArchiveRole =
   | 'mapsMem'
   | 'config'
   | 'models'
-  | 'textures';
+  | 'textures'
+  | 'entity'
+  | 'entityMem'
+  | 'media';
 
 export interface CacheFile {
   /** file name as it appears on disk, e.g. "land63.jag" */
@@ -50,7 +53,13 @@ const ROLE_PATTERNS: Array<[ArchiveRole, RegExp]> = [
   ['mapsMem', matcher('maps', 'mem')],
   ['config', matcher('config', 'jag')],
   ['models', matcher('models', 'jag')],
-  ['textures', matcher('textures', 'jag')]
+  ['textures', matcher('textures', 'jag')],
+  // Entity (animation) sprites, and the item sprites -- which are NOT in the
+  // entity archive but in `media<n>.jag` as objects1..objects15.dat. See
+  // entity-sprites.ts.
+  ['entity', matcher('entity', 'jag')],
+  ['entityMem', matcher('entity', 'mem')],
+  ['media', matcher('media', 'jag')]
 ];
 
 export function readCacheDirectory(dir: string): CacheDirectory {

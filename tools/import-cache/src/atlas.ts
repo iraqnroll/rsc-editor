@@ -1,4 +1,8 @@
-import { decodeTextures, packTextureAtlas } from '@rsc-editor/cache';
+import {
+  decodeTextures,
+  packTextureAtlas,
+  type RgbaImage
+} from '@rsc-editor/cache';
 import type { RscConfig } from '@rsc-editor/schema';
 import { encodePng } from './png.js';
 
@@ -53,6 +57,15 @@ export interface BuiltAtlas {
   layoutJson: Uint8Array;
   /** id of the opaque-white cell; equals `config.textures.length`. */
   whiteId: number;
+  /**
+   * The decoded textures, in texture-id order, before packing.
+   *
+   * Handed back so the world map can take an average colour per texture without
+   * decoding textures17.jag a second time -- a textured tile overlay (water,
+   * bridges, wooden floors) has no `colour` in `config.tiles` and would
+   * otherwise have to be drawn as a guess.
+   */
+  images: RgbaImage[];
 }
 
 /** One opaque white cell. Mirrors `whiteCell` in build-texture-atlas.ts. */
@@ -91,6 +104,7 @@ export function buildTextureAtlas(
     // Stored as bytes, not as an object, so the route is a pure pass-through and
     // the ETag can be the sha256 of exactly what goes over the wire.
     layoutJson: new TextEncoder().encode(JSON.stringify(layout)),
-    whiteId: images.length
+    whiteId: images.length,
+    images
   };
 }

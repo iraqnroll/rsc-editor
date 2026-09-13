@@ -1,8 +1,9 @@
 import {
+  applyScenery,
   assertConfigRoundTrip,
   loadConfig,
   loadLandscape,
-  loadModels
+  type SceneryImportReport
 } from '@rsc-editor/cache';
 import {
   SECTOR_FRAME_BYTES,
@@ -23,13 +24,23 @@ import {
   type Project
 } from '@rsc-editor/db';
 import {
+  ENTITY_SPRITES_ASSET,
+  ENTITY_SPRITES_LAYOUT_ASSET,
+  MODELS_ASSET,
   MODEL_INDEX_ASSET,
   TEXTURE_ATLAS_ASSET,
   TEXTURE_ATLAS_LAYOUT_ASSET,
-  putCacheAsset
+  putCacheAsset,
+  worldMapAsset,
+  worldMapMetaAsset,
+  type AssetRef
 } from './assets.js';
 import { buildTextureAtlas } from './atlas.js';
 import { assertImportable, readCacheDirectory } from './cache-dir.js';
+import { buildEntitySprites } from './entity-sprites.js';
+import { buildModelsAsset } from './models-asset.js';
+import { readSceneryFile } from './scenery.js';
+import { buildWorldMaps } from './world-map.js';
 
 /**
  * cache directory -> Postgres project.
@@ -82,6 +93,22 @@ export interface ImportOptions {
    * silently writing into a project someone else made is worse than stopping.
    */
   replace?: boolean;
+  /**
+   * Path to a scenery placement list (`object-locs.json`). Off unless given.
+   *
+   * Scenery is not in the cache -- RuneScape Classic's server sends it, and the
+   * archives carry `.loc` entries for exactly two sectors, the Lumbridge login
+   * backdrop (`fixtures/scenery/SOURCE.md`). Importing a placement list is
+   * therefore adding data the cache never had, and it is kept behind an explicit
+   * flag for one reason: a plain import must stay byte-exact against the source
+   * archives, and that is only provable when nothing else is mixed in.
+   *
+   * With this set, an export writes `.loc` entries for sectors the original
+   * cache did not have them for. Harmless to a real client -- it reads `.loc`
+   * only for the login screen -- but such an export is no longer byte-identical
+   * to the cache it came from.
+   */
+  sceneryPath?: string;
   /** decode and report, write nothing. */
   dryRun?: boolean;
   /**
@@ -99,11 +126,15 @@ export interface ProgressEvent {
     | 'read'
     | 'project'
     | 'landscape'
+    | 'scenery'
     | 'sectors'
     | 'config'
     | 'definitions'
     | 'assets'
     | 'atlas'
+    | 'models'
+    | 'world-map'
+    | 'sprites'
     | 'done';
   message: string;
   /** completed / total, when the stage has a countable unit of work. */
@@ -120,10 +151,38 @@ export interface ImportSummary {
     /** bytes of sector frame written */
     bytes: number;
   };
+  /**
+   * null unless `--scenery` was given. A plain cache import writes no scenery,
+   * and "null" says that plainly where a zeroed report would not.
+   */
+  scenery: (SceneryImportReport & { path: string }) | null;
   definitions: { total: number; byKind: Record<DefinitionKind, number> };
   assets: { count: number; bytes: number; changed: number };
-  models: { named: number; resolved: number; missing: string[] };
+  models: {
+    named: number;
+    resolved: number;
+    missing: string[];
+    /** gzipped size of the served document; 0 when there is no model archive. */
+    gzipBytes: number;
+  };
   atlas: { width: number; height: number; cells: number; pngBytes: number };
+  worldMap: {
+    planes: number;
+    /** per plane, in plane order */
+    sectorsDrawn: number[];
+    pixelsDrawn: number[];
+    pngBytes: number;
+  };
+  entitySprites: {
+    width: number;
+    height: number;
+    cells: number;
+    itemSprites: number;
+    animationFrames: number;
+    npcs: number;
+    pngBytes: number;
+    missingAnimations: string[];
+  };
   durationMs: number;
   dryRun: boolean;
 }
@@ -176,11 +235,51 @@ export async function importCache(
     total: landscape.length
   });
 
-  const models = cache.roles.models
-    ? loadModels(cache.roles.models.data, config.models)
-    : { models: new Map<string, unknown>(), missing: [...config.models] };
+  /**
+   * Scenery, if asked for, is applied to the decoded lanes before anything is
+   * derived from them.
+   *
+   * It writes `objectId + OBJECT_ID_BIAS` into `wallsDiagonal` and the facing
+   * into `direction` -- the cache's own encoding -- so there is no second code
+   * path anywhere downstream. `applyScenery` mutates the sectors in place and
+   * never overwrites a diagonal wall or scenery the cache already shipped; what
+   * it could not place is counted, by reason, and reported.
+   *
+   * Re-running is idempotent because the lanes are re-decoded from the archives
+   * on every run, so the same cache plus the same list gives the same lanes.
+   */
+  let scenery: (SceneryImportReport & { path: string }) | null = null;
+  if (options.sceneryPath) {
+    report({ stage: 'scenery', message: `reading ${options.sceneryPath}` });
+    const file = readSceneryFile(options.sceneryPath);
+    const result = applyScenery(
+      loaded,
+      file.placements,
+      config.objects.map((o) => ({ width: o.width, height: o.height }))
+    );
+    scenery = { ...result, path: file.path };
+    report({
+      stage: 'scenery',
+      message:
+        `${result.placed}/${result.read} placements over ` +
+        `${result.sectorsTouched.length} sectors, ${result.tiles} tiles, ` +
+        `${result.skipped} skipped`,
+      done: result.placed,
+      total: result.read
+    });
+    for (const [reason, count] of Object.entries(result.skippedByReason)) {
+      if (count > 0) {
+        report({ stage: 'scenery', message: `skipped ${count}: ${reason}` });
+      }
+    }
+  }
 
-  if (models.missing.length > 0) {
+  report({ stage: 'models', message: 'decoding models' });
+  const models = cache.roles.models
+    ? buildModelsAsset(cache.roles.models.data, config.models)
+    : null;
+
+  if (models && models.missing.length > 0) {
     // Not an error. `runiteruck1` is a typo in the shipped cache and the real
     // client hits the same dead end (DECISIONS §8); repairing it would make an
     // export differ from its import.
@@ -204,6 +303,46 @@ export async function importCache(
     });
   }
 
+  // The world map draws overlay colours out of the decoded textures, so it is
+  // built after the atlas and reuses its images rather than opening
+  // textures17.jag again.
+  report({ stage: 'world-map', message: 'drawing world maps' });
+  const worldMaps = buildWorldMaps(landscape, config, atlas?.images ?? []);
+  for (const plane of worldMaps) {
+    report({
+      stage: 'world-map',
+      message:
+        `plane ${plane.plane}: ${plane.meta.image.width}x${plane.meta.image.height}, ` +
+        `${plane.sectorsDrawn} sectors, ${plane.pixelsDrawn} tiles drawn, ` +
+        `${plane.png.byteLength} byte png`
+    });
+  }
+
+  // Item sprites live in media<n>.jag, animation sprites in entity<n>.jag /
+  // .mem. Either half may be absent from a partial cache; the builder simply
+  // produces fewer cells.
+  report({ stage: 'sprites', message: 'decoding entity sprites' });
+  const entitySprites =
+    cache.roles.entity || cache.roles.entityMem || cache.roles.media
+      ? buildEntitySprites(
+          {
+            entityJag: cache.roles.entity?.data,
+            entityMem: cache.roles.entityMem?.data,
+            mediaJag: cache.roles.media?.data
+          },
+          config
+        )
+      : null;
+  if (entitySprites) {
+    report({
+      stage: 'sprites',
+      message:
+        `sheet ${entitySprites.layout.sheet.width}x${entitySprites.layout.sheet.height}, ` +
+        `${entitySprites.layout.cells.length} cells ` +
+        `(${entitySprites.itemSprites} item, ${entitySprites.animationFrames} animation frames)`
+    });
+  }
+
   const summary: ImportSummary = {
     project: { id: '', name: options.projectName, slug: '', created: false },
     sectors: {
@@ -212,18 +351,36 @@ export async function importCache(
       members: landscape.filter((s) => s.members).length,
       bytes: 0
     },
+    scenery,
     definitions: { total: 0, byKind: emptyCounts() },
     assets: { count: 0, bytes: 0, changed: 0 },
     models: {
       named: config.models.length,
-      resolved: models.models.size,
-      missing: models.missing
+      resolved: models?.resolved ?? 0,
+      missing: models?.missing ?? [...config.models],
+      gzipBytes: models?.gzip.byteLength ?? 0
     },
     atlas: {
       width: atlas?.layout.sheet.width ?? 0,
       height: atlas?.layout.sheet.height ?? 0,
       cells: atlas?.layout.cells.length ?? 0,
       pngBytes: atlas?.png.byteLength ?? 0
+    },
+    worldMap: {
+      planes: worldMaps.length,
+      sectorsDrawn: worldMaps.map((p) => p.sectorsDrawn),
+      pixelsDrawn: worldMaps.map((p) => p.pixelsDrawn),
+      pngBytes: totalBytes(worldMaps.map((p) => p.png))
+    },
+    entitySprites: {
+      width: entitySprites?.layout.sheet.width ?? 0,
+      height: entitySprites?.layout.sheet.height ?? 0,
+      cells: entitySprites?.layout.cells.length ?? 0,
+      itemSprites: entitySprites?.itemSprites ?? 0,
+      animationFrames: entitySprites?.animationFrames ?? 0,
+      npcs: Object.keys(entitySprites?.layout.npcs ?? {}).length,
+      pngBytes: entitySprites?.png.byteLength ?? 0,
+      missingAnimations: entitySprites?.missingAnimations ?? []
     },
     durationMs: 0,
     dryRun
@@ -235,12 +392,43 @@ export async function importCache(
     summary.definitions.total += count;
   }
 
+  /**
+   * Everything that is derived rather than copied, in one list.
+   *
+   * One list rather than a write block per asset so the dry run counts exactly
+   * what the real run stores -- the two used to be written twice and could
+   * disagree, which makes `--dry-run` useless for the one thing it is for.
+   */
+  const derived: Array<[AssetRef, Uint8Array]> = [
+    // The model name table. Not a definition kind (rsc-config synthesises it
+    // rather than reading a section), but object model ids are indices into it,
+    // so an export cannot reproduce its input without the order preserved.
+    [MODEL_INDEX_ASSET, encodeJson(config.models)],
+    ...(models ? [[MODELS_ASSET, models.gzip] as [AssetRef, Uint8Array]] : []),
+    ...(atlas
+      ? ([
+          [TEXTURE_ATLAS_ASSET, atlas.png],
+          [TEXTURE_ATLAS_LAYOUT_ASSET, atlas.layoutJson]
+        ] as Array<[AssetRef, Uint8Array]>)
+      : []),
+    ...worldMaps.flatMap(
+      (plane): Array<[AssetRef, Uint8Array]> => [
+        [worldMapAsset(plane.plane), plane.png],
+        [worldMapMetaAsset(plane.plane), plane.metaJson]
+      ]
+    ),
+    ...(entitySprites
+      ? ([
+          [ENTITY_SPRITES_ASSET, entitySprites.png],
+          [ENTITY_SPRITES_LAYOUT_ASSET, entitySprites.layoutJson]
+        ] as Array<[AssetRef, Uint8Array]>)
+      : [])
+  ];
+
   if (dryRun) {
-    const modelIndex = encodeJson(config.models);
     const assets = [
       ...cache.files.map((f) => f.data),
-      modelIndex,
-      ...(atlas ? [atlas.png, atlas.layoutJson] : [])
+      ...derived.map(([, data]) => data)
     ];
     summary.sectors.bytes = landscape.length * SECTOR_FRAME_BYTES;
     summary.assets.count = assets.length;
@@ -345,40 +533,23 @@ export async function importCache(
     });
   }
 
-  // -- the model name table. Not a definition kind (rsc-config synthesises it
-  //    rather than reading a section), but object model ids are indices into it,
-  //    so an export cannot reproduce its input without the order preserved.
-  record(
-    await putCacheAsset(db, {
+  // -- everything the browser needs but cannot decode: the model name table,
+  //    the models, the texture atlas, the world maps and the entity sprites.
+  for (const [ref, data] of derived) {
+    const result = await putCacheAsset(db, {
       projectId,
-      kind: MODEL_INDEX_ASSET.kind,
-      name: MODEL_INDEX_ASSET.name,
-      data: encodeJson(config.models),
-      contentType: MODEL_INDEX_ASSET.contentType
-    })
-  );
-
-  // -- the texture atlas the browser needs, plus its layout
-  if (atlas) {
-    for (const [ref, data] of [
-      [TEXTURE_ATLAS_ASSET, atlas.png],
-      [TEXTURE_ATLAS_LAYOUT_ASSET, atlas.layoutJson]
-    ] as const) {
-      const result = await putCacheAsset(db, {
-        projectId,
-        kind: ref.kind,
-        name: ref.name,
-        data,
-        contentType: ref.contentType
-      });
-      record(result);
-      report({
-        stage: 'atlas',
-        message:
-          `${ref.name} (${result.byteLength} bytes)` +
-          (result.changed ? '' : ' [unchanged]')
-      });
-    }
+      kind: ref.kind,
+      name: ref.name,
+      data,
+      contentType: ref.contentType
+    });
+    record(result);
+    report({
+      stage: 'assets',
+      message:
+        `${ref.name} (${result.byteLength} bytes)` +
+        (result.changed ? '' : ' [unchanged]')
+    });
   }
 
   summary.durationMs = Date.now() - started;

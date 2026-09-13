@@ -8,9 +8,9 @@ import {
   loadTextureSprites,
   packTextureAtlas,
   renderSprite,
-  renderTexture,
-  type RgbaImage
+  renderTexture
 } from './textures.js';
+import type { RgbaImage } from './sprites.js';
 
 /**
  * Measured against fixtures/data204. Dimensions here were read out of

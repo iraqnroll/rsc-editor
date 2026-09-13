@@ -62,6 +62,55 @@ export const MODEL_INDEX_ASSET: AssetRef = {
   contentType: 'application/json; charset=utf-8'
 };
 
+/**
+ * Every decoded `.ob3`, as gzipped JSON.
+ *
+ * The name ends `.gz` because the bytes in the column ARE gzip: the route sets
+ * `content-encoding: gzip` and hands them over untouched, so the browser
+ * inflates them and the ETag stays the sha256 of exactly what crossed the wire.
+ * The content type describes the *decoded* body, which is what the header pair
+ * means.
+ */
+export const MODELS_ASSET: AssetRef = {
+  kind: 'model',
+  name: 'models.json.gz',
+  contentType: 'application/json; charset=utf-8'
+};
+
+export const ENTITY_SPRITES_ASSET: AssetRef = {
+  kind: 'sprite',
+  name: 'entity-sprites.png',
+  contentType: 'image/png'
+};
+
+export const ENTITY_SPRITES_LAYOUT_ASSET: AssetRef = {
+  kind: 'sprite',
+  name: 'entity-sprites.layout.json',
+  contentType: 'application/json; charset=utf-8'
+};
+
+/**
+ * One map per plane, so `:plane` in the route is a lookup and not a slice of a
+ * single blob. A client that only ever shows plane 0 never downloads the other
+ * three, and a plane that is empty still gets its (transparent) image rather
+ * than a 404 the client would have to distinguish from "not imported".
+ */
+export function worldMapAsset(plane: number): AssetRef {
+  return {
+    kind: 'other',
+    name: `world-map.${plane}.png`,
+    contentType: 'image/png'
+  };
+}
+
+export function worldMapMetaAsset(plane: number): AssetRef {
+  return {
+    kind: 'other',
+    name: `world-map.${plane}.meta.json`,
+    contentType: 'application/json; charset=utf-8'
+  };
+}
+
 export function sha256Hex(data: Uint8Array): string {
   return createHash('sha256').update(data).digest('hex');
 }

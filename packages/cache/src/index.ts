@@ -9,6 +9,9 @@
  */
 export * from './landscape-codec.js';
 export * from './landscape.js';
+export * from './scenery.js';
 export * from './config.js';
 export * from './models.js';
+export * from './colour.js';
+export * from './sprites.js';
 export * from './textures.js';

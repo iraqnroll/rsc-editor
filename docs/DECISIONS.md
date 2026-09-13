@@ -252,3 +252,55 @@ nothing on Windows — half the team would migrate the wrong database.
 Still unverified: the Discord OAuth **callback**. The redirect half is confirmed
 to build a correct authorize URL with `state` and the right `redirect_uri`, but
 completing a login needs a real Discord application.
+
+## 12. Scenery is not in the cache either
+
+The cache holds exactly **two** `.loc` entries — `m05049` and `m05050`.
+rsc-landscape's own source calls them "the sectors shown in login", and that is
+what they are: the Lumbridge backdrop. Every other sector has no scenery at all.
+
+RuneScape Classic sends scenery from the server, like NPCs and ground items. The
+`wallsDiagonal` lane genuinely encodes scenery ids above 48000 (§2), which makes
+the cache *look* like it stores scenery. It stores scenery for two sectors.
+
+The real placements — 26,902 of them across 342 sectors — come from
+`object-locs.json` in the same 2003scape project, vendored at
+`fixtures/scenery/` with provenance. Importing them is a separate, explicit
+`--scenery` flag so that a plain cache import stays byte-exact, which is only
+provable if nothing else is mixed in. See `fixtures/scenery/SOURCE.md`.
+
+### Two mapping rules rsc-landscape gets wrong
+
+Both fail silently, scattering objects *plausibly*:
+
+- **There is no x mirror.** `getTileAtGameCoords` reads
+  `tiles[47 - (x % 48)][y % 48]`, but `populateTiles()` ends with
+  `this.tiles.reverse()` — the two mirrors cancel, and the lane column is plainly
+  `x % 48`.
+- **The plane stride is 944, not 943.** Measured against the real data: 943
+  strands 25 placements on coordinates with no terrain and puts 38 outside the
+  sector grid; 944 (our `PLANE_HEIGHT`) lands 26,900 of 26,902 on a real sector
+  and none outside.
+
+The check that settled it is free and exact: the two `.loc` sectors we *do* have
+are an oracle. Of their 291 scenery tiles, zero are unaccounted for by the
+computed placements and 277 match in id and direction; the 14 that differ are
+open-vs-closed variants of the same object (`gate` 59/60, `doors` 63/64),
+asserted as that pairing rather than tolerated by a threshold.
+
+### Export hazard: `.loc` cannot represent most scenery ids
+
+**Nothing writes a `.loc` yet, and nothing may until this is handled.**
+
+A `.loc` byte is `objectId + 1`, and any byte `>= 128` decodes as a *run of that
+many blank tiles*. The format therefore tops out at **object id 126**. The real
+placement list uses ids up to 1188.
+
+`encodeLoc` is a verbatim inverse of `decodeLoc` and stays that way — it is half
+the 596-entry gate. So it will happily emit a byte that reads back as 64 empty
+tiles. `unrepresentableSceneryIds()` in `@rsc-editor/cache` is the pre-export
+check; **it is not called anywhere yet**, because there is no exporter.
+
+Whoever builds the export flow has to decide: refuse, drop the unrepresentable
+objects, or write scenery to the server's own format instead of `.loc`. The last
+is probably right — it is where the game keeps it.

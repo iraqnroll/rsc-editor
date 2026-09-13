@@ -96,18 +96,33 @@ const scratchProjectId = reachable
         return null;
       }
 
-      const name = `live-api test ${Date.now().toString(36)}`;
+      // A FIXED name, not a timestamped one. Creating a fresh project per run
+      // is hermetic but leaves one behind every time -- twenty-odd of them had
+      // piled up in the dev database before anyone noticed. The slug is unique,
+      // so re-creating answers 409 and we reuse the existing row: still empty,
+      // still ours, still exactly one.
+      const NAME = 'live-api test scratch';
       const created = await raw('/api/projects', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ name })
+        body: JSON.stringify({ name: NAME })
       });
-      if (!created.ok) {
-        console.warn(`[live-api.integration] could not create a project (${created.status})`);
-        return null;
+
+      if (created.ok) {
+        const body = (await created.json()) as { project?: { id?: string } };
+        return body.project?.id ?? null;
       }
-      const body = (await created.json()) as { project?: { id?: string } };
-      return body.project?.id ?? null;
+
+      if (created.status === 409) {
+        const list = (await (await raw('/api/projects')).json()) as {
+          projects?: Array<{ id: string; name: string }>;
+        };
+        const existing = (list.projects ?? []).find((p) => p.name === NAME);
+        if (existing) return existing.id;
+      }
+
+      console.warn(`[live-api.integration] could not create a project (${created.status})`);
+      return null;
     })()
   : null;
 

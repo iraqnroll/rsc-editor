@@ -21,6 +21,24 @@ describe('parseArgs', () => {
     expect(options.verifyConfig).toBe(true);
     expect(options.slug).toBeUndefined();
     expect(options.ownerId).toBeUndefined();
+    // Scenery is not in the cache and is never imported by default: a plain
+    // import has to stay byte-exact against the source archives.
+    expect(options.sceneryPath).toBeUndefined();
+  });
+
+  it('takes a scenery list only when asked, by path', () => {
+    expect(
+      parseArgs([...base, '--scenery', './fixtures/scenery/object-locs.json'], env)
+        .sceneryPath
+    ).toBe('./fixtures/scenery/object-locs.json');
+    expect(
+      parseArgs([...base, '--scenery=./locs.json'], env).sceneryPath
+    ).toBe('./locs.json');
+    // A flag that silently swallowed the next flag would import a file called
+    // "--replace" and quietly skip the re-import.
+    expect(() => parseArgs([...base, '--scenery', '--replace'], env)).toThrow(
+      /--scenery needs a value/
+    );
   });
 
   it('rejects an unknown flag instead of ignoring it', () => {

@@ -33,6 +33,9 @@ async function main(argv: string[]): Promise<number> {
       projectName: options.projectName,
       ...(options.slug ? { slug: options.slug } : {}),
       ...(options.ownerId ? { ownerId: options.ownerId } : {}),
+      ...(options.sceneryPath
+        ? { sceneryPath: resolveFromInvocationDir(options.sceneryPath) }
+        : {}),
       replace: options.replace,
       dryRun: options.dryRun,
       verifyConfig: options.verifyConfig,
@@ -97,12 +100,42 @@ function formatSummary(summary: ImportSummary): string {
       `(${summary.sectors.free} free, ${summary.sectors.members} members), ` +
       `${mb(summary.sectors.bytes)}`
   );
+  if (summary.scenery) {
+    const s = summary.scenery;
+    lines.push(
+      `scenery      ${s.placed}/${s.read} placed, ${s.tiles} tiles, ` +
+        `${s.sectorsTouched.length} sectors`
+    );
+    lines.push(`             read from ${s.path}`);
+    // Named reasons, not a bare total: "467 skipped" is not something anyone
+    // can act on, and a tile that cannot hold both a wall and an object is a
+    // different problem from a sector this cache does not have.
+    for (const [reason, count] of Object.entries(s.skippedByReason)) {
+      if (count > 0) {
+        lines.push(`             skipped ${String(count).padStart(5)}  ${reason}`);
+      }
+    }
+    if (s.clippedTiles) {
+      lines.push(
+        `             ${s.clippedTiles} footprint tiles clipped at a sector edge`
+      );
+    }
+    if (s.directionChanged) {
+      lines.push(
+        `             ${s.directionChanged} tiles had their direction overwritten`
+      );
+    }
+    lines.push('             (export will now contain .loc the source cache had not)');
+  } else {
+    lines.push('scenery      none (--scenery not given); export stays byte-exact');
+  }
   lines.push(`definitions  ${summary.definitions.total}`);
   for (const [kind, count] of Object.entries(summary.definitions.byKind)) {
     lines.push(`             ${kind.padEnd(12)} ${count}`);
   }
   lines.push(
-    `models       ${summary.models.resolved}/${summary.models.named} resolved` +
+    `models       ${summary.models.resolved}/${summary.models.named} resolved, ` +
+      `${summary.models.gzipBytes} byte gzip` +
       (summary.models.missing.length
         ? `, missing: ${summary.models.missing.join(', ')}`
         : '')
@@ -110,6 +143,29 @@ function formatSummary(summary: ImportSummary): string {
   lines.push(
     `atlas        ${summary.atlas.width}x${summary.atlas.height}, ` +
       `${summary.atlas.cells} cells, ${summary.atlas.pngBytes} byte png`
+  );
+  lines.push(
+    `world map    ${summary.worldMap.planes} planes, ` +
+      `${summary.worldMap.pngBytes} bytes of png`
+  );
+  for (const [plane, sectors] of summary.worldMap.sectorsDrawn.entries()) {
+    lines.push(
+      `             plane ${plane}     ${String(sectors).padStart(3)} sectors, ` +
+        `${summary.worldMap.pixelsDrawn[plane] ?? 0} tiles drawn`
+    );
+  }
+  lines.push(
+    `sprites      ${summary.entitySprites.width}x${summary.entitySprites.height}, ` +
+      `${summary.entitySprites.cells} cells, ` +
+      `${summary.entitySprites.pngBytes} byte png`
+  );
+  lines.push(
+    `             ${summary.entitySprites.itemSprites} item, ` +
+      `${summary.entitySprites.animationFrames} animation frames, ` +
+      `${summary.entitySprites.npcs} npcs mapped` +
+      (summary.entitySprites.missingAnimations.length
+        ? `, missing: ${summary.entitySprites.missingAnimations.join(', ')}`
+        : '')
   );
   lines.push(
     `assets       ${summary.assets.count} rows, ${mb(summary.assets.bytes)}` +
