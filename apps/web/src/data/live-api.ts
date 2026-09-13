@@ -92,6 +92,7 @@ import {
   isEntitySpriteLayoutWire,
   type EntitySpriteSheet
 } from './entity-sprites.js';
+import { isSceneryModelsAsset, type SceneryModelsAsset } from './models.js';
 import { isWorldMapMeta, type WorldMapAsset } from './world-map.js';
 import { devLogin, fetchMe, logout, type AuthUser } from './auth.js';
 import { apiBinary, apiJson, isApiHttpError, websocketUrl } from './http.js';
@@ -244,6 +245,8 @@ export function createLiveApi(options: LiveApiOptions = {}): EditorApi {
   const worldMapsInFlight = new Map<number, Promise<WorldMapAsset | null>>();
   let sprites: EntitySpriteSheet | null | undefined;
   let spritesInFlight: Promise<EntitySpriteSheet | null> | null = null;
+  let models: SceneryModelsAsset | null | undefined;
+  let modelsInFlight: Promise<SceneryModelsAsset | null> | null = null;
 
   const sectorCache = new Map<string, SectorFrame>();
   const heldLocks = new Set<string>();
@@ -795,6 +798,29 @@ export function createLiveApi(options: LiveApiOptions = {}): EditorApi {
     }
   }
 
+  /**
+   * The scenery model document.
+   *
+   * Plain JSON to us — the transport gzips it, so `apiJson` inflates it for
+   * free. Keyed by model name; see the note on `loadModels`.
+   */
+  async function loadModelsOnce(): Promise<SceneryModelsAsset | null> {
+    const id = requireProject();
+    try {
+      const body = await apiJson<unknown>(
+        `/api/projects/${encodeURIComponent(id)}/cache-assets/models`
+      );
+      if (!isSceneryModelsAsset(body)) {
+        console.warn('[live-api] scenery models did not match the expected shape');
+        return null;
+      }
+      return body;
+    } catch (err) {
+      if (isApiHttpError(err) && (err.status === 404 || err.status === 501)) return null;
+      throw err;
+    }
+  }
+
   async function loadEntitySpritesOnce(): Promise<EntitySpriteSheet | null> {
     const id = requireProject();
     const base = `/api/projects/${encodeURIComponent(id)}/cache-assets/entity-sprites`;
@@ -1041,6 +1067,28 @@ export function createLiveApi(options: LiveApiOptions = {}): EditorApi {
         });
       worldMapsInFlight.set(plane, request);
       return request;
+    },
+
+    /**
+     * Decoded scenery models. `null` on 404.
+     *
+     * Several megabytes of JSON, gzipped on the wire and fetched once. It is
+     * cached here rather than in the scene so that the scene never has to work
+     * out which project it is looking at — doing that itself is how it ended up
+     * fetching a *different* project's models on a first load.
+     */
+    loadModels(): Promise<SceneryModelsAsset | null> {
+      if (models !== undefined) return Promise.resolve(models);
+      if (modelsInFlight) return modelsInFlight;
+      modelsInFlight = loadModelsOnce()
+        .then((result) => {
+          models = result;
+          return result;
+        })
+        .finally(() => {
+          modelsInFlight = null;
+        });
+      return modelsInFlight;
     },
 
     /** Item/NPC sprites for the definition editors. `null` on 404. */

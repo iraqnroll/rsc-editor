@@ -45,13 +45,21 @@ import {
   type Texture
 } from 'three';
 import { SECTOR_WIDTH, sectorKey } from '@rsc-editor/schema';
-import { TILE_SIZE } from '@rsc-editor/render';
+import {
+  TILE_SIZE,
+  connectorLinkLines,
+  connectorMarkerLines,
+  planesFor,
+  type ConnectorPlacement,
+  type PlaneSetMode
+} from '@rsc-editor/render';
 import type { WorldTile } from '../ops/coords.js';
 import { ATLAS_ALPHA_TEST, loadAtlas, type ResolvedAtlas } from './atlas-texture.js';
 import {
   clampFly,
   clampOrbit,
   inGameOrbit,
+  MAP_NORTH_YAW,
   MAX_DISTANCE,
   orbitPose,
   overviewOrbit,
@@ -59,6 +67,7 @@ import {
   type CameraMode,
   type OrbitState
 } from './camera.js';
+import { PlaneSectorCache, planeSectorCoords } from './plane-sectors.js';
 import {
   buildBrushOutline,
   buildRectOutline,
@@ -89,6 +98,43 @@ const GRID_WINDOW = 64;
 /** Sectors meshed per frame. Meshing a dense sector costs ~100ms. */
 const MESH_BUDGET = 1;
 
+/**
+ * ============================================================================
+ *  HOW AN INACTIVE PLANE IS DRAWN, AND WHY IT IS DRAWN THAT WAY
+ * ============================================================================
+ *
+ * Ghosted: the same geometry, the same RSC lighting, `transparent` at
+ * {@link GHOST_OPACITY} with `depthWrite: false`. Not an outline, and not
+ * hidden.
+ *
+ * The alternatives and why they lose:
+ *
+ *   - **Opaque.** A ground floor under a first floor is simply invisible, and a
+ *     first floor under the ground floor's roof is too. That is the bug being
+ *     fixed; stacking opaque floors is worse than showing one at a time because
+ *     it looks like there is nothing up there.
+ *   - **Outlines only.** Readable, but it throws away the one thing that says
+ *     *what* a floor is -- its overlay colours and textures. "Is the room above
+ *     this one a kitchen or a staircase landing" is a colour question, and an
+ *     editor that answers it with a wireframe is answering a different one.
+ *   - **Ghosted with `depthWrite: true`.** A translucent surface that still
+ *     writes depth occludes whatever is drawn after it, so the active plane
+ *     would flicker in and out depending on draw order. `depthWrite: false` is
+ *     what makes a ghost never hide anything: it is depth-*tested*, so a ghost
+ *     behind a solid wall stays behind it, but it never becomes the reason
+ *     something else is missing.
+ *
+ * The active plane keeps `FrontSide`, full opacity and depth writes -- it is
+ * exactly what the viewport drew before -- and it is the only thing the picker
+ * raycasts, so a click always lands on the plane you are editing even when the
+ * pointer is over a ghost.
+ */
+const GHOST_OPACITY = 0.34;
+
+/** Colours for the connector overlay. Amber links, green markers. */
+const LINK_COLOUR = '#ffb020';
+const MARKER_COLOUR = '#5cf08a';
+
 /* ========================================================================== */
 /*  Scene contents                                                            */
 /* ========================================================================== */
@@ -116,6 +162,9 @@ interface SceneProps extends ViewportProps {
   onBuilt: () => void;
   onPlates: (plates: Plate[]) => void;
   version: number;
+  /** planes being drawn, bottom to top */
+  planeSet: number[];
+  showConnectors: boolean;
 }
 
 interface Plate {
@@ -159,9 +208,32 @@ function SceneContents(props: SceneProps) {
 
   /* ------------------------------------------------------------- picking -- */
 
+  /**
+   * Where each plane's geometry is drawn.
+   *
+   * Exactly zero when only one plane is on screen, whichever plane that is:
+   * there is nothing to stack it against, and lifting a lone first floor 192
+   * units off the orbit target would move the camera's idea of the world for no
+   * benefit. Single-plane mode is therefore byte-for-byte the view the viewport
+   * has always drawn.
+   */
+  const stacking = props.planeSet.length > 1;
+  const planeY = useCallback(
+    (plane: number) => (stacking ? cache.planeOffset(plane) : 0),
+    // `version` is what changes when a sector finishes meshing and the offsets
+    // are re-solved; the cache object itself is stable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [cache, stacking, props.version]
+  );
+  const activePlaneY = planeY(props.plane);
+
   const pick = useCallback(
     (ndcX: number, ndcY: number): PickResult => {
       raycaster.setFromCamera(new Vector2(ndcX, ndcY), camera);
+      // Only the ACTIVE plane's terrain is in this list. A ghost storey is there
+      // to be looked through, not clicked through: if it could take a hit, a
+      // brush stroke on the ground floor would silently start landing on the
+      // first floor wherever one happens to be overhead.
       const hits = raycaster.intersectObjects([...terrainMeshes.current.values()], false);
       const hit = hits[0];
 
@@ -178,10 +250,15 @@ function SceneContents(props: SceneProps) {
       }
 
       // No ground: an upper storey, or a gap. See `tileOfGroundPlane`.
-      const tile = tileOfGroundPlane(props.plane, raycaster.ray.origin, raycaster.ray.direction);
+      const tile = tileOfGroundPlane(
+        props.plane,
+        raycaster.ray.origin,
+        raycaster.ray.direction,
+        activePlaneY
+      );
       return { tile, point: null };
     },
-    [camera, raycaster, props.plane]
+    [camera, raycaster, props.plane, activePlaneY]
   );
 
   useEffect(() => {
@@ -200,6 +277,10 @@ function SceneContents(props: SceneProps) {
 
     const plates: Plate[] = [];
     for (const entry of cache.list()) {
+      // Locks are per sector per plane, but a nameplate is a label on a place:
+      // one per sector, on the plane being edited, or a stacked view would show
+      // four copies of the same name.
+      if (entry.coord.plane !== props.plane) continue;
       const lock = props.lockFor(entry.coord);
       if (lock.state !== 'theirs' || !lock.ownerName) continue;
 
@@ -235,28 +316,147 @@ function SceneContents(props: SceneProps) {
 
   /* -------------------------------------------------------------- render -- */
 
+  const drawn = new Set(props.planeSet);
+
   return (
     <>
       {cache.list().map((set) => {
+        if (!drawn.has(set.coord.plane)) return null;
+        const ghost = set.coord.plane !== props.plane;
         // Keyed on the signature as well as the sector, so a re-meshed sector's
-        // new mesh can never be evicted by its predecessor's unmount.
-        const id = `${set.key}:${set.signature}`;
+        // new mesh can never be evicted by its predecessor's unmount -- and on
+        // `ghost`, because switching the active plane has to remount the layer:
+        // `register` is a ref callback and `raycast` a constructor-time prop,
+        // and neither re-runs on a prop change alone.
+        const id = `${set.key}:${set.signature}:${ghost ? 'g' : 's'}`;
         return (
           <SectorLayer
             key={id}
             set={set}
             atlas={atlas}
-            register={(mesh) => {
-              if (mesh) terrainMeshes.current.set(id, mesh);
-              else terrainMeshes.current.delete(id);
-            }}
+            ghost={ghost}
+            planeY={planeY(set.coord.plane)}
+            register={
+              ghost
+                ? undefined
+                : (mesh) => {
+                    if (mesh) terrainMeshes.current.set(id, mesh);
+                    else terrainMeshes.current.delete(id);
+                  }
+            }
           />
         );
       })}
 
-      <SceneryLayer draws={cache.sceneryDraws()} atlas={atlas} />
+      <SceneryLayer
+        draws={cache.sceneryDraws().filter((draw) => drawn.has(draw.plane))}
+        atlas={atlas}
+        activePlane={props.plane}
+        planeY={planeY}
+      />
 
-      <Overlays {...props} />
+      {props.showConnectors && (
+        <ConnectorLayer cache={cache} planeSet={props.planeSet} planeY={planeY} />
+      )}
+
+      <group position={[0, activePlaneY, 0]}>
+        <Overlays {...props} />
+      </group>
+    </>
+  );
+}
+
+/* ========================================================================== */
+/*  Floor connectors                                                          */
+/* ========================================================================== */
+
+/**
+ * Ladders, staircases and trapdoors, and the links between the storeys they
+ * join.
+ *
+ * `depthTest: false` on purpose, and it is the point rather than a shortcut. A
+ * ladder is inside a building, under a roof, behind a wall; a link drawn with
+ * depth testing is a link you can never see, which makes the whole overlay
+ * decorative. This is editor furniture, not client geometry -- nothing about
+ * what RSC draws depends on it -- so it is allowed to be the one thing that
+ * always reads.
+ *
+ * Which objects count comes from `connectorOf()` in `@rsc-editor/render`, which
+ * resolves the `commands` list from the definition table. `climb over` (40
+ * objects in the shipped cache, all fences and rocks) is deliberately not a
+ * connector; see that file's header.
+ */
+function ConnectorLayer({
+  cache,
+  planeSet,
+  planeY
+}: {
+  cache: SectorGeometryCache;
+  planeSet: number[];
+  /** the SAME function the geometry layers use, so a marker sits on its floor */
+  planeY: (plane: number) => number;
+}) {
+  const graph = cache.connectorGraph();
+  const key = planeSet.join(',');
+
+  const geometries = useMemo(() => {
+    const drawn = new Set(planeSet);
+    // Filtered to the planes on screen: a link with one end on a plane that is
+    // not being drawn would be a line running off into nothing, and a marker
+    // for an invisible floor is a claim about geometry nobody can check.
+    //
+    // `y` is recomputed through `planeY` rather than taken from the graph,
+    // because single-plane mode draws at offset 0 and a marker floating 192
+    // units above its own ladder would be worse than no marker.
+    const place = (c: ConnectorPlacement): ConnectorPlacement => ({
+      ...c,
+      y: c.groundY + planeY(c.plane)
+    });
+
+    const visible = graph.placements.filter((c) => drawn.has(c.plane)).map(place);
+    const links = graph.links
+      .filter((link) => drawn.has(link.lower.plane) && drawn.has(link.upper.plane))
+      .map((link) => ({ lower: place(link.lower), upper: place(link.upper) }));
+
+    return {
+      links: lineGeometry(connectorLinkLines(links)),
+      markers: lineGeometry(connectorMarkerLines(visible)),
+      count: visible.length,
+      linked: links.length
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [graph, key, planeY]);
+
+  useDisposeOnChange(geometries.links);
+  useDisposeOnChange(geometries.markers);
+
+  if (geometries.count === 0) return null;
+
+  return (
+    <>
+      {/*
+        `depthWrite: false` alongside `depthTest: false`: an overlay that always
+        draws must not also leave depth values behind for the ghost planes to
+        sort against afterwards.
+      */}
+      <lineSegments geometry={geometries.markers} renderOrder={998}>
+        <lineBasicMaterial
+          color={MARKER_COLOUR}
+          depthTest={false}
+          depthWrite={false}
+          transparent
+          opacity={0.85}
+          toneMapped={false}
+        />
+      </lineSegments>
+      <lineSegments geometry={geometries.links} renderOrder={999}>
+        <lineBasicMaterial
+          color={LINK_COLOUR}
+          depthTest={false}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </lineSegments>
     </>
   );
 }
@@ -278,32 +478,62 @@ function SceneContents(props: SceneProps) {
  * colours from RSC's own lighting, `alphaTest` for the pure-green cutouts that
  * doorways and flames depend on.
  */
-function SceneryLayer({ draws, atlas }: { draws: SceneryDraw[]; atlas: Texture | null }) {
-  // One material for every scenery batch rather than one per batch. Identical
+function SceneryLayer({
+  draws,
+  atlas,
+  activePlane,
+  planeY
+}: {
+  draws: SceneryDraw[];
+  atlas: Texture | null;
+  activePlane: number;
+  planeY: (plane: number) => number;
+}) {
+  // Two materials for every scenery batch rather than one per batch. Identical
   // settings, so three compiles the same program either way, but a hundred
   // material objects rebuilt whenever a sector finishes meshing is churn for
   // nothing. Owned here, so disposed here -- r3f only disposes what it created.
-  const material = useMemo(
-    () =>
-      new MeshBasicMaterial({
-        vertexColors: true,
-        map: atlas,
-        side: FrontSide,
-        // `alphaTest` WITHOUT `transparent`, exactly as the sector layers: a
-        // pure-green palette entry is a CUTOUT (DECISIONS section 8), a hole
-        // rather than a translucent surface, and doorways and flames need it.
-        alphaTest: ATLAS_ALPHA_TEST,
-        toneMapped: false
-      }),
-    [atlas]
-  );
+  const materials = useMemo(() => {
+    const base = {
+      vertexColors: true,
+      map: atlas,
+      side: FrontSide,
+      // `alphaTest` WITHOUT `transparent`, exactly as the sector layers: a
+      // pure-green palette entry is a CUTOUT (DECISIONS section 8), a hole
+      // rather than a translucent surface, and doorways and flames need it.
+      alphaTest: ATLAS_ALPHA_TEST,
+      toneMapped: false
+    };
+    return {
+      solid: new MeshBasicMaterial(base),
+      // See GHOST_OPACITY: transparent and NOT depth-writing, so a tree on an
+      // upper storey never becomes the reason something below it is missing.
+      ghost: new MeshBasicMaterial({
+        ...base,
+        transparent: true,
+        opacity: GHOST_OPACITY,
+        depthWrite: false
+      })
+    };
+  }, [atlas]);
 
-  useEffect(() => () => material.dispose(), [material]);
+  useEffect(
+    () => () => {
+      materials.solid.dispose();
+      materials.ghost.dispose();
+    },
+    [materials]
+  );
 
   return (
     <>
       {draws.map((draw) => (
-        <SceneryBatchMesh key={draw.key} draw={draw} material={material} />
+        <SceneryBatchMesh
+          key={draw.key}
+          draw={draw}
+          material={draw.plane === activePlane ? materials.solid : materials.ghost}
+          planeY={planeY(draw.plane)}
+        />
       ))}
     </>
   );
@@ -311,10 +541,12 @@ function SceneryLayer({ draws, atlas }: { draws: SceneryDraw[]; atlas: Texture |
 
 function SceneryBatchMesh({
   draw,
-  material
+  material,
+  planeY
 }: {
   draw: SceneryDraw;
   material: MeshBasicMaterial;
+  planeY: number;
 }) {
   const ref = useRef<InstancedMesh>(null);
 
@@ -334,6 +566,11 @@ function SceneryBatchMesh({
   return (
     <instancedMesh
       ref={ref}
+      // The plane's vertical offset is a transform on the MESH, not on the
+      // instance matrices: the offsets are re-solved whenever another plane's
+      // sector arrives, and rebuilding thousands of matrices for a number that
+      // moves would be the one expensive thing in the frame.
+      position={[0, planeY, 0]}
       // `args` is the constructor call, so a changed count or geometry
       // reconstructs the mesh -- which is what has to happen when a sector
       // finishes meshing and adds copies to a batch.
@@ -352,18 +589,29 @@ function SceneryBatchMesh({
 function SectorLayer({
   set,
   atlas,
+  ghost,
+  planeY,
   register
 }: {
   set: SectorGeometrySet;
   atlas: Texture | null;
-  register: (mesh: Mesh | null) => void;
+  /** true for a plane that is being shown but not edited; see GHOST_OPACITY */
+  ghost: boolean;
+  /** render-space Y this plane is drawn at, solved from its connectors */
+  planeY: number;
+  /** omitted for a ghost plane, which is not pickable */
+  register?: (mesh: Mesh | null) => void;
 }) {
-  // `alphaTest` WITHOUT `transparent`. A cutout is a hole, not a translucent
-  // surface: leaving the material opaque keeps it in the depth-sorted opaque
-  // queue and discards the cut texels in the shader, which is exactly what the
-  // client's `clearRect` cutouts do. Turning `transparent` on as well would move
-  // every sector into the back-to-front transparent pass and make walls sort
-  // against each other for no reason.
+  // The ACTIVE plane: `alphaTest` WITHOUT `transparent`. A cutout is a hole, not
+  // a translucent surface: leaving the material opaque keeps it in the
+  // depth-sorted opaque queue and discards the cut texels in the shader, which
+  // is exactly what the client's `clearRect` cutouts do. Turning `transparent`
+  // on as well would move every sector into the back-to-front transparent pass
+  // and make walls sort against each other for no reason.
+  //
+  // A GHOST plane is transparent on purpose and pays that cost knowingly -- it
+  // is the only way to see through a floor -- but keeps `depthWrite: false` so
+  // it can never hide the plane being edited. See GHOST_OPACITY.
   const material = (
     <meshBasicMaterial
       vertexColors
@@ -371,20 +619,26 @@ function SectorLayer({
       side={FrontSide}
       alphaTest={ATLAS_ALPHA_TEST}
       toneMapped={false}
+      transparent={ghost}
+      opacity={ghost ? GHOST_OPACITY : 1}
+      depthWrite={!ghost}
     />
   );
 
   return (
-    <group position={[set.originX, 0, set.originZ]}>
+    <group position={[set.originX, planeY, set.originZ]}>
       {set.terrain && (
         <mesh
           ref={(mesh) => {
             // The picker reads `userData.sector` to turn a faceIndex into a
             // tile; see picking.ts.
             if (mesh) mesh.userData.sector = set;
-            register(mesh);
+            register?.(mesh);
           }}
           geometry={set.terrain}
+          // A ghost storey is there to be looked through. Raycasting it would
+          // let a click land on a floor the user is not editing.
+          raycast={ghost ? () => null : undefined}
         >
           {material}
         </mesh>
@@ -646,6 +900,17 @@ export function Viewport3D(props: ViewportProps) {
   const [version, setVersion] = useState(0);
   const [plates, setPlates] = useState<Plate[]>([]);
   const [mode, setMode] = useState<CameraMode>('orbit');
+  /**
+   * `single` is the default, deliberately.
+   *
+   * It is what the viewport has always done and what an editing session wants
+   * most of the time; stacking is a thing you turn on to answer a question
+   * ("where does this ladder go?") and turn off again. It also means nothing
+   * about the default view changed, so the ground floor still looks exactly as
+   * it did.
+   */
+  const [planeMode, setPlaneMode] = useState<PlaneSetMode>('single');
+  const [showConnectors, setShowConnectors] = useState(true);
   const [hud, setHud] = useState({
     triangles: 0,
     sectors: 0,
@@ -664,6 +929,23 @@ export function Viewport3D(props: ViewportProps) {
 
   const cache = useMemo(() => new SectorGeometryCache(), []);
   useEffect(() => () => cache.clear(), [cache]);
+
+  /**
+   * The other planes' lanes, read-only. See `plane-sectors.ts`.
+   *
+   * The store tracks exactly one plane, because that is the only one anything
+   * is allowed to edit. Everything below treats these as scenery: they are
+   * meshed and drawn and never written.
+   */
+  const planeCache = useMemo(() => new PlaneSectorCache(), []);
+  useEffect(() => () => planeCache.dispose(), [planeCache]);
+  const [ghostVersion, setGhostVersion] = useState(0);
+  useEffect(
+    () => planeCache.subscribe(() => setGhostVersion((v) => v + 1)),
+    [planeCache]
+  );
+
+  const planeSet = useMemo(() => planesFor(plane, planeMode), [plane, planeMode]);
 
   /**
    * The atlas -- the project's own sheet when the server has one, else bundled.
@@ -709,7 +991,7 @@ export function Viewport3D(props: ViewportProps) {
   }, [config]);
 
   /* sectors -> mesh queue */
-  const sectorList = useMemo(() => {
+  const activeSectors = useMemo(() => {
     const map = new Map<string, SectorSource>();
     for (const [key, sector] of Object.entries(sectors)) {
       if (sector.coord.plane !== plane) continue;
@@ -717,6 +999,34 @@ export function Viewport3D(props: ViewportProps) {
     }
     return map;
   }, [sectors, plane]);
+
+  /* ask for the ghost planes' sectors, read-only */
+  useEffect(() => {
+    if (planeSet.length <= 1) return;
+    planeCache.request(planeSectorCoords(activeSectors, planeSet, plane));
+  }, [planeCache, activeSectors, planeSet, plane]);
+
+  /**
+   * What gets meshed: the active plane from the store, plus whatever other
+   * planes have arrived.
+   *
+   * The active plane always comes from props, never from the side cache, so
+   * there is exactly one owner of the thing being edited and an edit can never
+   * be masked by a stale read-only copy.
+   */
+  const meshList = useMemo(() => {
+    if (planeSet.length <= 1) return activeSectors;
+
+    const map = new Map<string, SectorSource>(activeSectors);
+    const wanted = new Set(planeSet);
+    for (const [key, sector] of planeCache.snapshot()) {
+      if (sector.coord.plane === plane) continue;
+      if (!wanted.has(sector.coord.plane)) continue;
+      map.set(key, sector);
+    }
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSectors, planeSet, plane, planeCache, ghostVersion]);
 
   // Wait for the atlas AND the models to settle before the first mesh. Either
   // arriving invalidates every geometry -- a layout change moves the uvs, and
@@ -728,7 +1038,7 @@ export function Viewport3D(props: ViewportProps) {
     if (!settled) return;
     if (
       cache.request(
-        sectorList,
+        meshList,
         config ?? null,
         atlas ? atlas.layout : null,
         models?.source ?? null
@@ -736,7 +1046,7 @@ export function Viewport3D(props: ViewportProps) {
     ) {
       setVersion((v) => v + 1);
     }
-  }, [cache, sectorList, config, atlas, models, settled]);
+  }, [cache, meshList, config, atlas, models, settled]);
 
   /* recentre on the active sector */
   useEffect(() => {
@@ -897,9 +1207,10 @@ export function Viewport3D(props: ViewportProps) {
   };
 
   const goInGame = () => {
-    orbitRef.current = clampOrbit(
-      inGameOrbit(orbitRef.current.target, orbitRef.current.yaw)
-    );
+    // Squared up to north rather than keeping whatever yaw you were on, so the
+    // preset agrees with the world map's orientation. See MAP_NORTH_YAW for the
+    // half of that promise a camera cannot keep.
+    orbitRef.current = clampOrbit(inGameOrbit(orbitRef.current.target, MAP_NORTH_YAW));
     setCameraMode('orbit');
   };
 
@@ -924,6 +1235,21 @@ export function Viewport3D(props: ViewportProps) {
     () => [...new Set([...(models?.missing ?? []), ...cache.missingModels()])].sort(),
     [models, cache, version]
   );
+
+  /* what the stack currently contains, for the badge */
+  const stack = useMemo(() => {
+    const graph = cache.connectorGraph();
+    const drawn = new Set(planeSet);
+    return {
+      connectors: graph.placements.filter((c) => drawn.has(c.plane)).length,
+      links: graph.links.filter(
+        (l) => drawn.has(l.lower.plane) && drawn.has(l.upper.plane)
+      ).length,
+      unpaired: graph.unpaired,
+      ghost: planeCache.stats()
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cache, planeSet, version, ghostVersion, planeCache]);
 
   return (
     <div className="viewport" ref={hostRef}>
@@ -971,7 +1297,12 @@ export function Viewport3D(props: ViewportProps) {
         >
           <SceneContents
             {...props}
-            sectorList={sectorList}
+            // The ACTIVE plane's sectors only: the overlays (grid, brush,
+            // selection, borders) belong to the plane being edited, and a grid
+            // drawn four times over would be noise, not a precision aid.
+            sectorList={activeSectors}
+            planeSet={planeSet}
+            showConnectors={showConnectors}
             cache={cache}
             atlas={atlas?.texture ?? null}
             orbitRef={orbitRef}
@@ -1034,6 +1365,22 @@ export function Viewport3D(props: ViewportProps) {
                       }`
                     : 'loading textures…'}
           </span>
+          {/*
+            What the stack is showing. "planes: 0" with a ladder count of zero
+            is a state people must be able to read: a building with no upper
+            storey in the data looks identical to one whose upper storey failed
+            to load, and only this line tells them apart.
+          */}
+          <span style={{ color: 'var(--fg-2)' }}>
+            planes: {planeSet.map((p) => PLANE_LABELS[p] ?? p).join(' · ')}
+            {planeSet.length > 1
+              ? ` · ${stack.ghost.loaded} read-only sector${stack.ghost.loaded === 1 ? '' : 's'}${
+                  stack.ghost.pending > 0 ? `, ${stack.ghost.pending} loading` : ''
+                }${stack.ghost.absent > 0 ? `, ${stack.ghost.absent} with no data` : ''}`
+              : ' (stacking off)'}
+            {' · '}
+            {stack.connectors} connector{stack.connectors === 1 ? '' : 's'}, {stack.links} linked
+          </span>
           <span style={{ color: 'var(--fg-2)' }}>
             right-drag orbit &middot; middle/shift-drag pan &middot; wheel zoom
             {mode === 'fly' ? ' · WASD/QE fly, shift to sprint' : ''}
@@ -1046,22 +1393,77 @@ export function Viewport3D(props: ViewportProps) {
             top: 8,
             right: 8,
             display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'flex-end',
             gap: 4,
             pointerEvents: 'auto'
           }}
         >
-          <CameraButton active={mode === 'orbit'} onClick={() => setCameraMode('orbit')}>
-            orbit
-          </CameraButton>
-          <CameraButton active={mode === 'fly'} onClick={() => setCameraMode('fly')}>
-            fly
-          </CameraButton>
-          <CameraButton active={false} onClick={goInGame} title="RSC's own pitch and zoom">
-            in-game
-          </CameraButton>
-          <CameraButton active={false} onClick={goOverview} title="Frame the whole sector">
-            sector
-          </CameraButton>
+          <div style={{ display: 'flex', gap: 4 }}>
+            <CameraButton active={mode === 'orbit'} onClick={() => setCameraMode('orbit')}>
+              orbit
+            </CameraButton>
+            <CameraButton active={mode === 'fly'} onClick={() => setCameraMode('fly')}>
+              fly
+            </CameraButton>
+            <CameraButton active={false} onClick={goInGame} title="RSC's own pitch and zoom, looking north">
+              in-game
+            </CameraButton>
+            <CameraButton active={false} onClick={goOverview} title="Frame the whole sector, north up">
+              sector
+            </CameraButton>
+          </div>
+
+          {/*
+            The floor control, right under the camera control and labelled, so
+            "why can I only see one storey" has a visible answer. Three states
+            rather than a checkbox: "everything below me" is the one people want
+            when they are building an upper floor, and "all" is the one they want
+            when they are looking for where a ladder goes.
+          */}
+          <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+            <span
+              style={{
+                fontFamily: 'var(--mono)',
+                fontSize: 10,
+                color: 'var(--fg-2)',
+                background: 'rgba(13, 15, 18, 0.78)',
+                padding: '3px 6px',
+                border: '1px solid var(--line)',
+                borderRadius: 'var(--radius)'
+              }}
+            >
+              floors
+            </span>
+            <CameraButton
+              active={planeMode === 'single'}
+              onClick={() => setPlaneMode('single')}
+              title="Only the plane being edited"
+            >
+              this one
+            </CameraButton>
+            <CameraButton
+              active={planeMode === 'below'}
+              onClick={() => setPlaneMode('below')}
+              title="This plane and every storey under it, ghosted"
+            >
+              + below
+            </CameraButton>
+            <CameraButton
+              active={planeMode === 'all'}
+              onClick={() => setPlaneMode('all')}
+              title="All four planes, ghosted except the one being edited"
+            >
+              all
+            </CameraButton>
+            <CameraButton
+              active={showConnectors}
+              onClick={() => setShowConnectors((v) => !v)}
+              title="Mark ladders and staircases, and draw the link between the floors they join"
+            >
+              ladders
+            </CameraButton>
+          </div>
         </div>
       </div>
     </div>
@@ -1069,6 +1471,18 @@ export function Viewport3D(props: ViewportProps) {
 }
 
 const FLY_KEYS = new Set(['w', 'a', 's', 'd', 'q', 'e']);
+
+/**
+ * Plane numbers are file-name digits, not storeys: plane 3 is the DUNGEON and
+ * sits below the ground floor, which the ladder data proves (see `planes.ts`).
+ * Naming them in the badge stops "3" reading as "third floor".
+ */
+const PLANE_LABELS: Record<number, string> = {
+  3: 'dungeon',
+  0: 'ground',
+  1: '1st',
+  2: '2nd'
+};
 
 /** Pan the orbit target across the ground plane, in screen-relative directions. */
 function panBy(

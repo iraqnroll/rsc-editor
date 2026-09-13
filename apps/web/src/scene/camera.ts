@@ -20,11 +20,50 @@ export interface OrbitState {
   target: [number, number, number];
   /** distance from target, world units */
   distance: number;
-  /** degrees, 0 = looking from +z (south, i.e. increasing tile y) */
+  /**
+   * degrees. 0 puts the camera at +z (south of the target) looking north, which
+   * is {@link MAP_NORTH_YAW} -- read its comment before changing a preset.
+   */
   yaw: number;
   /** degrees above the horizon; 90 is straight down */
   pitch: number;
 }
+
+/* -------------------------------------------------------------------------- */
+/*  Agreeing with the world map                                               */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The yaw that puts NORTH at the top of the screen.
+ *
+ * At yaw 0 the camera sits at `target + (0, .., +z)` and looks back along -z.
+ * Render z is `tileY * 128`, and game y increases *southward*
+ * (docs/CACHE-ASSET-API.md), so -z is north: the horizon at the top of the
+ * screen is north, which is what the world map's north-up orientation means.
+ *
+ * ## What this yaw does NOT fix, and cannot
+ *
+ * The map also puts east on the right. The 3D view cannot, and no camera angle
+ * can, because the difference is a MIRROR and not a rotation:
+ *
+ *   - render x is `gameX * 128`, and **game x increases westward**, so +x is
+ *     west. The canonical map is drawn `pixelX = width - 1 - gameX`, i.e. with
+ *     that axis reversed, which is the whole point of
+ *     docs/CACHE-ASSET-API.md "The x axis is MIRRORED".
+ *   - with +z south and +y up, a camera looking north has +x -- west -- on its
+ *     right. Check it: (East, North, Up) = (-x, -z, +y) and (-x) x (-z) = -y,
+ *     i.e. down. The game's own compass directions form a LEFT-handed frame in
+ *     the space the geometry lives in.
+ *
+ * So the 3D view is a mirror image of the canonical map, and so is mudclient's,
+ * because `packages/render` is a faithful port of it. Undoing that would mean
+ * negating an axis, which flips the winding of every triangle -- and RSC
+ * surfaces are one-sided on purpose (a roof vanishes from underneath). It is not
+ * something to do quietly at the camera.
+ *
+ * North-up is therefore what the presets give you, and east is on the left.
+ */
+export const MAP_NORTH_YAW = 0;
 
 export const MIN_PITCH = 2;
 export const MAX_PITCH = 89.5;
@@ -50,13 +89,28 @@ export const MAX_DISTANCE = SECTOR_WIDTH * TILE_SIZE * 6;
 export const IN_GAME_PITCH = (360 * (1024 - 912)) / 1024;
 export const IN_GAME_DISTANCE = 550 * 2;
 
-export function inGameOrbit(target: [number, number, number], yaw = 0): OrbitState {
+export function inGameOrbit(
+  target: [number, number, number],
+  yaw = MAP_NORTH_YAW
+): OrbitState {
   return { target, distance: IN_GAME_DISTANCE, yaw, pitch: IN_GAME_PITCH };
 }
 
-/** A whole sector in frame, looking down at it from the south-east. */
+/**
+ * A whole sector in frame, looking north so the view agrees with the map.
+ *
+ * This used to sit at yaw 35 for a pleasanter three-quarter view, and its
+ * comment claimed that was "the south-east" -- it is the south-*west*, because
+ * +x is west (see {@link MAP_NORTH_YAW}). Squared up to north, the sector grid
+ * and the world map now read the same way up.
+ */
 export function overviewOrbit(target: [number, number, number]): OrbitState {
-  return { target, distance: SECTOR_WIDTH * TILE_SIZE * 1.25, yaw: 35, pitch: 48 };
+  return {
+    target,
+    distance: SECTOR_WIDTH * TILE_SIZE * 1.25,
+    yaw: MAP_NORTH_YAW,
+    pitch: 48
+  };
 }
 
 /**

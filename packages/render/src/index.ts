@@ -74,6 +74,14 @@
  *    identical because the only per-placement difference is a translation, and
  *    nothing in the lighting depends on one -- but the rotation does, which is
  *    why the direction is part of the key and not part of the instance.
+ * 9. **Planes can be stacked.** The client draws exactly one plane at a time and
+ *    applies NO per-floor height offset -- `getTerrainHeight` has no plane
+ *    argument, and planes 1 and 2 are elevation 0 everywhere in the real cache.
+ *    `planes.ts` invents a vertical separation so an editor can see a building's
+ *    storeys at once. It is off by default (`planeElevation(0) === 0`), it is
+ *    the one number in the package that is not from the client, and it is
+ *    derived from the standard wall height rather than chosen by eye. `planes.ts`
+ *    and `connectors.ts` are editor tooling; no client geometry depends on them.
  *
  * Ownership: the `renderer` agent. See CLAUDE.md.
  */
@@ -145,6 +153,33 @@ export {
 } from './model.js';
 
 export { HeightField, buildRoofHeightField, ROOF_SWEEP } from './height-field.js';
+
+export {
+  PLANE_STACK,
+  PLANE_STACK_IS_COMPLETE,
+  STOREY_HEIGHT,
+  planeElevation,
+  planeStorey,
+  planesFor,
+  storeyPlane,
+  type PlaneSetMode
+} from './planes.js';
+
+export {
+  connectorLinkLines,
+  connectorMarkerLines,
+  connectorOf,
+  connectorSense,
+  linkConnectors,
+  listConnectors,
+  planeOffsets,
+  withPlaneOffsets,
+  type ConnectorGraph,
+  type ConnectorLink,
+  type ConnectorMarkerOptions,
+  type ConnectorPlacement,
+  type ConnectorSense
+} from './connectors.js';
 
 export { buildTerrain, ambienceNoise, type TerrainOptions } from './terrain.js';
 export { buildWalls, type WallOptions } from './walls.js';

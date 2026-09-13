@@ -184,6 +184,92 @@ describe('viewport frame budget', () => {
   });
 
   /**
+   * What stacking four planes costs.
+   *
+   * The honest answer to "how expensive is the multi-floor view": the same 5x5
+   * neighbourhood, meshed on every plane instead of one. It is close to linear
+   * in the number of planes for the meshing, and NOT linear for the draw count,
+   * because scenery still merges across all 25 sectors of a plane.
+   *
+   * Numbers are printed rather than asserted tightly -- the point is the shape
+   * of the cost, and the shape is what a regression would change.
+   */
+  it('measures a 5x5 neighbourhood on all four planes', async () => {
+    const api = createMockApi();
+    const config = realisticModelNames(await api.loadConfig());
+
+    const onePlane = new Map<string, SectorSource>();
+    const allPlanes = new Map<string, SectorSource>();
+    for (const plane of [3, 0, 1, 2]) {
+      for (let dx = -RADIUS; dx <= RADIUS; dx++) {
+        for (let dy = -RADIUS; dy <= RADIUS; dy++) {
+          const coord = { plane, x: ORIGIN.x + dx, y: ORIGIN.y + dy };
+          const frame = await api.loadSector(coord);
+          const source = { coord, buffers: frame.buffers, rev: 0 };
+          allPlanes.set(sectorKey(coord), source);
+          if (plane === 0) onePlane.set(sectorKey(coord), source);
+        }
+      }
+    }
+    api.disconnect();
+
+    const measure = (sectors: Map<string, SectorSource>) => {
+      const cache = new SectorGeometryCache();
+      cache.request(sectors, config, null, MODELS);
+      const started = performance.now();
+      while (cache.drain(4)) {
+        /* keep going */
+      }
+      const meshMs = performance.now() - started;
+
+      let drawCalls = 0;
+      for (const set of cache.list()) {
+        for (const geometry of [set.terrain, set.walls, set.roofs]) if (geometry) drawCalls++;
+      }
+      const sceneryDraws = cache.sceneryDraws().length;
+
+      const connectorStart = performance.now();
+      const graph = cache.connectorGraph();
+      const connectorMs = performance.now() - connectorStart;
+
+      const stats = cache.stats();
+      cache.clear();
+      return {
+        meshMs,
+        connectorMs,
+        drawCalls: drawCalls + sceneryDraws,
+        sceneryDraws,
+        triangles: stats.triangles + stats.sceneryTriangles,
+        sectors: stats.cached,
+        connectors: graph.placements.length
+      };
+    };
+
+    const one = measure(onePlane);
+    const four = measure(allPlanes);
+
+    // eslint-disable-next-line no-console
+    console.log(
+      `5x5 x1 plane: ${one.sectors} sectors, ${one.triangles.toLocaleString()} tris, ` +
+        `${one.drawCalls} draws, meshed in ${one.meshMs.toFixed(0)}ms\n` +
+        `5x5 x4 planes: ${four.sectors} sectors, ${four.triangles.toLocaleString()} tris, ` +
+        `${four.drawCalls} draws (${four.sceneryDraws} scenery), ` +
+        `meshed in ${four.meshMs.toFixed(0)}ms ` +
+        `(${(four.meshMs / Math.max(1, one.meshMs)).toFixed(1)}x); ` +
+        `connector solve ${four.connectorMs.toFixed(2)}ms for ${four.connectors} connectors`
+    );
+
+    expect(four.sectors).toBe(100);
+    // The scenery merge must still be per (plane, model, direction) and not per
+    // sector: 100 sectors, and the draw count nowhere near 100x.
+    expect(four.sceneryDraws).toBeLessThanOrEqual(MODEL_POOL * 8 * 4);
+    // Solving the offsets and pairing runs on the render path. It walks a few
+    // dozen placements, and anything near a frame would be a different
+    // algorithm than the one that is here.
+    expect(four.connectorMs).toBeLessThan(8);
+  });
+
+  /**
    * Scenery must not stall the frame.
    *
    * The scene meshes at most `MESH_BUDGET` sectors per frame and then, every

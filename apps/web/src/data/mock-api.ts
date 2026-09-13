@@ -57,6 +57,7 @@ import type {
   LockResult,
   OpSubmitResult,
   ProjectSummary,
+  SceneryModelsAsset,
   SessionSnapshot,
   TextureAtlasAsset,
   WorldIndex,
@@ -643,6 +644,11 @@ export function createMockApi(): EditorApi {
     },
 
     async loadEntitySprites(): Promise<EntitySpriteSheet | null> {
+      return null;
+    },
+
+    /** Same contract: the scene draws terrain, walls and roofs, and says so. */
+    async loadModels(): Promise<SceneryModelsAsset | null> {
       return null;
     },
 

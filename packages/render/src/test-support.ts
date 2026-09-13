@@ -1,9 +1,11 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
+  applyScenery,
   loadConfig,
   loadLandscape,
   loadModels,
+  parseSceneryPlacements,
   type LoadedSector,
   type ModelLibrary
 } from '@rsc-editor/cache';
@@ -11,9 +13,10 @@ import {
   SECTOR_WIDTH,
   emptySectorBuffers,
   type RscConfig,
-  type SectorBuffers
+  type SectorBuffers,
+  type SectorCoord
 } from '@rsc-editor/schema';
-import { LandscapeView, neighbourKey } from './landscape-view.js';
+import { LandscapeView, neighbourKey, neighboursFrom } from './landscape-view.js';
 import type { GeometryData } from './model.js';
 import type { SceneryModelSource } from './scenery.js';
 
@@ -25,6 +28,7 @@ import type { SceneryModelSource } from './scenery.js';
  */
 
 const FIXTURES = fileURLToPath(new URL('../../../fixtures/data204/', import.meta.url));
+const SCENERY_FIXTURES = fileURLToPath(new URL('../../../fixtures/scenery/', import.meta.url));
 
 let configCache: RscConfig | null = null;
 let landscapeCache: Map<string, LoadedSector> | null = null;
@@ -86,6 +90,61 @@ export const SCENERY_SECTOR = { plane: 0, x: 50, y: 50 } as const;
 
 export function tileIndexOf(x: number, y: number): number {
   return x * SECTOR_WIDTH + y;
+}
+
+/**
+ * The whole world with its real scenery in place, on every plane.
+ *
+ * The cache ships exactly two `.loc` entries (DECISIONS section 12), both on
+ * plane 0, so `realLandscape()` alone has no scenery above or below the ground
+ * at all -- and "no ladders anywhere" would let a connector test pass while
+ * finding nothing. The 26,902 real placements come from `fixtures/scenery/`, the
+ * same file `tools/` imports with `--scenery`, applied to a SEPARATE landscape
+ * so `realLandscape()` keeps the bytes the cache actually shipped.
+ *
+ * Lumbridge castle, `x/50/50`, is the interesting subject: four ground-to-first
+ * ladders, two first-to-second, and one trapdoor down into the plane-3 dungeon.
+ */
+export interface SceneryWorld {
+  sectors: Map<string, LoadedSector>;
+  /** A view of one sector with its eight neighbours, or null if absent. */
+  view(coord: SectorCoord): LandscapeView | null;
+}
+
+let sceneryWorldCache: SceneryWorld | null = null;
+
+export function sceneryWorld(): SceneryWorld {
+  if (sceneryWorldCache) return sceneryWorldCache;
+
+  const sectors = loadLandscape({
+    landJag: readFileSync(FIXTURES + 'land63.jag'),
+    mapsJag: readFileSync(FIXTURES + 'maps63.jag'),
+    landMem: readFileSync(FIXTURES + 'land63.mem'),
+    mapsMem: readFileSync(FIXTURES + 'maps63.mem')
+  });
+
+  applyScenery(
+    sectors,
+    parseSceneryPlacements(
+      JSON.parse(readFileSync(SCENERY_FIXTURES + 'object-locs.json', 'utf8'))
+    ),
+    realConfig().objects
+  );
+
+  sceneryWorldCache = {
+    sectors,
+    view(coord) {
+      const centre = sectors.get(`${coord.plane}/${coord.x}/${coord.y}`);
+      if (!centre) return null;
+      return new LandscapeView({
+        plane: coord.plane,
+        centre: centre.buffers,
+        neighbours: neighboursFrom(coord, sectors)
+      });
+    }
+  };
+
+  return sceneryWorldCache;
 }
 
 export interface FlatSectorOptions {

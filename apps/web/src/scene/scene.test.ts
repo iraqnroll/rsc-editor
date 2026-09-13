@@ -15,18 +15,27 @@
 
 import { describe, expect, it } from 'vitest';
 import { Matrix4, Mesh, Raycaster, Vector3 } from 'three';
-import { SECTOR_WIDTH, sectorKey } from '@rsc-editor/schema';
+import {
+  OBJECT_ID_BIAS,
+  SECTOR_WIDTH,
+  emptySectorBuffers,
+  sectorKey,
+  tileIndex
+} from '@rsc-editor/schema';
 import type { RscConfig, SectorCoord } from '@rsc-editor/schema';
 import {
   LandscapeView,
+  STOREY_HEIGHT,
   TILE_SIZE,
   buildScenery,
   buildSectorMesh,
   gridAtlasLayout,
   neighboursFrom,
+  planesFor,
   type SceneryModel,
   type SceneryModelSource
 } from '@rsc-editor/render';
+import { planeSectorCoords } from './plane-sectors.js';
 import { parseModelsWire, resetSceneryModels } from './scenery-models.js';
 import { renderModelThumbnail, resetModelThumbnails } from './model-thumbnail.js';
 import { createMockApi } from '../data/mock-api.js';
@@ -51,7 +60,9 @@ import {
   clampOrbit,
   IN_GAME_DISTANCE,
   inGameOrbit,
+  MAP_NORTH_YAW,
   orbitPose,
+  overviewOrbit,
   sectorCentre
 } from './camera.js';
 import { flyForward } from './Viewport3D.js';
@@ -168,6 +179,157 @@ describe('sector geometry', () => {
     cache.request(sectors, null, null);
     expect(cache.drain(9)).toBe(false);
     expect(cache.list()).toHaveLength(0);
+  });
+});
+
+/* ========================================================================== */
+/*  Several planes at once                                                    */
+/* ========================================================================== */
+
+/**
+ * A two-storey building with a ladder, built by hand.
+ *
+ * The mock world has no connectors at all -- `buildConfig()` gives objects
+ * `['Search']` or nothing -- and its scenery is scattered pseudo-randomly, so a
+ * ladder that lines up on two planes would never occur. Generated here rather
+ * than fished out of a fixture, which is CLAUDE.md rule 2's answer to exactly
+ * this situation.
+ *
+ * Object 5 is the up ladder and object 6 the down one, mirroring the real
+ * cache's ids -- `config85.jag` really does put "Ladder / Climb-Up" at 5 and
+ * "Ladder / Climb-Down" at 6.
+ */
+const LADDER_TILE = { x: 20, y: 30 } as const;
+
+function ladderConfig(config: RscConfig): RscConfig {
+  const objects = config.objects.map((object, i) => {
+    if (i === 5) return { ...object, name: 'Ladder', commands: ['Climb-Up', 'Examine'], width: 1, height: 1 };
+    if (i === 6) return { ...object, name: 'Ladder', commands: ['Climb-Down', 'Examine'], width: 1, height: 1 };
+    return object;
+  });
+  return { ...config, objects };
+}
+
+function twoStoreySectors(coord: SectorCoord): Map<string, SectorSource> {
+  const out = new Map<string, SectorSource>();
+  const lane = tileIndex(LADDER_TILE.x, LADDER_TILE.y);
+
+  for (const [plane, objectId] of [
+    [0, 5],
+    [1, 6]
+  ] as const) {
+    const buffers = emptySectorBuffers();
+    // Ground floor stands on a hill; the first floor, like every real upper
+    // storey in the cache, is elevation 0 everywhere. That is the whole reason
+    // the offsets are solved rather than constant.
+    if (plane === 0) buffers.elevation.fill(100);
+    buffers.wallsDiagonal[lane] = objectId + OBJECT_ID_BIAS;
+
+    const key = sectorKey({ plane, x: coord.x, y: coord.y });
+    out.set(key, { coord: { plane, x: coord.x, y: coord.y }, buffers, rev: 0 });
+  }
+
+  return out;
+}
+
+describe('stacking planes', () => {
+  it('meshes every plane in the set, keyed by plane', async () => {
+    const { config } = await loadNeighbourhood();
+    const sectors = twoStoreySectors({ plane: 0, x: 50, y: 50 });
+
+    const cache = new SectorGeometryCache();
+    cache.request(sectors, ladderConfig(config), null);
+    drainAll(cache);
+
+    expect(cache.list()).toHaveLength(2);
+    expect(cache.get(sectorKey({ plane: 0, x: 50, y: 50 }))).toBeDefined();
+    expect(cache.get(sectorKey({ plane: 1, x: 50, y: 50 }))).toBeDefined();
+
+    cache.clear();
+  });
+
+  /**
+   * The offset is solved from the ladder, not assumed.
+   *
+   * The ground floor is at elevation 100 * 3 = 300 and the first floor's own
+   * terrain is 0, so a flat `+192` would put the upper storey 108 units UNDER
+   * the lower one. Solved, it lands at 300 + 192 = 492.
+   */
+  it('hangs the upper storey off the ladder that joins it to the one below', async () => {
+    const { config } = await loadNeighbourhood();
+    const cache = new SectorGeometryCache();
+    cache.request(twoStoreySectors({ plane: 0, x: 50, y: 50 }), ladderConfig(config), null);
+    drainAll(cache);
+
+    expect(cache.planeOffset(0)).toBe(0);
+    expect(cache.planeOffset(1)).toBe(300 + STOREY_HEIGHT);
+
+    const graph = cache.connectorGraph();
+    expect(graph.placements).toHaveLength(2);
+    expect(graph.links).toHaveLength(1);
+    expect(graph.links[0]!.lower.plane).toBe(0);
+    expect(graph.links[0]!.upper.plane).toBe(1);
+    // The two ends sit exactly one storey apart, on the same tile.
+    expect(graph.links[0]!.upper.y - graph.links[0]!.lower.y).toBe(STOREY_HEIGHT);
+    expect(graph.links[0]!.upper.wx).toBe(graph.links[0]!.lower.wx);
+
+    cache.clear();
+  });
+
+  it('falls back to a bare storey height for a plane with no connector', async () => {
+    const { config, sectors } = await loadNeighbourhood();
+    const cache = new SectorGeometryCache();
+    // The mock world has no connectors anywhere, so nothing constrains this.
+    cache.request(sectors, config, null);
+    drainAll(cache);
+
+    expect(cache.planeOffset(0)).toBe(0);
+    expect(cache.planeOffset(1)).toBe(STOREY_HEIGHT);
+    // Plane 3 is the DUNGEON and goes underneath, which is the one thing a
+    // plane number does not tell you.
+    expect(cache.planeOffset(3)).toBe(-STOREY_HEIGHT);
+
+    cache.clear();
+  });
+
+  it('keeps one scenery draw per (plane, model, direction)', async () => {
+    const { config, sectors } = await loadNeighbourhood();
+    const cache = new SectorGeometryCache();
+    cache.request(sectors, sharedModelConfig(config), null, everyModelIsAWedge);
+    drainAll(cache);
+
+    // Every sector here is plane 0, so the plane must not have multiplied the
+    // draw count -- batching across sectors is the whole point of the merge.
+    const draws = cache.sceneryDraws();
+    expect(draws.length).toBeLessThanOrEqual(8);
+    for (const draw of draws) expect(draw.plane).toBe(0);
+
+    cache.clear();
+  });
+
+  it('chooses plane sets bottom to top, with the dungeon underneath', () => {
+    expect(planesFor(0, 'single')).toEqual([0]);
+    expect(planesFor(1, 'below')).toEqual([3, 0, 1]);
+    expect(planesFor(2, 'all')).toEqual([3, 0, 1, 2]);
+  });
+
+  it('asks for the other planes over exactly the active plane footprint', () => {
+    const active = new Map<string, SectorSource>();
+    for (const [x, y] of [
+      [50, 50],
+      [51, 50]
+    ] as const) {
+      const coord = { plane: 0, x, y };
+      active.set(sectorKey(coord), { coord, buffers: emptySectorBuffers(), rev: 0 });
+    }
+
+    const wanted = planeSectorCoords(active, [3, 0, 1], 0);
+    // Two sectors on each of the two non-active planes, and nothing on the
+    // active one -- that comes from the store, which is its only owner.
+    expect(wanted).toHaveLength(4);
+    expect(wanted.every((c) => c.plane !== 0)).toBe(true);
+    expect(new Set(wanted.map((c) => c.plane))).toEqual(new Set([3, 1]));
+    expect(new Set(wanted.map((c) => `${c.x},${c.y}`))).toEqual(new Set(['50,50', '51,50']));
   });
 });
 
@@ -507,6 +669,32 @@ describe('picking', () => {
     ).toBeNull();
   });
 
+  /**
+   * Planes 1 and 2 have no ground of their own, so almost every pointer move on
+   * an upper storey misses the mesh and lands here. Once the storey is lifted by
+   * a group transform, the notional floor has to be lifted with it -- otherwise
+   * a slanted ray crosses y = 0 a long way from where it crosses the floor the
+   * user can see, and the brush follows the cursor by a tile or three.
+   */
+  it('intersects the ACTIVE plane, not sea level, when the storey is lifted', () => {
+    const origin = { x: 0, y: 1000, z: 0 };
+    // 45 degrees: one unit along z for every unit down.
+    const direction = { x: 0, y: -1, z: 1 };
+
+    expect(tileOfGroundPlane(1, origin, direction, 0)).toEqual({
+      plane: 1,
+      wx: 0,
+      wy: Math.floor(1000 / TILE_SIZE)
+    });
+    expect(tileOfGroundPlane(1, origin, direction, 500)).toEqual({
+      plane: 1,
+      wx: 0,
+      wy: Math.floor(500 / TILE_SIZE)
+    });
+    // A floor above the camera is behind the ray, and has no answer.
+    expect(tileOfGroundPlane(1, origin, direction, 1500)).toBeNull();
+  });
+
   it('refuses negative world positions rather than wrapping them', () => {
     expect(worldTileAt(0, -1, 0)).toBeNull();
     expect(worldTileAt(0, 0, 0)).toEqual({ plane: 0, wx: 0, wy: 0 });
@@ -630,6 +818,29 @@ describe('cameras', () => {
     expect(clampFly(state).pitch).toBe(-40);
     expect(clampOrbit(state).pitch).toBe(2);
     expect(clampFly({ ...state, pitch: -120 }).pitch).toBe(-88);
+  });
+
+  /**
+   * The presets have to agree with the world map, as far as a camera can.
+   *
+   * At MAP_NORTH_YAW the camera sits SOUTH of its target (+z, because game y
+   * increases southward) and therefore looks north, which puts north at the top
+   * of the screen exactly as the map does.
+   *
+   * East on the right is the half no yaw can deliver, and that is deliberate,
+   * not an oversight: render +x is game x, game x increases WESTWARD, and the
+   * map reverses that axis (`pixelX = width - 1 - gameX`). The difference is a
+   * mirror, and a mirror at the camera flips the winding of every triangle --
+   * which RSC's one-sided surfaces depend on. See the comment on MAP_NORTH_YAW.
+   */
+  it('frames the world north-up, the way the map is drawn', () => {
+    expect(overviewOrbit([0, 0, 0]).yaw).toBe(MAP_NORTH_YAW);
+    expect(inGameOrbit([0, 0, 0]).yaw).toBe(MAP_NORTH_YAW);
+
+    const pose = orbitPose({ target: [0, 0, 0], distance: 1000, yaw: MAP_NORTH_YAW, pitch: 45 });
+    // Camera on the +z side => looking in the -z direction => looking north.
+    expect(pose.position[2]).toBeGreaterThan(0);
+    expect(pose.position[0]).toBeCloseTo(0, 6);
   });
 
   it('centres on a sector in render space', () => {

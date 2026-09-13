@@ -5,11 +5,11 @@
  *  ABSENCE IS NORMAL. IT MUST NEVER BLANK THE WORLD.
  * ============================================================================
  *
- * `GET …/cache-assets/models` (docs/CACHE-ASSET-API.md) answers 404 until the
- * importer has built the asset, which is the correct state for a fresh project
- * and for mock mode, where there is no server at all. Every failure path here
- * resolves to `null` and the viewport draws terrain, walls and roofs without
- * scenery, saying so in the badge. It never throws into the render tree.
+ * `EditorApi.loadModels()` answers `null` until the importer has built the
+ * asset, which is the correct state for a fresh project and for mock mode, where
+ * there is no server at all. Every failure path here resolves to `null` and the
+ * viewport draws terrain, walls and roofs without scenery, saying so in the
+ * badge. It never throws into the render tree.
  *
  * Two kinds of "missing" are reported separately, because they mean different
  * things to whoever is looking at the editor:
@@ -22,31 +22,26 @@
  *     hits the same dead end (DECISIONS section 8). Those objects do not draw;
  *     everything else does.
  *
- * ## Why this reaches for the project id itself
+ * ## This used to resolve the project itself, and that was a bug
  *
- * `EditorApi` has `loadTextureAtlas()` but no `loadModels()` yet, and
- * `apps/web/src/data` is another agent's file. So this resolves the project the
- * same way `live-api.ts` does -- `VITE_PROJECT_ID`, then the `rsc.projectId`
- * key it persists, then the first project -- and calls the route directly.
+ * Before `loadModels()` existed, this file found the project id the way
+ * `live-api.ts` does -- `VITE_PROJECT_ID`, then the persisted `rsc.projectId`,
+ * then the first entry of `/api/projects`. That last fallback is wrong: on a
+ * genuinely first load `localStorage` is empty, so it fetched *some other
+ * project's* models and the scene reported "no models asset on this project".
+ * A reload then worked, because the socket had persisted the id by then, which
+ * made a wrong-project bug look like a transient.
  *
- * REPLACE THIS with `getApi().loadModels()` the moment that method exists;
- * everything below `loadSceneryModels()` is then one line. The duplication is
- * deliberate and marked rather than silently forked.
+ * `getApi().loadModels()` uses the project the socket actually joined, caches
+ * per project and dedups concurrent callers, so all of that is gone.
  */
 
 import {
   modelSourceFrom,
-  type SceneryModel,
+  type SceneryModel as RenderSceneryModel,
   type SceneryModelSource
 } from '@rsc-editor/render';
-import { apiMode } from '../data/api.js';
-import { apiJson } from '../data/http.js';
-
-/** Exactly the JSON `GET …/cache-assets/models` returns. */
-export interface ModelsWire {
-  models: Record<string, SceneryModel>;
-  missing?: string[];
-}
+import { getApi, type SceneryModelsAsset } from '../data/api.js';
 
 export interface ResolvedModels {
   source: SceneryModelSource;
@@ -56,50 +51,26 @@ export interface ResolvedModels {
   missing: string[];
 }
 
-/** The same key `live-api.ts` persists the joined project under. */
-const PROJECT_STORAGE_KEY = 'rsc.projectId';
-
-function storedProject(): string | null {
-  try {
-    return globalThis.localStorage?.getItem(PROJECT_STORAGE_KEY) ?? null;
-  } catch {
-    return null;
-  }
-}
-
-async function resolveProjectId(): Promise<string | null> {
-  const pinned = (import.meta.env as Record<string, unknown>).VITE_PROJECT_ID;
-  if (typeof pinned === 'string' && pinned) return pinned;
-
-  const stored = storedProject();
-  if (stored) return stored;
-
-  try {
-    const body = await apiJson<{ projects?: Array<{ id?: unknown }> }>('/api/projects');
-    const first = body.projects?.[0]?.id;
-    return typeof first === 'string' ? first : null;
-  } catch {
-    return null;
-  }
-}
-
 /**
  * Accept a payload only if it has the shape the builder can walk.
  *
- * Deliberately shallow: this is several megabytes of JSON, and a full per-vertex
- * validation would cost more than decoding it. The builder is already defensive
- * about the things that vary per face -- an out-of-range vertex index, a face
- * with fewer than three vertices -- so what has to be checked here is only that
- * the containers exist.
+ * Still here, and still applied, even though `loadModels()` validates its own
+ * wire format: this is the last check before several megabytes of JSON becomes
+ * GPU buffers, and it is the one that drops an individual bad entry rather than
+ * rejecting the asset. Deliberately shallow -- a full per-vertex validation
+ * would cost more than decoding it, and the builder is already defensive about
+ * an out-of-range vertex index or a face with fewer than three vertices.
  */
-export function parseModelsWire(body: unknown): ModelsWire | null {
+export function parseModelsWire(
+  body: unknown
+): { models: Record<string, RenderSceneryModel>; missing: string[] } | null {
   if (!body || typeof body !== 'object') return null;
   const models = (body as { models?: unknown }).models;
   if (!models || typeof models !== 'object') return null;
 
-  const out: Record<string, SceneryModel> = {};
+  const out: Record<string, RenderSceneryModel> = {};
   for (const [name, value] of Object.entries(models as Record<string, unknown>)) {
-    const model = value as Partial<SceneryModel> | null;
+    const model = value as Partial<RenderSceneryModel> | null;
     if (!model || !Array.isArray(model.vertices) || !Array.isArray(model.faces)) continue;
     out[name] = { vertices: model.vertices, faces: model.faces };
   }
@@ -126,34 +97,29 @@ export function loadSceneryModels(): Promise<ResolvedModels | null> {
   if (pending) return pending;
 
   pending = (async (): Promise<ResolvedModels | null> => {
-    // Mock mode has no server; asking would be a guaranteed network error on
-    // every mount.
-    if (apiMode() !== 'live') return null;
-
-    const projectId = await resolveProjectId();
-    if (!projectId) return null;
-
+    let asset: SceneryModelsAsset | null;
     try {
-      const body = await apiJson<unknown>(
-        `/api/projects/${encodeURIComponent(projectId)}/cache-assets/models`
-      );
-      const wire = parseModelsWire(body);
-      if (!wire) {
-        console.warn('[scenery] the models asset was not the shape we expect; skipping scenery');
-        return null;
-      }
-
-      return {
-        source: modelSourceFrom(wire.models),
-        count: Object.keys(wire.models).length,
-        missing: wire.missing ?? []
-      };
+      asset = await getApi().loadModels();
     } catch (err) {
-      // A 404 is the documented "not imported yet" answer and is not an error.
-      // Anything else is, but it is still not a reason to blank the viewport.
-      console.warn('[scenery] no models asset, drawing without scenery:', err);
+      // `loadModels()` is contracted to answer null rather than throw, but a
+      // transport failure is still not a reason to blank the viewport.
+      console.warn('[scenery] could not load the models asset, drawing without scenery:', err);
       return null;
     }
+
+    if (!asset) return null;
+
+    const wire = parseModelsWire(asset);
+    if (!wire) {
+      console.warn('[scenery] the models asset was not the shape we expect; skipping scenery');
+      return null;
+    }
+
+    return {
+      source: modelSourceFrom(wire.models),
+      count: Object.keys(wire.models).length,
+      missing: wire.missing
+    };
   })();
 
   return pending;

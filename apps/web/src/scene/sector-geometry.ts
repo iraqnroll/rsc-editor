@@ -38,6 +38,16 @@
  * has to be: the client relights a model after transforming it, so the yaw
  * changes the baked vertex colours. Rotating with the instance matrix would put
  * a tree in the right place with the wrong shading.
+ *
+ * ## Planes
+ *
+ * The cache is keyed on `sectorKey`, which already carries the plane, and
+ * `build()` already takes the plane off the coord -- so several planes at once
+ * needs nothing from the meshing side. What it does need is the *vertical*
+ * placement, and that is NOT baked into any geometry: `connectorGraph()` solves
+ * one offset per plane from the ladders that join them, and the scene applies it
+ * as a group transform. Baking it would mean re-meshing a sector whenever the
+ * offsets moved, which happens whenever another plane's sector finishes loading.
  */
 
 import { BufferAttribute, BufferGeometry, Sphere, Vector3 } from 'three';
@@ -48,8 +58,15 @@ import {
   TILE_SIZE,
   atlasUvs,
   buildSectorMesh,
+  linkConnectors,
+  listConnectors,
   neighboursFrom,
+  planeElevation,
+  planeOffsets,
+  withPlaneOffsets,
   type AtlasLayout,
+  type ConnectorLink,
+  type ConnectorPlacement,
   type GeometryData,
   type SceneryModelSource
 } from '@rsc-editor/render';
@@ -98,6 +115,13 @@ export interface SectorGeometrySet {
   terrainTiles: Int32Array;
   /** this sector's placements, by batch key. Geometry lives on the cache. */
   scenery: SceneryPlacements[];
+  /**
+   * Ladders, staircases and trapdoors on this sector, in WORLD space and
+   * without a plane offset (`ConnectorPlacement.groundY`). The offsets are
+   * solved across every loaded plane at once by `connectorGraph()`, so they
+   * cannot be baked in per sector.
+   */
+  connectors: ConnectorPlacement[];
   /** terrain + walls + roofs, as uploaded */
   triangles: number;
   /** scenery triangles actually drawn, i.e. counting every instance */
@@ -110,6 +134,16 @@ export interface SectorGeometrySet {
 export interface SceneryDraw {
   key: string;
   modelName: string;
+  /**
+   * Which plane these copies stand on.
+   *
+   * Part of the batch key, not of the matrices. A stacked viewport ghosts every
+   * plane but the active one, so the two need different materials -- and the
+   * plane's vertical offset is a group transform on the mesh rather than a
+   * translation baked per instance, so that re-solving the offsets does not
+   * rebuild thousands of matrices.
+   */
+  plane: number;
   geometry: BufferGeometry;
   /** `count * 16`, column-major, translation only -- the yaw is in the geometry */
   matrices: Float32Array;
@@ -162,6 +196,24 @@ function signatureOf(
   return parts.join(',');
 }
 
+/**
+ * The connector picture for the whole loaded neighbourhood.
+ *
+ * Solved across every loaded plane at once rather than per sector, because the
+ * vertical offset of a storey is derived from the ladders that join it to the
+ * one below (see `planeOffsets` in `@rsc-editor/render`) and a per-sector answer
+ * would step at every sector seam.
+ */
+export interface SceneConnectors {
+  /** every connector found, with `y` on the solved plane offsets */
+  placements: ConnectorPlacement[];
+  /** paired connectors, lower end to upper end */
+  links: ConnectorLink[];
+  /** render-space Y offset per plane */
+  offsets: Map<number, number>;
+  unpaired: number;
+}
+
 export interface CacheStats {
   built: number;
   cached: number;
@@ -196,6 +248,8 @@ export class SectorGeometryCache {
   private readonly sceneryGeometry = new Map<string, BufferGeometry>();
   /** merged instanced draws; invalidated whenever the entry set changes */
   private draws: SceneryDraw[] | null = null;
+  /** solved connector graph; invalidated with the entry set */
+  private connectors: SceneConnectors | null = null;
   built = 0;
 
   /**
@@ -234,7 +288,7 @@ export class SectorGeometryCache {
       if (!want || want.signature !== entry.signature) {
         dispose(entry);
         this.entries.delete(key);
-        this.draws = null;
+        this.invalidateDerived();
         dirty = true;
       }
     }
@@ -266,7 +320,7 @@ export class SectorGeometryCache {
       if (!want || !sector || this.entries.has(key)) continue;
 
       this.entries.set(key, this.build(key, sector, want.signature));
-      this.draws = null;
+      this.invalidateDerived();
       this.built++;
       did = true;
     }
@@ -331,6 +385,10 @@ export class SectorGeometryCache {
       roofs,
       terrainTiles: mesh.terrain.triangleTiles,
       scenery,
+      // Cheap -- it walks the same placement list the scenery pass already
+      // walked -- so it rides along with the mesh rather than being a second
+      // scan of every sector on every plane change.
+      connectors: listConnectors(view, this.config!, sector.coord),
       triangles:
         mesh.terrain.triangleCount + mesh.walls.triangleCount + mesh.roofs.triangleCount,
       sceneryTriangles: mesh.scenery.triangleCount,
@@ -359,13 +417,27 @@ export class SectorGeometryCache {
   sceneryDraws(): SceneryDraw[] {
     if (this.draws) return this.draws;
 
-    const byKey = new Map<string, { modelName: string; parts: Float32Array[]; count: number }>();
+    // Keyed by PLANE as well as (model, direction): a stacked viewport ghosts
+    // every plane but the active one, so copies on different planes need
+    // different materials and different group transforms. Within a plane the
+    // merge is unchanged -- one draw for the whole neighbourhood.
+    const byKey = new Map<
+      string,
+      { batchKey: string; plane: number; modelName: string; parts: Float32Array[]; count: number }
+    >();
     for (const entry of this.entries.values()) {
       for (const batch of entry.scenery) {
-        let group = byKey.get(batch.key);
+        const key = `${entry.coord.plane}|${batch.key}`;
+        let group = byKey.get(key);
         if (!group) {
-          group = { modelName: batch.modelName, parts: [], count: 0 };
-          byKey.set(batch.key, group);
+          group = {
+            batchKey: batch.key,
+            plane: entry.coord.plane,
+            modelName: batch.modelName,
+            parts: [],
+            count: 0
+          };
+          byKey.set(key, group);
         }
         group.parts.push(batch.positions);
         group.count += batch.count;
@@ -374,7 +446,7 @@ export class SectorGeometryCache {
 
     const draws: SceneryDraw[] = [];
     for (const [key, group] of byKey) {
-      const geometry = this.sceneryGeometry.get(key);
+      const geometry = this.sceneryGeometry.get(group.batchKey);
       if (!geometry || group.count === 0) continue;
 
       // Column-major 4x4s with the translation in elements 12..14. The yaw is
@@ -399,6 +471,7 @@ export class SectorGeometryCache {
       draws.push({
         key,
         modelName: group.modelName,
+        plane: group.plane,
         geometry,
         matrices,
         count: group.count,
@@ -408,6 +481,38 @@ export class SectorGeometryCache {
 
     this.draws = draws;
     return draws;
+  }
+
+  /**
+   * Every floor connector in the loaded neighbourhood, paired up, with the
+   * per-plane vertical offsets solved from them.
+   *
+   * Memoised alongside `sceneryDraws()` and invalidated by the same events,
+   * because it runs from the render path. The cost is a walk of a few dozen
+   * placements, not a re-mesh.
+   */
+  connectorGraph(): SceneConnectors {
+    if (this.connectors) return this.connectors;
+
+    const raw: ConnectorPlacement[] = [];
+    for (const entry of this.entries.values()) raw.push(...entry.connectors);
+
+    const offsets = planeOffsets(raw);
+    const placements = withPlaneOffsets(raw, offsets);
+    const { links, unpaired } = linkConnectors(placements);
+
+    this.connectors = { placements, links, offsets, unpaired: unpaired.length };
+    return this.connectors;
+  }
+
+  /** Where a plane's geometry is drawn, solved from its connectors. */
+  planeOffset(plane: number): number {
+    return this.connectorGraph().offsets.get(plane) ?? planeElevation(plane);
+  }
+
+  private invalidateDerived(): void {
+    this.draws = null;
+    this.connectors = null;
   }
 
   /** Model names wanted by loaded sectors that the model source cannot supply. */
@@ -442,7 +547,7 @@ export class SectorGeometryCache {
     for (const entry of this.entries.values()) dispose(entry);
     this.entries.clear();
     this.queue = [];
-    this.draws = null;
+    this.invalidateDerived();
     // Scenery geometry is shared between sectors, so it survives an eviction --
     // but not a clear, which is what a changed atlas layout or model source
     // triggers, and both of those invalidate the uploaded buffers.

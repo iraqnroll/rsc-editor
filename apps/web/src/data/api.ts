@@ -34,12 +34,14 @@ import type {
 } from '@rsc-editor/schema';
 import type { TextureAtlasAsset } from './atlas.js';
 import type { EntitySpriteSheet } from './entity-sprites.js';
+import type { SceneryModelsAsset } from './models.js';
 import type { WorldMapAsset } from './world-map.js';
 import type { AuthUser } from './auth.js';
 
 export type { TextureAtlasAsset, AtlasLayoutWire } from './atlas.js';
 export type { EntitySpriteSheet, EntitySpriteCell } from './entity-sprites.js';
 export type { WorldMapAsset, WorldMapMeta } from './world-map.js';
+export type { SceneryModelsAsset, SceneryModel, ModelFace, ModelFill, ModelVertex } from './models.js';
 export type { AuthUser } from './auth.js';
 
 /** What the server tells us at `joined` time, plus the sector inventory. */
@@ -149,6 +151,23 @@ export interface EditorApi {
    * say nothing about what can be put in the world.
    */
   loadEntitySprites(): Promise<EntitySpriteSheet | null>;
+
+  /**
+   * Decoded `.ob3` scenery models, keyed by NAME (never `objectDef.model.id`,
+   * which is off by one for the first object mentioning each name —
+   * DECISIONS §8).
+   *
+   * `null` on 404, like the other assets: the scene then draws terrain, walls
+   * and roofs and says so, rather than showing an empty world.
+   *
+   * This exists so the scene does not have to resolve the project itself. It
+   * used to, and it picked the wrong one: with an empty `localStorage` the
+   * fallback took the *first* project the account can see, which on a first
+   * ever load is whatever sorts first — not necessarily the one being edited.
+   * It then looked like a transient, because the second load found the id the
+   * socket had persisted by then.
+   */
+  loadModels(): Promise<SceneryModelsAsset | null>;
 
   submitOps(ops: Op[]): Promise<OpSubmitResult>;
 

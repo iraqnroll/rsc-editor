@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { listConnectors } from './connectors.js';
 import type { GeometryData } from './model.js';
 import { buildSectorMesh, viewSector } from './sector-mesh.js';
 import {
@@ -6,7 +7,8 @@ import {
   SCENERY_SECTOR,
   realConfig,
   realLandscape,
-  realModelSource
+  realModelSource,
+  sceneryWorld
 } from './test-support.js';
 
 /**
@@ -122,5 +124,71 @@ describe('meshing cost', () => {
     expect(mesh.scenery.triangleCount).toBeGreaterThan(mesh.scenery.uniqueTriangles * 2);
     // A warm cache must not cost anything like a full sector mesh.
     expect(warm - bare).toBeLessThan(bare);
+  });
+
+  /**
+   * What the stacked view costs on the REAL world, which is the number to quote.
+   *
+   * The mock world in `apps/web` synthesises an equally dense sector on every
+   * plane, so it measures four ground floors and says "4x". The real cache does
+   * not look like that: `1/50/50` has 190 overlay tiles and 11 objects against
+   * the ground floor's 894 and 172, and most of the world has no upper storey at
+   * all. So the honest figure comes from here, on the shipped landscape.
+   */
+  it('measures a 5x5 block meshed on every plane', () => {
+    const config = realConfig();
+    const world = sceneryWorld();
+
+    const meshPlane = (plane: number) => {
+      let triangles = 0;
+      let sectors = 0;
+      const shared = new Map<string, GeometryData>();
+      const started = performance.now();
+
+      for (let dx = -2; dx <= 2; dx++) {
+        for (let dy = -2; dy <= 2; dy++) {
+          const coord = { plane, x: SCENERY_SECTOR.x + dx, y: SCENERY_SECTOR.y + dy };
+          const view = world.view(coord);
+          if (!view) continue;
+          sectors++;
+          const mesh = buildSectorMesh(view, config, {
+            terrain: { vertexNoise: false },
+            models: realModelSource(),
+            sceneryGeometryCache: shared
+          });
+          triangles +=
+            mesh.terrain.triangleCount +
+            mesh.walls.triangleCount +
+            mesh.roofs.triangleCount +
+            mesh.scenery.triangleCount;
+          listConnectors(view, config, coord);
+        }
+      }
+
+      return { plane, sectors, triangles, ms: performance.now() - started };
+    };
+
+    const per = [3, 0, 1, 2].map(meshPlane);
+    const ground = per.find((p) => p.plane === 0)!;
+    const total = per.reduce((n, p) => n + p.ms, 0);
+    const triangles = per.reduce((n, p) => n + p.triangles, 0);
+
+    // eslint-disable-next-line no-console
+    console.log(
+      `5x5 around Lumbridge, per plane: ` +
+        per
+          .map(
+            (p) =>
+              `plane ${p.plane} ${p.sectors} sectors ${p.triangles.toLocaleString()} tris ` +
+              `${p.ms.toFixed(0)}ms`
+          )
+          .join('; ') +
+        ` -- all four ${triangles.toLocaleString()} tris in ${total.toFixed(0)}ms, ` +
+        `${(total / ground.ms).toFixed(2)}x the ground floor alone`
+    );
+
+    // The claim: the upper storeys are cheap because they are nearly empty, so
+    // four planes is nothing like four times the ground floor.
+    expect(total).toBeLessThan(ground.ms * 3);
   });
 });

@@ -54,10 +54,21 @@ export function tileOfFace(
 export function tileOfGroundPlane(
   plane: number,
   origin: { x: number; y: number; z: number },
-  direction: { x: number; y: number; z: number }
+  direction: { x: number; y: number; z: number },
+  /**
+   * Render-space height of the plane being edited.
+   *
+   * Zero for the ground floor, which is every case the viewport had before
+   * planes could be stacked. On an upper storey the whole plane is lifted by a
+   * group transform (`SectorGeometryCache.planeOffset`), so the notional floor a
+   * miss falls back to has to be lifted with it -- otherwise a click on the
+   * first floor resolves to the tile you would hit at sea level, which is a
+   * different tile as soon as the camera is not looking straight down.
+   */
+  planeY = 0
 ): WorldTile | null {
   if (direction.y === 0) return null;
-  const t = -origin.y / direction.y;
+  const t = (planeY - origin.y) / direction.y;
   if (t <= 0) return null;
 
   const x = origin.x + direction.x * t;
