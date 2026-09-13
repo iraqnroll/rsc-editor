@@ -24,6 +24,20 @@ Per-package: `pnpm --filter @rsc-editor/cache test`
 The integration suites skip themselves when no Postgres is reachable, so the
 tests pass without Docker — but they then prove much less. Run `db:up` first.
 
+## Windows / PowerShell 5.1 hazards
+
+This has cost real time more than once, so it is a rule rather than a tip.
+
+**Never round-trip a source file through `Get-Content -Raw` / `Set-Content` or
+`Out-File`.** PowerShell 5.1 writes a UTF-8 BOM and mangles non-ASCII on the way
+back, so an em-dash becomes mojibake and the file grows a BOM it never had. It
+has silently corrupted both source files and git commit subjects here. For file
+surgery use the editing tools, or `node -e` — never a shell round trip.
+
+Also: no `&&` or `||` chaining, no ternary, no null-coalescing. Avoid `2>&1` on
+native executables — PowerShell wraps stderr lines in ErrorRecords and reports
+success as failure. Stderr is captured for you anyway.
+
 ## Hard rules
 
 **1. `tsc --noEmit` is not optional.** vitest runs through esbuild, which strips

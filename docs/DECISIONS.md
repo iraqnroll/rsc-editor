@@ -437,3 +437,8 @@ have read as a different bug entirely:
   like a lane-decoding bug
 - the two diagonal rotations swap, which is simply what a mirror does to a
   diagonal
+
+The implementation record — the `diag(RENDER_X_SIGN, -1, 1)` derivation, every
+module that had to follow, and each test expectation that moved — is in
+`docs/HANDOFF-render-x-mirror.md`. This section is the authority on *why*; that
+file is the authority on *where*.
