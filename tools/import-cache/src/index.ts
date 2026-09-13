@@ -1,0 +1,11 @@
+/**
+ * @rsc-editor/import-cache -- cache directory -> Postgres project.
+ *
+ * This is a batch job, not an HTTP request: it reads every landscape sector and
+ * every definition out of a mudclient cache and writes them into a project. The
+ * server deliberately has no import endpoint for exactly that reason.
+ *
+ * Ownership: the `cache-formats` agent. See CLAUDE.md.
+ */
+
+export {};

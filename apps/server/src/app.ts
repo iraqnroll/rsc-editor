@@ -15,6 +15,7 @@ import type { Database } from '@rsc-editor/db';
 import { loadConfig, type ServerConfig } from './config.js';
 import type { AppContext } from './context.js';
 import { isHttpError } from './errors.js';
+import { registerDevLogin } from './auth/dev-login.js';
 import { registerDiscordAuth } from './auth/discord.js';
 import { registerSessionAuth } from './auth/session.js';
 import { registerDefinitionRoutes } from './routes/definitions.js';
@@ -68,6 +69,16 @@ export async function buildApp(
 
   await registerSessionAuth(app, ctx);
   await registerDiscordAuth(app, ctx);
+
+  // An authentication bypass, gated on NODE_ENV + RSC_DEV_LOGIN + a loopback
+  // bind (see auth/dev-login.ts). Announce it: a bypass nobody notices is how
+  // one reaches production.
+  if (await registerDevLogin(app, ctx)) {
+    app.log.warn(
+      'DEV LOGIN ENABLED: POST /api/auth/dev-login grants a session with no ' +
+        'Discord check. Development only.'
+    );
+  }
 
   await registerMeRoutes(app, ctx);
   await registerProjectRoutes(app, ctx);
