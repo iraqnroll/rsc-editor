@@ -8,4 +8,12 @@
  * Ownership: the `api-db` agent. See CLAUDE.md.
  */
 
-export {};
+export * from './schema.js';
+export * from './client.js';
+export * from './roles.js';
+export * from './users.js';
+export * from './sessions.js';
+export * from './projects.js';
+export * from './sectors.js';
+export * from './definitions.js';
+export * from './ops.js';
