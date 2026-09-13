@@ -208,6 +208,15 @@ nothing on Windows — half the team would migrate the wrong database.
 - A non-member gets an identical 404 for "not yours" and "does not exist", so
   project existence does not leak.
 
-Still unverified: the Discord OAuth **callback** (the redirect half is confirmed
-to build a correct authorize URL, but completing a login needs a real Discord
-app), and the down migrations.
+- **Migrations are reversible, measured rather than asserted.** Every migration
+  applies to a scratch database, reverses to a genuinely empty schema (0 tables,
+  0 enums — a down file that leaves something behind is not a rollback, it is a
+  mess the next `up` collides with), and re-applies to the identical schema with
+  the append-only trigger restored. A structural test also fails if a forward
+  migration has no matching `down/` file, which is the realistic failure: down
+  files are hand-written and rot silently until someone needs one under
+  pressure.
+
+Still unverified: the Discord OAuth **callback**. The redirect half is confirmed
+to build a correct authorize URL with `state` and the right `redirect_uri`, but
+completing a login needs a real Discord application.
