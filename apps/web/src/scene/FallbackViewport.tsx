@@ -11,6 +11,19 @@
  * aim a brush at. `Viewport.tsx` picks between the two.
  *
  * Same props, same events, so every tool behaves identically in either.
+ *
+ * ## It is mirrored, like everything else
+ *
+ * Game x increases WESTWARD, so east is on the RIGHT here exactly as it is in
+ * the 3D viewport and in the world map panel. The whole transform -- draw, pick,
+ * pan, zoom -- lives in `fallback-view.ts` and takes its sign from the same
+ * `renderX` the 3D geometry does. Read that file before touching any of it: the
+ * four functions only work as a set, and a round trip through any two of them
+ * passes happily while mirrored the wrong way (DECISIONS section 13).
+ *
+ * What is NOT mirrored, deliberately: `view.cx`, the lane reads, and everything
+ * that positions the view. Those stay in game coordinates, so recentring on a
+ * sector and the hillshade gradient are untouched.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -18,18 +31,16 @@ import { SECTOR_WIDTH, sectorKey } from '@rsc-editor/schema';
 import type { SectorBuffers } from '@rsc-editor/schema';
 import { terrainColour } from '../data/terrain-palette.js';
 import type { WorldTile } from '../ops/coords.js';
+import {
+  cornerToScreenX,
+  panView,
+  screenToTile,
+  tileToScreen,
+  visibleTiles,
+  zoomView,
+  type FallbackView
+} from './fallback-view.js';
 import type { ViewportProps, ViewportSector } from './viewport-props.js';
-
-interface View {
-  /** World tile at the centre of the canvas. */
-  cx: number;
-  cy: number;
-  /** Device pixels per tile. */
-  scale: number;
-}
-
-const MIN_SCALE = 1.5;
-const MAX_SCALE = 24;
 
 export function FallbackViewport(props: ViewportProps) {
   const {
@@ -54,7 +65,7 @@ export function FallbackViewport(props: ViewportProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 800, h: 600 });
-  const [view, setView] = useState<View>({ cx: 48 * 56, cy: 48 * 46, scale: 6 });
+  const [view, setView] = useState<FallbackView>({ cx: 48 * 56, cy: 48 * 46, scale: 6 });
   const dragRef = useRef<{ mode: 'paint' | 'pan' | 'region'; from: WorldTile } | null>(null);
   const [nameplates, setNameplates] = useState<
     Array<{ key: string; x: number; y: number; name: string; colour: string }>
@@ -80,22 +91,22 @@ export function FallbackViewport(props: ViewportProps) {
     return () => ro.disconnect();
   }, []);
 
-  /** screen px -> world tile */
+  /** screen px -> world tile. Mirrored; see `fallback-view.ts`. */
   const toTile = useCallback(
-    (px: number, py: number): WorldTile => ({
-      plane,
-      wx: Math.floor(view.cx + (px - size.w / 2) / view.scale),
-      wy: Math.floor(view.cy + (py - size.h / 2) / view.scale)
-    }),
+    (px: number, py: number): WorldTile => ({ plane, ...screenToTile(view, size, px, py) }),
     [plane, view, size]
   );
 
-  /** world tile -> screen px (top-left corner of the tile) */
+  /**
+   * World tile -> screen px: the TOP-LEFT of the rect covering `tilesX` tile
+   * columns starting at `wx`.
+   *
+   * `tilesX` has to be passed for anything wider than one tile. Mirrored, a rect
+   * grows leftward from its origin column, so a sector border drawn with the
+   * default would sit 47 tiles away from its sector.
+   */
   const toScreen = useCallback(
-    (wx: number, wy: number) => ({
-      x: size.w / 2 + (wx - view.cx) * view.scale,
-      y: size.h / 2 + (wy - view.cy) * view.scale
-    }),
+    (wx: number, wy: number, tilesX = 1) => tileToScreen(view, size, wx, wy, tilesX),
     [view, size]
   );
 
@@ -137,10 +148,9 @@ export function FallbackViewport(props: ViewportProps) {
     ctx.clearRect(0, 0, size.w, size.h);
 
     const s = view.scale;
-    const x0 = Math.floor(view.cx - size.w / 2 / s) - 1;
-    const y0 = Math.floor(view.cy - size.h / 2 / s) - 1;
-    const x1 = Math.ceil(view.cx + size.w / 2 / s) + 1;
-    const y1 = Math.ceil(view.cy + size.h / 2 / s) + 1;
+    // Unchanged by the mirror: the window is symmetric about the centre tile,
+    // so reversing the axis does not change WHICH tiles are on screen.
+    const { x0, y0, x1, y1 } = visibleTiles(view, size);
 
     // ground
     for (let wx = x0; wx <= x1; wx++) {
@@ -182,19 +192,32 @@ export function FallbackViewport(props: ViewportProps) {
             ctx.fillRect(p.x, p.y, s, s);
           }
 
+          // Which EDGE of the tile a wall is on, in mirrored pixels. The lane
+          // semantics are `World#method422`'s: a horizontal wall spans corners
+          // (x, y)-(x+1, y) and a vertical one spans (x, y)-(x, y+1).
+          //
+          // Horizontal is the tile's top edge across its full width, so it is
+          // the same run of pixels either way. Vertical is grid column x, which
+          // mirrored is the tile's RIGHT edge rather than its left -- get this
+          // wrong and every wall in the world is drawn one tile out, which
+          // looks like a lane-decoding bug rather than a coordinate one.
           ctx.strokeStyle = '#d9d2c4';
           if ((t.buffers.wallsHorizontal[t.i] ?? 0) !== 0) {
             line(ctx, p.x, p.y, p.x + s, p.y);
           }
           if ((t.buffers.wallsVertical[t.i] ?? 0) !== 0) {
-            line(ctx, p.x, p.y, p.x, p.y + s);
+            line(ctx, p.x + s, p.y, p.x + s, p.y + s);
           }
 
           const diag = t.buffers.wallsDiagonal[t.i] ?? 0;
           if (diag > 0 && diag < 48000) {
+            // The two rotations swap, which is exactly what a mirror does to a
+            // diagonal. `< 12000` joins (x, y)-(x+1, y+1) and mirrored that is
+            // top-right to bottom-left; `>= 12000` joins (x+1, y)-(x, y+1) and
+            // becomes top-left to bottom-right.
             ctx.strokeStyle = '#c9b98f';
-            if (diag >= 12000) line(ctx, p.x, p.y + s, p.x + s, p.y);
-            else line(ctx, p.x, p.y, p.x + s, p.y + s);
+            if (diag >= 12000) line(ctx, p.x, p.y, p.x + s, p.y + s);
+            else line(ctx, p.x + s, p.y, p.x, p.y + s);
           } else if (diag >= 48000) {
             ctx.fillStyle = '#7fd6a6';
             ctx.beginPath();
@@ -210,10 +233,15 @@ export function FallbackViewport(props: ViewportProps) {
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.055)';
       ctx.lineWidth = 1;
       ctx.beginPath();
-      for (let wx = x0; wx <= x1; wx++) {
-        const p = toScreen(wx, y0);
-        ctx.moveTo(Math.round(p.x) + 0.5, 0);
-        ctx.lineTo(Math.round(p.x) + 0.5, size.h);
+      // A grid line is a CORNER, not a tile origin, so it goes through
+      // `cornerToScreenX` rather than `toScreen`. Both would sweep the same set
+      // of lines here -- the window is wider than the visible area -- but naming
+      // it correctly is what stops the next person copying `toScreen(wx, …).x`
+      // somewhere it does matter.
+      for (let gx = x0; gx <= x1 + 1; gx++) {
+        const x = Math.round(cornerToScreenX(view, size, gx)) + 0.5;
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, size.h);
       }
       for (let wy = y0; wy <= y1; wy++) {
         const p = toScreen(x0, wy);
@@ -234,7 +262,8 @@ export function FallbackViewport(props: ViewportProps) {
       for (let sy = sy0; sy <= sy1; sy++) {
         if (sx < 0 || sy < 0) continue;
         const coord = { plane, x: sx, y: sy };
-        const p = toScreen(sx * SECTOR_WIDTH, sy * SECTOR_WIDTH);
+        // 48 tiles wide, so its left edge is the corner 48 columns along.
+        const p = toScreen(sx * SECTOR_WIDTH, sy * SECTOR_WIDTH, SECTOR_WIDTH);
         const side = SECTOR_WIDTH * s;
         const lock = lockFor(coord);
 
@@ -280,8 +309,13 @@ export function FallbackViewport(props: ViewportProps) {
 
     // selection rectangle
     if (selection && selection.plane === plane) {
-      const a = toScreen(Math.min(selection.x0, selection.x1), Math.min(selection.y0, selection.y1));
-      const w = (Math.abs(selection.x1 - selection.x0) + 1) * s;
+      const tilesX = Math.abs(selection.x1 - selection.x0) + 1;
+      const a = toScreen(
+        Math.min(selection.x0, selection.x1),
+        Math.min(selection.y0, selection.y1),
+        tilesX
+      );
+      const w = tilesX * s;
       const h = (Math.abs(selection.y1 - selection.y0) + 1) * s;
       ctx.fillStyle = 'rgba(76, 154, 255, 0.16)';
       ctx.fillRect(a.x, a.y, w, h);
@@ -295,7 +329,7 @@ export function FallbackViewport(props: ViewportProps) {
     // brush cursor
     if (hoverTile && hoverTile.plane === plane) {
       const r = Math.max(0, Math.floor(brushRadius));
-      const a = toScreen(hoverTile.wx - r, hoverTile.wy - r);
+      const a = toScreen(hoverTile.wx - r, hoverTile.wy - r, r * 2 + 1);
       const side = (r * 2 + 1) * s;
       ctx.strokeStyle = painting ? '#ffffff' : 'rgba(255,255,255,0.55)';
       ctx.lineWidth = 1.5;
@@ -367,11 +401,9 @@ export function FallbackViewport(props: ViewportProps) {
           const drag = dragRef.current;
           if (!drag) return;
           if (drag.mode === 'pan') {
-            setView((v) => ({
-              ...v,
-              cx: v.cx - e.movementX / v.scale,
-              cy: v.cy - e.movementY / v.scale
-            }));
+            // Mirrored, so dragging right still moves the world right. See
+            // `fallback-view.ts`: the sign is not a preference.
+            setView((v) => panView(v, e.movementX, e.movementY));
           } else if (drag.mode === 'region') {
             onDragRegion({
               plane,
@@ -393,14 +425,10 @@ export function FallbackViewport(props: ViewportProps) {
         }}
         onWheel={(e) => {
           const p = localPoint(e);
-          const before = toTile(p.x, p.y);
-          setView((v) => {
-            const scale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, v.scale * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
-            // keep the tile under the cursor put
-            const cx = before.wx + 0.5 - (p.x - size.w / 2) / scale;
-            const cy = before.wy + 0.5 - (p.y - size.h / 2) / scale;
-            return { cx, cy, scale };
-          });
+          // Keeps the tile under the cursor put, which needs the same mirror the
+          // pick does -- solving it here with the unmirrored sign would make the
+          // view slide sideways on every zoom step.
+          setView((v) => zoomView(v, size, p.x, p.y, e.deltaY < 0));
         }}
         onContextMenu={(e) => e.preventDefault()}
       />

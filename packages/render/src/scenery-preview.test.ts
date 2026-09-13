@@ -8,6 +8,7 @@ import { LandscapeView, neighboursFrom } from './landscape-view.js';
 import type { GeometryData } from './model.js';
 import { modelPreviewCamera } from './model-preview.js';
 import { encodePng, rasterize, type Camera } from './raster.js';
+import { renderX } from './render-space.js';
 import { buildSectorMesh } from './sector-mesh.js';
 import {
   buildSceneryModel,
@@ -39,19 +40,23 @@ import { buildTextureAtlasFromFixtures } from './tools/build-texture-atlas.js';
  */
 
 const OUT = fileURLToPath(new URL('../preview/', import.meta.url));
+/**
+ * Sector centre in GAME units. Every camera x below goes through `renderX`,
+ * because render x is negated so that +x is east (`render-space.ts`).
+ */
 const CENTRE = (SECTOR_WIDTH * TILE_SIZE) / 2;
 
 /** Roughly the pitch the game camera uses, looking north across the sector. */
 const OBLIQUE: Camera = {
-  eye: [CENTRE, 2600, CENTRE + 4200],
-  target: [CENTRE, 150, CENTRE],
+  eye: [renderX(CENTRE), 2600, CENTRE + 4200],
+  target: [renderX(CENTRE), 150, CENTRE],
   fov: Math.PI / 4
 };
 
 /** Down among the buildings, where the furniture is. */
 const STREET: Camera = {
-  eye: [CENTRE - 1100, 500, CENTRE + 1500],
-  target: [CENTRE - 200, 150, CENTRE],
+  eye: [renderX(CENTRE - 1100), 500, CENTRE + 1500],
+  target: [renderX(CENTRE - 200), 150, CENTRE],
   fov: Math.PI / 4
 };
 

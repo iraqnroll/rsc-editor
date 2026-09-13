@@ -1,3 +1,4 @@
+import { renderX } from './render-space.js';
 import type { Camera } from './software-raster.js';
 import type { SceneryModel } from './scenery.js';
 
@@ -50,13 +51,20 @@ export function modelBounds(model: SceneryModel): {
   let maxZ = -Infinity;
 
   for (const vertex of model.vertices) {
-    // Client space stores "up" as -y; render space is +y. Same negation
-    // `RscModel.build` applies, so these bounds describe what will be drawn.
-    // Written as a subtraction so a zero stays +0: `-0` is a legal number and an
-    // annoying one to assert against.
+    // The same transform `RscModel.build` applies, so these bounds describe what
+    // will actually be drawn: client "up" is -y and render space is +y, and
+    // render x is mirrored so +x is east (`render-space.ts`). Both are written
+    // as subtractions so a zero stays +0 -- `-0` is legal and annoying to
+    // assert against.
+    //
+    // The x flip matters here even though most models straddle their own
+    // origin: an off-centre one (a shop sign, a fence post) would otherwise be
+    // framed on the mirror image of where its geometry is, and the thumbnail
+    // would cut it in half for a reason nothing in the picker could explain.
     const y = 0 - vertex.y;
-    if (vertex.x < minX) minX = vertex.x;
-    if (vertex.x > maxX) maxX = vertex.x;
+    const x = renderX(vertex.x);
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
     if (y < minY) minY = y;
     if (y > maxY) maxY = y;
     if (vertex.z < minZ) minZ = vertex.z;

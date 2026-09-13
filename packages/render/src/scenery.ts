@@ -1,6 +1,7 @@
 import type { RscConfig } from '@rsc-editor/schema';
 import { packFill } from './colour.js';
 import { COLOUR_TRANSPARENT, TILE_SIZE } from './constants.js';
+import { renderX } from './render-space.js';
 import type { LandscapeView } from './landscape-view.js';
 import {
   RscModel,
@@ -257,8 +258,9 @@ export interface SceneryInstance {
   /** lane index of the origin tile, `tileX * 48 + tileY` */
   tile: number;
   /**
-   * Render space, sector-local: 128 units per tile, +Y up. The x/z are the
-   * centre of the footprint and y is `World#getElevation` there, which is what
+   * Render space, sector-local: 128 units per tile, +Y up, +X **east** (so `x`
+   * is negative -- see `render-space.ts`). The x/z are the centre of the
+   * footprint and y is `World#getElevation` there, which is what
    * `translate(k1, -getElevation(k1, i2), i2)` amounts to once the client's
    * downward Y is negated on the way out.
    */
@@ -322,7 +324,11 @@ export function resolveScenery(
       tileX: placement.x,
       tileY: placement.y,
       tile: placement.x * 48 + placement.y,
-      x,
+      // `renderX` here and NOT on the argument to `elevation`: the elevation
+      // lookup is a lane read in game space, while the instance translation is
+      // added to geometry that `RscModel.build` has already mirrored. See
+      // `render-space.ts`.
+      x: renderX(x),
       // Client space puts "up" at -y and translates by -getElevation; render
       // space negates that back.
       y: view.elevation(x, z),

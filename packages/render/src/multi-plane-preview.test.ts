@@ -16,6 +16,7 @@ import { TILE_SIZE } from './constants.js';
 import { emptyGeometry, type GeometryData } from './model.js';
 import { PLANE_STACK } from './planes.js';
 import { encodePng, rasterize, type Camera } from './raster.js';
+import { renderX } from './render-space.js';
 import { buildSectorMesh } from './sector-mesh.js';
 import { flattenScenery } from './scenery.js';
 import { realConfig, realModelSource, sceneryWorld } from './test-support.js';
@@ -40,21 +41,26 @@ import { buildTextureAtlasFromFixtures } from './tools/build-texture-atlas.js';
 const OUT = fileURLToPath(new URL('../preview/', import.meta.url));
 const SECTOR = { x: 50, y: 50 } as const;
 
-/** Render-space centre of Lumbridge castle: local tiles ~(22..43, 24..44). */
+/**
+ * Centre of Lumbridge castle (local tiles ~(22..43, 24..44)) in GAME units; the
+ * cameras mirror the x through `renderX`, because render x is negated so +x is
+ * east (`render-space.ts`). The eye offsets stay in game units too, so
+ * "+2600 in x" still means the same physical corner of the castle it always did.
+ */
 const CASTLE_X = (SECTOR.x * SECTOR_WIDTH + 33) * TILE_SIZE;
 const CASTLE_Z = (SECTOR.y * SECTOR_WIDTH + 34) * TILE_SIZE;
 
 /** The whole castle in frame, from above and to one side. */
 const OVERVIEW: Camera = {
-  eye: [CASTLE_X + 2600, 2900, CASTLE_Z + 3400],
-  target: [CASTLE_X, 450, CASTLE_Z],
+  eye: [renderX(CASTLE_X + 2600), 2900, CASTLE_Z + 3400],
+  target: [renderX(CASTLE_X), 450, CASTLE_Z],
   fov: Math.PI / 4
 };
 
 /** Almost edge-on: the view that makes a storey gap obvious. */
 const ELEVATION: Camera = {
-  eye: [CASTLE_X + 700, 1250, CASTLE_Z + 3600],
-  target: [CASTLE_X, 560, CASTLE_Z],
+  eye: [renderX(CASTLE_X + 700), 1250, CASTLE_Z + 3600],
+  target: [renderX(CASTLE_X), 560, CASTLE_Z],
   fov: Math.PI / 4
 };
 
@@ -263,7 +269,11 @@ function buildStack(
   const placed = withPlaneOffsets(found, offsets);
   const { links } = linkConnectors(placed);
 
-  const originX = SECTOR.x * SECTOR_WIDTH * TILE_SIZE;
+  // The same translation the viewport puts on a sector group, mirrored for the
+  // same reason it is there (`sector-geometry.ts` / `render-space.ts`): the
+  // geometry inside spans x = -6144..0, so an unmirrored origin would shift
+  // every plane onto the wrong column and the connector bars would miss.
+  const originX = renderX(SECTOR.x * SECTOR_WIDTH * TILE_SIZE);
   const originZ = SECTOR.y * SECTOR_WIDTH * TILE_SIZE;
 
   const geometries: GeometryData[] = [];

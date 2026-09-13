@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { encodeFill } from './colour.js';
 import { COLOUR_TRANSPARENT, ELEVATION_SCALE, TILE_SIZE } from './constants.js';
 import { LandscapeView, neighboursFrom } from './landscape-view.js';
+import { tileRenderX } from './render-space.js';
 import { buildWalls } from './walls.js';
 import {
   DENSE_SECTOR,
@@ -15,9 +16,15 @@ import {
 
 const GROUND = 128 * ELEVATION_SCALE;
 
-/** Corner string in the same form `distinctPositions` produces. */
+/**
+ * Corner string in the same form `distinctPositions` produces.
+ *
+ * `tileRenderX` and not `x * TILE_SIZE`: render x is mirrored so that +x is east
+ * (`render-space.ts`). The arguments stay tile columns, so every assertion below
+ * still reads in tiles.
+ */
 function at(x: number, y: number, height: number): string {
-  return `${x * TILE_SIZE},${height},${y * TILE_SIZE}`;
+  return `${tileRenderX(x)},${height},${y * TILE_SIZE}`;
 }
 
 describe('wall geometry', () => {

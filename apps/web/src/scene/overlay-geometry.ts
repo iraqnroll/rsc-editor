@@ -11,7 +11,12 @@
  *     "the brush ring follows the ground" is an assertion rather than a hope.
  *
  * Every function returns a flat `[x, y, z, ...]` of *line segment pairs*, in
- * world render space, ready for a `LineSegments` with no index.
+ * world render space, ready for a `LineSegments` with no index. Tile columns go
+ * through `tileRenderX()` -- render x is mirrored so that +x is east
+ * (`render-space.ts`) -- which is why an overlay's x values are negative. An
+ * overlay drawn on the unmirrored axis would be worse than no overlay: a grid
+ * that does not line up with the terrain under it is a lie about where a tile
+ * is, and it is the same failure as the world map's (DECISIONS section 13).
  *
  * Lines are lifted by {@link OVERLAY_LIFT} world units so they do not z-fight
  * with the surface they trace. That is 1/64th of a tile: visible from directly
@@ -19,7 +24,7 @@
  */
 
 import { SECTOR_WIDTH } from '@rsc-editor/schema';
-import { TILE_SIZE } from '@rsc-editor/render';
+import { TILE_SIZE, renderX, tileRenderX } from '@rsc-editor/render';
 import type { WorldHeights } from './sector-geometry.js';
 
 export const OVERLAY_LIFT = 2;
@@ -60,7 +65,7 @@ export function buildTileGrid(heights: WorldHeights, window: TileWindow): Float3
   let n = 0;
 
   const push = (wx: number, wy: number): void => {
-    out[n++] = wx * TILE_SIZE;
+    out[n++] = tileRenderX(wx);
     out[n++] = heights.corner(wx, wy) + OVERLAY_LIFT;
     out[n++] = wy * TILE_SIZE;
   };
@@ -100,7 +105,7 @@ export function buildSectorBorder(
   let n = 0;
 
   const push = (wx: number, wy: number): void => {
-    out[n++] = wx * TILE_SIZE;
+    out[n++] = tileRenderX(wx);
     out[n++] = heights.corner(wx, wy) + lift;
     out[n++] = wy * TILE_SIZE;
   };
@@ -142,7 +147,7 @@ export function buildRectOutline(
   let n = 0;
 
   const push = (wx: number, wy: number): void => {
-    out[n++] = wx * TILE_SIZE;
+    out[n++] = tileRenderX(wx);
     out[n++] = heights.corner(wx, wy) + lift;
     out[n++] = wy * TILE_SIZE;
   };
@@ -195,7 +200,7 @@ export function buildBrushOutline(
   let n = 0;
 
   const push = (wx: number, wy: number): void => {
-    out[n++] = wx * TILE_SIZE;
+    out[n++] = tileRenderX(wx);
     out[n++] = heights.corner(wx, wy) + lift;
     out[n++] = wy * TILE_SIZE;
   };
@@ -238,7 +243,7 @@ export function sectorTintTransform(sx: number, sy: number): {
   size: number;
 } {
   return {
-    x: (sx + 0.5) * SECTOR_WIDTH * TILE_SIZE,
+    x: renderX((sx + 0.5) * SECTOR_WIDTH * TILE_SIZE),
     z: (sy + 0.5) * SECTOR_WIDTH * TILE_SIZE,
     size: SECTOR_WIDTH * TILE_SIZE
   };

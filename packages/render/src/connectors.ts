@@ -1,5 +1,6 @@
 import { SECTOR_WIDTH, type RscConfig, type SectorCoord } from '@rsc-editor/schema';
 import { TILE_SIZE } from './constants.js';
+import { renderX } from './render-space.js';
 import type { LandscapeView } from './landscape-view.js';
 import { PLANE_STACK, STOREY_HEIGHT, planeElevation, planeStorey, storeyPlane } from './planes.js';
 import { listScenery } from './scenery.js';
@@ -126,7 +127,10 @@ export interface ConnectorPlacement {
   /** world tile of the footprint origin */
   wx: number;
   wy: number;
-  /** world render space x/z: footprint centre, sector origin included */
+  /**
+   * World render space x/z: footprint centre, sector origin included. `x` is
+   * mirrored so +x is east (`render-space.ts`), hence negative.
+   */
   x: number;
   z: number;
   /** ground height under the footprint centre, WITHOUT the plane offset */
@@ -183,7 +187,9 @@ export function listConnectors(
       storey: planeStorey(coord.plane),
       wx: coord.x * SECTOR_WIDTH + placement.x,
       wy: coord.y * SECTOR_WIDTH + placement.y,
-      x: originX + localX,
+      // Mirrored once, at the end, on the full game-space x. `elevation` above
+      // is a lane read and stays in game space. See `render-space.ts`.
+      x: renderX(originX + localX),
       z: originZ + localZ,
       groundY,
       y: groundY + lift

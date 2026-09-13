@@ -22,6 +22,14 @@
  * `side: FrontSide` shows exactly what the client shows -- including roofs
  * disappearing from underneath and one-sided walls.
  *
+ * **+x is EAST, so x runs negative**: game x increases westward, and render
+ * space mirrors it (`RENDER_X_SIGN` in `render-space.ts`) so that the 3D view
+ * agrees with the world map and with the client. Anything converting a game
+ * coordinate to a render position, or a hit point back to a tile, goes through
+ * `renderX()`. Do not "fix" the sign without reading that file: the winding
+ * reversal in `RscModel.build` is the same change and the two are only correct
+ * together.
+ *
  * Textures: `triangleTextures` gives the RSC texture id per triangle, or -1 for
  * a flat colour. Build one atlas at import, `NearestFilter`, no mipmaps, and
  * multiply the sample by the vertex colour.
@@ -105,6 +113,13 @@ export {
   WALL_ENDPOINT_AMBIENCE,
   ROOF_CORNER_INSET
 } from './constants.js';
+
+export {
+  RENDER_X_SIGN,
+  renderX,
+  tileRenderX,
+  renderXToTile
+} from './render-space.js';
 
 export {
   packFill,

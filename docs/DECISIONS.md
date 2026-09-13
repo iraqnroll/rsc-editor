@@ -362,3 +362,78 @@ tests fail.
 **The bug was found by a human looking at the picture and recognising the
 world.** No test we owned could have caught it, and that is worth remembering
 next time something is "proven correct" against only its own inputs.
+
+### The 3D view had the same bug, and it was ours, not mudclient's
+
+The viewport was mirrored too — east on the left. The first analysis concluded
+this was inherent: game x increases westward, +z is south, so `(East, North,
+Up)` is left-handed in render space and no camera angle can fix it. That much is
+true. The conclusion drawn from it — that mudclient is mirrored as well, and
+that matching the map meant giving up fidelity to the client — **was wrong.**
+
+mudclient's `GameModel#project` divides by z with no sign games. At identity
+rotation its screen right is `+x` (west) while it looks along `+z` (south) —
+and facing south, west *is* on your right. Turn to face north and east comes
+round to the right. The client agrees with its own maps.
+
+What was mirrored was **our** render space. Negating client y to get three.js
+Y-up is `diag(1, -1, 1)`, determinant −1. `RscModel.build` compensated the
+*winding*, which keeps one-sided surfaces showing the correct face but does
+nothing about the mirrored picture. Adding the x flip makes the whole map
+`diag(-1, -1, 1)`, determinant +1 — a plain 180° rotation.
+
+So the fix makes the editor match the client **and** the map. There was no
+trade-off; there was a sign error wearing one.
+
+`packages/render/src/render-space.ts` owns `RENDER_X_SIGN` and says, loudly,
+that the constant and the winding reversal in `build` are one change: remove
+one and keep the other and the whole world silently inverts.
+
+The acceptance test projects two tiles through the real north-up camera pose
+with three's own `project()` and asserts the smaller game x lands further
+right, restating the map's `pixelX = width - 1 - gameX` as the independent
+judge. Setting `RENDER_X_SIGN` back to `+1` fails **that test and only that
+test** — 36 other scene tests stay green, which is §13's failure mode caught in
+the act.
+
+Two latent bugs surfaced on the way: `multi-plane-preview` was passing by luck
+with its camera ~10,000 units off target, and `model-preview`'s bounds read raw
+client x while claiming render space, so off-centre models framed the mirror
+image of their own geometry.
+
+### Two kinds of wrong, and why one test set cannot see both
+
+The 2D fallback viewport (used when there is no WebGL2) had to be mirrored with
+everything else. Fixing it produced the clearest demonstration in this project
+of *why* a test suite passes a broken thing.
+
+Two faults were injected, each restoring the file byte-identically afterwards:
+
+| injected fault | what failed |
+|---|---|
+| the whole pre-mirror transform | the map-judged tests — **pan and zoom passed** |
+| a half-applied flip: draw and pick mirrored, pan and zoom left behind | pan and zoom — **the map-judged tests passed** |
+
+Disjoint. The pan/zoom tests are internally consistent under a full mirror and
+cannot see one; the map-judged tests compare against `data/world-map.ts` and
+cannot see a half-applied flip, because nothing *drawn* is wrong. Neither set
+alone is sufficient, and either alone would have shipped a broken viewport with
+a green suite.
+
+The map-judged assertions are equality rather than ordering, which is possible
+because a canvas showing exactly one 48x48 sector at 4 px/tile *is*, pixel for
+pixel, a world map image of that sector at `tileSize: 4`. So `screenToTile`
+must equal `mapToTile` across a sweep of pixels — literally "the tile the world
+map would name for that spot".
+
+Three things in the fallback changed side rather than sign, each of which would
+have read as a different bug entirely:
+
+- a rect grows **leftward** from its origin column once mirrored, so a 48-tile
+  sector border and a 1-tile cell no longer start at the same pixel; sharing a
+  default would have put every sector outline 47 tiles from its sector
+- `wallsVertical` spans grid column x, which mirrored is the tile's **right**
+  edge — left alone, every wall in the world draws one tile out, which looks
+  like a lane-decoding bug
+- the two diagonal rotations swap, which is simply what a mirror does to a
+  diagonal

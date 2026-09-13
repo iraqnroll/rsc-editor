@@ -1,12 +1,19 @@
 /**
  * Camera poses. Pure arithmetic, so the presets can be asserted without a GPU.
  *
- * World render space: x = tileX * 128, z = tileY * 128, y = height, Y up,
- * right-handed -- exactly what `packages/render` emits.
+ * World render space: x = `renderX(tileX * 128)`, z = tileY * 128, y = height,
+ * Y up, right-handed -- exactly what `packages/render` emits. `renderX` negates,
+ * so +x is EAST and world x is negative; see `render-space.ts`.
+ *
+ * Nothing about the camera arithmetic itself depends on that. The mirror lives
+ * in the geometry, not in the view: `orbitPose`, `panBy` and `flyForward` work
+ * in render space and are unchanged by it. Only the functions here that turn a
+ * TILE into a render position -- {@link sectorCentre}, {@link tileCentre} --
+ * have to convert.
  */
 
 import { SECTOR_WIDTH } from '@rsc-editor/schema';
-import { TILE_SIZE } from '@rsc-editor/render';
+import { TILE_SIZE, renderX } from '@rsc-editor/render';
 
 export type CameraMode = 'orbit' | 'fly';
 
@@ -34,34 +41,26 @@ export interface OrbitState {
 /* -------------------------------------------------------------------------- */
 
 /**
- * The yaw that puts NORTH at the top of the screen.
+ * The yaw that puts NORTH at the top of the screen and EAST on the right --
+ * the world map's orientation, and the client's.
  *
  * At yaw 0 the camera sits at `target + (0, .., +z)` and looks back along -z.
- * Render z is `tileY * 128`, and game y increases *southward*
+ * Render z is `tileY * 128` and game y increases *southward*
  * (docs/CACHE-ASSET-API.md), so -z is north: the horizon at the top of the
- * screen is north, which is what the world map's north-up orientation means.
+ * screen is north.
  *
- * ## What this yaw does NOT fix, and cannot
+ * Screen right at this yaw is +x. Render x is `renderX(gameX * 128)`, i.e.
+ * game x negated, and game x increases *westward*, so +x is east. The compass
+ * directions are a right-handed frame in the space the geometry lives in --
+ * (East, North, Up) = (+x, -z, +y), and x cross -z = +y -- which is what lets
+ * one yaw satisfy both halves of the map's orientation at once.
  *
- * The map also puts east on the right. The 3D view cannot, and no camera angle
- * can, because the difference is a MIRROR and not a rotation:
- *
- *   - render x is `gameX * 128`, and **game x increases westward**, so +x is
- *     west. The canonical map is drawn `pixelX = width - 1 - gameX`, i.e. with
- *     that axis reversed, which is the whole point of
- *     docs/CACHE-ASSET-API.md "The x axis is MIRRORED".
- *   - with +z south and +y up, a camera looking north has +x -- west -- on its
- *     right. Check it: (East, North, Up) = (-x, -z, +y) and (-x) x (-z) = -y,
- *     i.e. down. The game's own compass directions form a LEFT-handed frame in
- *     the space the geometry lives in.
- *
- * So the 3D view is a mirror image of the canonical map, and so is mudclient's,
- * because `packages/render` is a faithful port of it. Undoing that would mean
- * negating an axis, which flips the winding of every triangle -- and RSC
- * surfaces are one-sided on purpose (a roof vanishes from underneath). It is not
- * something to do quietly at the camera.
- *
- * North-up is therefore what the presets give you, and east is on the left.
+ * That agreement is not free and is not the camera's doing. It comes from
+ * `RENDER_X_SIGN` in `packages/render/src/render-space.ts`, which mirrors the
+ * x axis and reverses every triangle's winding to keep RSC's one-sided
+ * surfaces showing the side they are meant to show. Before that flip the render
+ * space was a reflection of the client's and no camera angle could have fixed
+ * it; a camera can only rotate.
  */
 export const MAP_NORTH_YAW = 0;
 
@@ -99,10 +98,10 @@ export function inGameOrbit(
 /**
  * A whole sector in frame, looking north so the view agrees with the map.
  *
- * This used to sit at yaw 35 for a pleasanter three-quarter view, and its
- * comment claimed that was "the south-east" -- it is the south-*west*, because
- * +x is west (see {@link MAP_NORTH_YAW}). Squared up to north, the sector grid
- * and the world map now read the same way up.
+ * This used to sit at yaw 35 for a pleasanter three-quarter view. Squared up to
+ * north, the sector grid and the world map read the same way round -- north up
+ * and east right (see {@link MAP_NORTH_YAW}) -- which is worth more in an
+ * editor than the nicer angle.
  */
 export function overviewOrbit(target: [number, number, number]): OrbitState {
   return {
@@ -159,7 +158,7 @@ export function sectorCentre(
   height = 0
 ): [number, number, number] {
   return [
-    (sx + 0.5) * SECTOR_WIDTH * TILE_SIZE,
+    renderX((sx + 0.5) * SECTOR_WIDTH * TILE_SIZE),
     height,
     (sy + 0.5) * SECTOR_WIDTH * TILE_SIZE
   ];
@@ -167,5 +166,5 @@ export function sectorCentre(
 
 /** World render-space centre of a tile. */
 export function tileCentre(wx: number, wy: number, height = 0): [number, number, number] {
-  return [(wx + 0.5) * TILE_SIZE, height, (wy + 0.5) * TILE_SIZE];
+  return [renderX((wx + 0.5) * TILE_SIZE), height, (wy + 0.5) * TILE_SIZE];
 }

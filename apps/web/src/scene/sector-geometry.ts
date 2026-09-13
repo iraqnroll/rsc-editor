@@ -63,6 +63,7 @@ import {
   neighboursFrom,
   planeElevation,
   planeOffsets,
+  renderX,
   withPlaneOffsets,
   type AtlasLayout,
   type ConnectorLink,
@@ -102,7 +103,10 @@ export interface SectorGeometrySet {
   key: string;
   coord: SectorCoord;
   signature: string;
-  /** world-space origin of the sector, render space (y is up) */
+  /**
+   * World-space origin of the sector, render space (y is up, +x east so
+   * `originX` is negative -- see `render-space.ts`).
+   */
   originX: number;
   originZ: number;
   terrain: BufferGeometry | null;
@@ -337,7 +341,11 @@ export class SectorGeometryCache {
       neighbours: neighboursFrom(sector.coord, this.sectors)
     });
 
-    const originX = sector.coord.x * SECTOR_SPAN;
+    // Mirrored, because the geometry inside the group is: `RscModel.build`
+    // emits sector-local x in -6144..0 (`render-space.ts`). Translating by the
+    // unmirrored origin would stack every sector's mesh on the wrong column and
+    // the seams would look like a meshing bug rather than a coordinate one.
+    const originX = renderX(sector.coord.x * SECTOR_SPAN);
     const originZ = sector.coord.y * SECTOR_SPAN;
 
     const mesh = buildSectorMesh(view, this.config!, {
@@ -616,12 +624,16 @@ export class WorldHeights {
    * would float above or sink into a split tile.
    */
   at(worldX: number, worldZ: number): number {
-    const sx = Math.floor(worldX / SECTOR_SPAN);
+    // `worldX` is a RENDER position, so undo the east-is-+x mirror before
+    // indexing lanes: `LandscapeView.elevation` is a lane read and lives in
+    // game space. See `render-space.ts`.
+    const gameX = renderX(worldX);
+    const sx = Math.floor(gameX / SECTOR_SPAN);
     const sy = Math.floor(worldZ / SECTOR_SPAN);
     const view = this.viewAt(sx, sy);
     if (!view) return 0;
     return view.elevation(
-      Math.round(worldX - sx * SECTOR_SPAN),
+      Math.round(gameX - sx * SECTOR_SPAN),
       Math.round(worldZ - sy * SECTOR_SPAN)
     );
   }

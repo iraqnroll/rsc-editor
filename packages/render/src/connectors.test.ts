@@ -20,6 +20,7 @@ import {
   planeStorey,
   planesFor
 } from './planes.js';
+import { renderX } from './render-space.js';
 import { realConfig, sceneryWorld } from './test-support.js';
 
 /**
@@ -249,8 +250,12 @@ describe('connectors in the real world', () => {
     const ladder = found.find((c) => c.wx === 50 * SECTOR_WIDTH + 22)!;
 
     expect(ladder).toBeDefined();
-    // A 1x1 ladder: the centre of tile 22 is 22.5 tiles from the sector origin.
-    expect(ladder.x).toBe((50 * SECTOR_WIDTH + 22) * TILE_SIZE + TILE_SIZE / 2);
+    // A 1x1 ladder: the centre of tile 22 is 22.5 tiles from the sector origin,
+    // mirrored into render space so +x is east (`render-space.ts`) -- the same
+    // flip the geometry it marks went through.
+    expect(ladder.x).toBe(
+      renderX((50 * SECTOR_WIDTH + 22) * TILE_SIZE + TILE_SIZE / 2)
+    );
   });
 });
 

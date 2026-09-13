@@ -19,7 +19,12 @@ import { describe, expect, it } from 'vitest';
 import { Mesh, Raycaster, Vector3 } from 'three';
 import { SECTOR_WIDTH, sectorKey } from '@rsc-editor/schema';
 import type { RscConfig } from '@rsc-editor/schema';
-import { TILE_SIZE, type SceneryModel, type SceneryModelSource } from '@rsc-editor/render';
+import {
+  TILE_SIZE,
+  renderX,
+  type SceneryModel,
+  type SceneryModelSource
+} from '@rsc-editor/render';
 import { createMockApi } from '../data/mock-api.js';
 import { SectorGeometryCache, type SectorSource } from './sector-geometry.js';
 import { tileOfFace } from './picking.js';
@@ -141,8 +146,11 @@ describe('viewport frame budget', () => {
     for (let i = 0; i < 200; i++) {
       const wx = (ORIGIN.x - RADIUS) * SECTOR_WIDTH + ((i * 37) % (SECTOR_WIDTH * 5));
       const wy = (ORIGIN.y - RADIUS) * SECTOR_WIDTH + ((i * 53) % (SECTOR_WIDTH * 5));
+      // `renderX` on the x: render space mirrors the game's westward x so that
+      // +x is east (`render-space.ts`). Firing at the unmirrored column aims
+      // 25 sectors away from the terrain and every ray misses.
       raycaster.set(
-        new Vector3((wx + 0.5) * TILE_SIZE, 20000, (wy + 0.5) * TILE_SIZE),
+        new Vector3(renderX((wx + 0.5) * TILE_SIZE), 20000, (wy + 0.5) * TILE_SIZE),
         down
       );
       const hit = raycaster.intersectObjects(meshes, false)[0];

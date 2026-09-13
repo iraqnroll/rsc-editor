@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { TERRAIN_COLOURS, packFill, shadeChannel, unpackFill } from './colour.js';
 import { ELEVATION_SCALE, TILE_SIZE } from './constants.js';
 import { LandscapeView, neighboursFrom } from './landscape-view.js';
+import { renderX, tileRenderX } from './render-space.js';
 import { buildTerrain } from './terrain.js';
 import {
   DENSE_SECTOR,
@@ -68,9 +69,16 @@ describe('terrain triangulation', () => {
     const geometry = buildTerrain(view, realConfig(), { vertexNoise: false });
     const positions = distinctPositions(geometry);
 
-    expect(positions.has(`${24 * TILE_SIZE},${200 * ELEVATION_SCALE},${24 * TILE_SIZE}`)).toBe(true);
+    // `tileRenderX`, not `x * TILE_SIZE`: render x is mirrored so +x is east
+    // (`render-space.ts`). The height is what this test is about and is
+    // untouched by that.
+    expect(
+      positions.has(`${tileRenderX(24)},${200 * ELEVATION_SCALE},${24 * TILE_SIZE}`)
+    ).toBe(true);
     // and the untouched terrain is still at 128 * 3
-    expect(positions.has(`${10 * TILE_SIZE},${128 * ELEVATION_SCALE},${10 * TILE_SIZE}`)).toBe(true);
+    expect(
+      positions.has(`${tileRenderX(10)},${128 * ELEVATION_SCALE},${10 * TILE_SIZE}`)
+    ).toBe(true);
   });
 
   it('lifts the whole sheet when every corner rises', () => {
@@ -239,13 +247,16 @@ describe('sector edges', () => {
     );
 
     const edge = SECTOR_WIDTH * TILE_SIZE;
+    // The x = 48 column, in render units: mirrored, so it is the *lowest* x in
+    // the mesh rather than the highest (`render-space.ts`). z is unaffected.
+    const edgeX = renderX(edge);
     // Corner (48, 48) belongs to the *diagonal* neighbour, so the sweep stops
     // short of it.
     const heightsAt = (geometry: ReturnType<typeof buildTerrain>): Set<number> => {
       const out = new Set<number>();
       for (let v = 0; v < geometry.vertexCount; v++) {
         const z = geometry.positions[v * 3 + 2]!;
-        if (geometry.positions[v * 3] === edge && z < edge) {
+        if (geometry.positions[v * 3] === edgeX && z < edge) {
           out.add(geometry.positions[v * 3 + 1]!);
         }
       }
@@ -295,11 +306,13 @@ describe('a real sector', () => {
 
     expect(geometry.triangleCount).toBeGreaterThan(TILES_PER_SECTOR);
 
-    // No stray vertices outside the sector's own 48x48 footprint.
+    // No stray vertices outside the sector's own 48x48 footprint. The x span is
+    // -6144..0 rather than 0..6144 because render x is mirrored so that +x is
+    // east (`render-space.ts`); the footprint is the same 48 tiles wide.
     const limit = SECTOR_WIDTH * TILE_SIZE;
     for (let v = 0; v < geometry.vertexCount; v++) {
-      expect(geometry.positions[v * 3]).toBeGreaterThanOrEqual(0);
-      expect(geometry.positions[v * 3]).toBeLessThanOrEqual(limit);
+      expect(renderX(geometry.positions[v * 3]!)).toBeGreaterThanOrEqual(0);
+      expect(renderX(geometry.positions[v * 3]!)).toBeLessThanOrEqual(limit);
       expect(geometry.positions[v * 3 + 2]).toBeGreaterThanOrEqual(0);
       expect(geometry.positions[v * 3 + 2]).toBeLessThanOrEqual(limit);
     }
@@ -320,7 +333,7 @@ describe('a real sector', () => {
         if (nearBridge(view, x, y)) continue;
         const expected = centre.buffers.elevation[tileIndexOf(x, y)]! * ELEVATION_SCALE;
         expect(
-          positions.has(`${x * TILE_SIZE},${expected},${y * TILE_SIZE}`)
+          positions.has(`${tileRenderX(x)},${expected},${y * TILE_SIZE}`)
         ).toBe(true);
         checked++;
       }

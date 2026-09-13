@@ -6,6 +6,7 @@ import { atlasUvRect, atlasUvs } from './atlas.js';
 import { TILE_SIZE } from './constants.js';
 import type { GeometryData } from './model.js';
 import { encodePng, rasterize, type Camera } from './raster.js';
+import { renderX } from './render-space.js';
 import { buildSectorMesh, viewSector } from './sector-mesh.js';
 import { DENSE_SECTOR, realConfig, realLandscape } from './test-support.js';
 import { buildTextureAtlasFromFixtures } from './tools/build-texture-atlas.js';
@@ -26,17 +27,22 @@ import { buildTextureAtlasFromFixtures } from './tools/build-texture-atlas.js';
  */
 
 const OUT = fileURLToPath(new URL('../preview/', import.meta.url));
+/**
+ * Sector centre in GAME units; the cameras mirror the x through `renderX`,
+ * because render x is negated so that +x is east (`render-space.ts`). Written
+ * this way round so the offsets below still read as "west of centre" etc.
+ */
 const CENTRE = (SECTOR_WIDTH * TILE_SIZE) / 2;
 
 const OBLIQUE: Camera = {
-  eye: [CENTRE, 3400, CENTRE + 5200],
-  target: [CENTRE, 0, CENTRE],
+  eye: [renderX(CENTRE), 3400, CENTRE + 5200],
+  target: [renderX(CENTRE), 0, CENTRE],
   fov: Math.PI / 4
 };
 
 const CLOSE: Camera = {
-  eye: [CENTRE - 900, 900, CENTRE + 900],
-  target: [CENTRE, 120, CENTRE],
+  eye: [renderX(CENTRE - 900), 900, CENTRE + 900],
+  target: [renderX(CENTRE), 120, CENTRE],
   fov: Math.PI / 4
 };
 

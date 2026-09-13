@@ -14,7 +14,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { Matrix4, Mesh, Raycaster, Vector3 } from 'three';
+import { Matrix4, Mesh, PerspectiveCamera, Raycaster, Vector3 } from 'three';
 import {
   OBJECT_ID_BIAS,
   SECTOR_WIDTH,
@@ -32,9 +32,22 @@ import {
   gridAtlasLayout,
   neighboursFrom,
   planesFor,
+  renderX,
   type SceneryModel,
   type SceneryModelSource
 } from '@rsc-editor/render';
+import {
+  contractPixel,
+  mapToTile,
+  sectorToMap,
+  tileToMap
+} from '../data/world-map.js';
+import {
+  panView,
+  screenToTile,
+  tileToScreen,
+  zoomView
+} from './fallback-view.js';
 import { planeSectorCoords } from './plane-sectors.js';
 import { parseModelsWire, resetSceneryModels } from './scenery-models.js';
 import { renderModelThumbnail, resetModelThumbnails } from './model-thumbnail.js';
@@ -63,7 +76,8 @@ import {
   MAP_NORTH_YAW,
   orbitPose,
   overviewOrbit,
-  sectorCentre
+  sectorCentre,
+  tileCentre
 } from './camera.js';
 import { flyForward } from './Viewport3D.js';
 
@@ -612,8 +626,11 @@ describe('picking', () => {
     for (const [tx, ty] of probes) {
       const wx = CENTRE.x * SECTOR_WIDTH + tx;
       const wy = CENTRE.y * SECTOR_WIDTH + ty;
+      // `renderX` on the x, because render space mirrors the game's westward x
+      // so that +x is east (`render-space.ts`). This is the round trip the
+      // mirror had to survive: fire at a known tile, get that tile back.
       raycaster.set(
-        new Vector3((wx + 0.5) * TILE_SIZE, 20000, (wy + 0.5) * TILE_SIZE),
+        new Vector3(renderX((wx + 0.5) * TILE_SIZE), 20000, (wy + 0.5) * TILE_SIZE),
         new Vector3(0, -1, 0)
       );
       const hit = raycaster.intersectObject(mesh, false)[0];
@@ -643,7 +660,7 @@ describe('picking', () => {
 
     const raycaster = new Raycaster();
     raycaster.set(
-      new Vector3((wx + 0.5) * TILE_SIZE, 20000, (wy + 0.5) * TILE_SIZE),
+      new Vector3(renderX((wx + 0.5) * TILE_SIZE), 20000, (wy + 0.5) * TILE_SIZE),
       new Vector3(0, -1, 0)
     );
     const hit = raycaster.intersectObject(mesh, false)[0]!;
@@ -658,7 +675,8 @@ describe('picking', () => {
   it('falls back to the ground plane where there is no terrain', () => {
     const tile = tileOfGroundPlane(
       2,
-      { x: 100 * TILE_SIZE, y: 1000, z: 200 * TILE_SIZE },
+      // Render space, so the x is mirrored (`render-space.ts`).
+      { x: renderX(100 * TILE_SIZE), y: 1000, z: 200 * TILE_SIZE },
       { x: 0, y: -1, z: 0 }
     );
     expect(tile).toEqual({ plane: 2, wx: 100, wy: 200 });
@@ -696,13 +714,15 @@ describe('picking', () => {
   });
 
   it('refuses negative world positions rather than wrapping them', () => {
-    expect(worldTileAt(0, -1, 0)).toBeNull();
-    expect(worldTileAt(0, 0, 0)).toEqual({ plane: 0, wx: 0, wy: 0 });
-    expect(worldTileAt(0, TILE_SIZE * 3 + 1, TILE_SIZE * 5 + 127)).toEqual({
-      plane: 0,
-      wx: 3,
-      wy: 5
-    });
+    // Note the sign: off the west edge of the world is game x < 0, which is
+    // render x > 0, because render x is mirrored (`render-space.ts`). Written
+    // through `renderX` so it stays a statement about TILES and not about which
+    // way the axis happens to point.
+    expect(worldTileAt(0, renderX(-1), 0)).toBeNull();
+    expect(worldTileAt(0, renderX(0), 0)).toEqual({ plane: 0, wx: 0, wy: 0 });
+    expect(
+      worldTileAt(0, renderX(TILE_SIZE * 3 + 1), TILE_SIZE * 5 + 127)
+    ).toEqual({ plane: 0, wx: 3, wy: 5 });
   });
 });
 
@@ -723,10 +743,12 @@ describe('overlays', () => {
     const circle = buildBrushOutline(heights, wx, wy, 2, 'circle');
     expect(circle.length / 6).toBe(20);
 
+    // `renderX` undoes the east-is-+x mirror so these stay tile columns; an
+    // overlay's raw x is negative (`render-space.ts`).
     const corner = (out: Float32Array, gx: number, gz: number): boolean => {
       for (let i = 0; i < out.length; i += 3) {
         if (
-          Math.round(out[i]! / TILE_SIZE) === gx &&
+          Math.round(renderX(out[i]!) / TILE_SIZE) === gx &&
           Math.round(out[i + 2]! / TILE_SIZE) === gz
         ) {
           return true;
@@ -739,7 +761,7 @@ describe('overlays', () => {
 
     // Every vertex sits on the ground, not at zero.
     for (let i = 0; i < square.length; i += 3) {
-      const gx = Math.round(square[i]! / TILE_SIZE);
+      const gx = Math.round(renderX(square[i]!) / TILE_SIZE);
       const gz = Math.round(square[i + 2]! / TILE_SIZE);
       expect(square[i + 1]).toBeCloseTo(heights.corner(gx, gz) + OVERLAY_LIFT * 4, 3);
       expect(square[i + 1]).toBeGreaterThan(OVERLAY_LIFT * 4);
@@ -821,17 +843,13 @@ describe('cameras', () => {
   });
 
   /**
-   * The presets have to agree with the world map, as far as a camera can.
+   * The presets have to agree with the world map: north up AND east right.
    *
    * At MAP_NORTH_YAW the camera sits SOUTH of its target (+z, because game y
    * increases southward) and therefore looks north, which puts north at the top
-   * of the screen exactly as the map does.
-   *
-   * East on the right is the half no yaw can deliver, and that is deliberate,
-   * not an oversight: render +x is game x, game x increases WESTWARD, and the
-   * map reverses that axis (`pixelX = width - 1 - gameX`). The difference is a
-   * mirror, and a mirror at the camera flips the winding of every triangle --
-   * which RSC's one-sided surfaces depend on. See the comment on MAP_NORTH_YAW.
+   * of the screen exactly as the map does. This half is pure camera arithmetic
+   * and can be asserted here; the east-right half needs a projection and is
+   * tested below.
    */
   it('frames the world north-up, the way the map is drawn', () => {
     expect(overviewOrbit([0, 0, 0]).yaw).toBe(MAP_NORTH_YAW);
@@ -843,12 +861,205 @@ describe('cameras', () => {
     expect(pose.position[0]).toBeCloseTo(0, 6);
   });
 
+  /**
+   * ==========================================================================
+   *  EAST IS ON THE RIGHT. JUDGED AGAINST THE MAP, NOT AGAINST OUR OWN AXIS.
+   * ==========================================================================
+   *
+   * This is the assertion the whole x mirror exists to satisfy, and it is
+   * written to be un-foolable in the way DECISIONS section 13 describes.
+   *
+   * That bug -- the world map drawn back to front -- survived a full test suite
+   * because every assertion compared the image to the lanes through a shared
+   * helper: mirror the painter and the helper together and everything stays
+   * green while the picture is backwards. Counting triangles, or checking that
+   * `sectorCentre` agrees with `renderX`, has exactly that shape. It cannot see
+   * a mirror, because it is the mirror checking itself.
+   *
+   * So the judge here is OUTSIDE this package's arithmetic: the world map's own
+   * published contract, `pixelX = image.width - 1 - gameX` from
+   * docs/CACHE-ASSET-API.md, which says in so many words that a SMALLER game x
+   * belongs FURTHER RIGHT. Two tiles are pushed through the real orbit camera
+   * at MAP_NORTH_YAW and the projected screen x values have to order the same
+   * way the map orders its pixels.
+   *
+   * `project()` is three's, not ours -- a real perspective matrix built from the
+   * pose -- so nothing in the chain from tile to screen is a function this file
+   * also wrote.
+   */
+  it('puts east on the right, the way the world map does', () => {
+    const wy = 100;
+    // Two tiles on the same row, ten apart. `west` has the LARGER game x,
+    // because game x increases westward.
+    const east = 40;
+    const west = 50;
+
+    const target = tileCentre((east + west) / 2, wy);
+    const pose = orbitPose({ target, distance: 4000, yaw: MAP_NORTH_YAW, pitch: 60 });
+
+    const camera = new PerspectiveCamera(55, 16 / 9, 1, 100000);
+    camera.position.set(pose.position[0], pose.position[1], pose.position[2]);
+    camera.lookAt(pose.target[0], pose.target[1], pose.target[2]);
+    camera.updateMatrixWorld(true);
+
+    const screenX = (wx: number): number => {
+      const p = tileCentre(wx, wy);
+      return new Vector3(p[0], p[1], p[2]).project(camera).x;
+    };
+
+    // The map's rule: pixelX = width - 1 - gameX, so smaller gameX is further
+    // right. NDC x grows rightward, so the same claim is `screenX(east) >
+    // screenX(west)`.
+    expect(screenX(east)).toBeGreaterThan(screenX(west));
+
+    // And the map's own arithmetic, stated independently, agreeing. If these
+    // two ever disagree the viewport and the world map are showing mirror
+    // images of the same place, which is the failure this guards.
+    const mapPixelX = (gameX: number): number => 1000 - 1 - gameX;
+    expect(mapPixelX(east)).toBeGreaterThan(mapPixelX(west));
+
+    // North is still up: the tile further north (smaller game y) projects
+    // higher on the screen. NDC y grows upward.
+    const northY = new Vector3(...tileCentre(east, wy - 10)).project(camera).y;
+    const southY = new Vector3(...tileCentre(east, wy + 10)).project(camera).y;
+    expect(northY).toBeGreaterThan(southY);
+  });
+
   it('centres on a sector in render space', () => {
+    // `renderX`: render space mirrors the game's westward x so +x is east, so a
+    // sector centre is negative. See `render-space.ts`.
     expect(sectorCentre(2, 3)).toEqual([
-      2.5 * SECTOR_WIDTH * TILE_SIZE,
+      renderX(2.5 * SECTOR_WIDTH * TILE_SIZE),
       0,
       3.5 * SECTOR_WIDTH * TILE_SIZE
     ]);
     expect(SECTOR_SPAN).toBe(SECTOR_WIDTH * TILE_SIZE);
+  });
+});
+
+/* ========================================================================== */
+/*  The 2D fallback viewport                                                  */
+/* ========================================================================== */
+
+/**
+ * ==========================================================================
+ *  THE FALLBACK IS MIRRORED TOO, JUDGED AGAINST THE WORLD MAP MODULE.
+ * ==========================================================================
+ *
+ * The fallback is the same editor on a machine with no WebGL2. If it were
+ * mirrored the other way from the 3D viewport, the only people who could ever
+ * see it are the ones whose GPU is blocked -- an inconsistency nobody else can
+ * reproduce, which is worse than one everybody has.
+ *
+ * `fallback-view.ts` has four functions -- draw, pick, pan, zoom -- that only
+ * work as a set. A round trip through any two of them passes happily while
+ * mirrored the wrong way, which is precisely the DECISIONS section 13 failure.
+ * So the judge is `data/world-map.ts`, a module this file did not write, whose
+ * own arithmetic is pinned to `contractPixel` -- the formula frozen in
+ * docs/CACHE-ASSET-API.md.
+ *
+ * The setup makes the comparison exact rather than merely directional: a canvas
+ * showing exactly one 48x48 sector at `SCALE` px/tile is, pixel for pixel, a
+ * world map image of that sector at `tileSize: SCALE`. The two must therefore
+ * agree on every tile rect and on every click, not just on their ordering.
+ */
+describe('the 2D fallback viewport', () => {
+  const SCALE = 4;
+  const SECTOR = { x: 50, y: 50 };
+  const SIZE = { w: SECTOR_WIDTH * SCALE, h: SECTOR_WIDTH * SCALE };
+  const VIEW = {
+    cx: SECTOR.x * SECTOR_WIDTH + SECTOR_WIDTH / 2,
+    cy: SECTOR.y * SECTOR_WIDTH + SECTOR_WIDTH / 2,
+    scale: SCALE
+  };
+  /** The same picture, described as a world map image. */
+  const FRAME = {
+    originSector: SECTOR,
+    sectors: { width: 1, height: 1 },
+    tileSize: SCALE,
+    image: { width: SECTOR_WIDTH * SCALE, height: SECTOR_WIDTH * SCALE }
+  };
+
+  it('puts east on the right, agreeing with the map contract', () => {
+    const wy = SECTOR.y * SECTOR_WIDTH + 10;
+    // Game x increases westward, so `east` is the SMALLER coordinate.
+    const east = SECTOR.x * SECTOR_WIDTH + 4;
+    const west = SECTOR.x * SECTOR_WIDTH + 40;
+
+    const screenOf = (wx: number): number => tileToScreen(VIEW, SIZE, wx, wy).x;
+    expect(screenOf(east)).toBeGreaterThan(screenOf(west));
+
+    // And the frozen formula, `pixelX = image.width - 1 - gameX * tileSize`,
+    // stated independently and having to order the same way.
+    const contractOf = (wx: number): number =>
+      contractPixel(FRAME, SECTOR.x, SECTOR.y, wx - SECTOR.x * SECTOR_WIDTH, 0).x;
+    expect(contractOf(east)).toBeGreaterThan(contractOf(west));
+  });
+
+  it('draws every tile exactly where the world map draws it', () => {
+    for (let tx = 0; tx < SECTOR_WIDTH; tx += 7) {
+      for (let ty = 0; ty < SECTOR_WIDTH; ty += 7) {
+        const wx = SECTOR.x * SECTOR_WIDTH + tx;
+        const wy = SECTOR.y * SECTOR_WIDTH + ty;
+        expect(tileToScreen(VIEW, SIZE, wx, wy), `tile ${tx},${ty}`).toEqual(
+          tileToMap(FRAME, wx, wy)
+        );
+      }
+    }
+
+    // A whole sector's rect, which is the `tilesX` argument's entire reason for
+    // existing: mirrored, a 48-tile rect starts at a different corner from a
+    // 1-tile one, and defaulting it would put the border 47 tiles away.
+    expect(
+      tileToScreen(VIEW, SIZE, SECTOR.x * SECTOR_WIDTH, SECTOR.y * SECTOR_WIDTH, SECTOR_WIDTH)
+    ).toEqual(sectorToMap(FRAME, SECTOR.x, SECTOR.y));
+  });
+
+  it('resolves a click to the tile the world map would name for that spot', () => {
+    for (let px = 0; px < SIZE.w; px += 5) {
+      for (let py = 0; py < SIZE.h; py += 37) {
+        expect(screenToTile(VIEW, SIZE, px, py), `pixel ${px},${py}`).toEqual(
+          mapToTile(FRAME, px, py)
+        );
+      }
+    }
+
+    // Said in plain English, so the claim survives a refactor of the above:
+    // a click on the LEFT of the canvas is further WEST, i.e. a larger game x.
+    const left = screenToTile(VIEW, SIZE, 4, SIZE.h / 2);
+    const right = screenToTile(VIEW, SIZE, SIZE.w - 4, SIZE.h / 2);
+    expect(left.wx).toBeGreaterThan(right.wx);
+    expect(left.wy).toBe(right.wy);
+  });
+
+  it('pans the world with the cursor rather than against it', () => {
+    const wy = VIEW.cy;
+    const wx = Math.floor(VIEW.cx);
+    const before = tileToScreen(VIEW, SIZE, wx, wy).x;
+
+    // Drag 40px to the RIGHT: what you grabbed must end up 40px to the right.
+    const panned = panView(VIEW, 40, 0);
+    expect(tileToScreen(panned, SIZE, wx, wy).x).toBeCloseTo(before + 40, 6);
+
+    // Down likewise, which the mirror must not have disturbed.
+    const down = panView(VIEW, 0, 24);
+    expect(tileToScreen(down, SIZE, wx, wy).y).toBeCloseTo(
+      tileToScreen(VIEW, SIZE, wx, wy).y + 24,
+      6
+    );
+  });
+
+  it('zooms about the cursor, keeping the tile under it put', () => {
+    // Off-centre on purpose: an x-sign error in the zoom solve cancels exactly
+    // at the middle of the canvas and nowhere else.
+    const px = SIZE.w * 0.22;
+    const py = SIZE.h * 0.7;
+    const under = screenToTile(VIEW, SIZE, px, py);
+
+    for (const zoomIn of [true, false]) {
+      const zoomed = zoomView(VIEW, SIZE, px, py, zoomIn);
+      expect(zoomed.scale, `scale ${zoomIn}`).not.toBe(VIEW.scale);
+      expect(screenToTile(zoomed, SIZE, px, py), `tile under cursor ${zoomIn}`).toEqual(under);
+    }
   });
 });

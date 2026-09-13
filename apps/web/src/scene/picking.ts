@@ -15,6 +15,7 @@
  */
 
 import { SECTOR_WIDTH } from '@rsc-editor/schema';
+import { renderXToTile } from '@rsc-editor/render';
 import type { WorldTile } from '../ops/coords.js';
 import { SECTOR_SPAN, type SectorGeometrySet } from './sector-geometry.js';
 
@@ -76,9 +77,20 @@ export function tileOfGroundPlane(
   return worldTileAt(plane, x, z);
 }
 
-/** Render-space position -> world tile. 128 units per tile, origin at (0, 0). */
+/**
+ * Render-space position -> world tile. 128 units per tile, origin at (0, 0).
+ *
+ * `renderXToTile` and not a bare divide: render x is mirrored so that +x is east
+ * (`render-space.ts`), so a hit point's x is negative and the flip has to be
+ * undone *before* the floor, or every pick lands one tile west of the cursor at
+ * best and on the wrong side of the world at worst.
+ *
+ * `triangleTiles` above is unaffected -- it is an index into the mesh, not a
+ * coordinate -- which is exactly why {@link tileOfFace} is the primary path and
+ * this is the fallback.
+ */
 export function worldTileAt(plane: number, x: number, z: number): WorldTile | null {
-  const wx = Math.floor(x / (SECTOR_SPAN / SECTOR_WIDTH));
+  const wx = renderXToTile(x);
   const wy = Math.floor(z / (SECTOR_SPAN / SECTOR_WIDTH));
   if (wx < 0 || wy < 0) return null;
   return { plane, wx, wy };

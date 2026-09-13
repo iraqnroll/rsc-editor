@@ -3,6 +3,7 @@ import { SECTOR_WIDTH } from '@rsc-editor/schema';
 import { TILE_SIZE } from './constants.js';
 import { LandscapeView, neighbourKey, neighboursFrom } from './landscape-view.js';
 import { modelBounds, modelPreviewCamera } from './model-preview.js';
+import { renderX } from './render-space.js';
 import { buildSectorMesh } from './sector-mesh.js';
 import {
   NO_MODELS,
@@ -255,7 +256,9 @@ describe('resolveScenery', () => {
 
     const { instances } = resolveScenery(view, config);
     expect(instances).toHaveLength(1);
-    expect(instances[0]!.x).toBe(12 * TILE_SIZE + TILE_SIZE / 2);
+    // `renderX`: an instance translation is applied to geometry the mirror has
+    // already been through, so it is mirrored too (`render-space.ts`).
+    expect(instances[0]!.x).toBe(renderX(12 * TILE_SIZE + TILE_SIZE / 2));
     expect(instances[0]!.z).toBe(20 * TILE_SIZE + TILE_SIZE / 2);
     // 10 * ELEVATION_SCALE, in render space (positive is up)
     expect(instances[0]!.y).toBe(30);
@@ -272,8 +275,9 @@ describe('resolveScenery', () => {
 
     const { instances } = resolveScenery(view, config);
     expect(instances).toHaveLength(1);
-    // ((10 + 10 + 2) * 128) / 2 = 1408, i.e. the corner between tiles 10 and 11
-    expect(instances[0]!.x).toBe(1408);
+    // ((10 + 10 + 2) * 128) / 2 = 1408, i.e. the corner between tiles 10 and 11,
+    // mirrored into render space (`render-space.ts`).
+    expect(instances[0]!.x).toBe(renderX(1408));
     expect(instances[0]!.z).toBe(10 * TILE_SIZE + TILE_SIZE / 2);
   });
 
@@ -367,9 +371,11 @@ describe('buildScenery', () => {
     // Nothing in this sector references the dangling model.
     expect(mesh.skipped).toBe(0);
 
+    // Inside the sector's own footprint. `renderX` undoes the east-is-+x mirror
+    // so the bound is still "0..48 tiles"; the span itself is unchanged.
     for (const instance of mesh.instances) {
-      expect(instance.x).toBeGreaterThanOrEqual(0);
-      expect(instance.x).toBeLessThanOrEqual(SECTOR_WIDTH * TILE_SIZE);
+      expect(renderX(instance.x)).toBeGreaterThanOrEqual(0);
+      expect(renderX(instance.x)).toBeLessThanOrEqual(SECTOR_WIDTH * TILE_SIZE);
       expect(instance.z).toBeGreaterThanOrEqual(0);
       expect(instance.z).toBeLessThanOrEqual(SECTOR_WIDTH * TILE_SIZE);
     }

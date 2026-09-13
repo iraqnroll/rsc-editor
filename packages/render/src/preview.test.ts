@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { SECTOR_WIDTH } from '@rsc-editor/schema';
 import { TILE_SIZE } from './constants.js';
+import { renderX } from './render-space.js';
 import { buildSectorMesh, viewSector } from './sector-mesh.js';
 import { encodePng, rasterize, type Camera } from './raster.js';
 import { DENSE_SECTOR, realConfig, realLandscape } from './test-support.js';
@@ -31,26 +32,33 @@ const SIZE = { width: 720, height: 480 };
  */
 const SQUARE = { width: 560, height: 560 };
 
-const CENTRE = (SECTOR_WIDTH * TILE_SIZE) / 2;
+/**
+ * Sector centre. `renderX` on the x, because render x is mirrored so that +x is
+ * east (`render-space.ts`) -- a camera on the unmirrored axis is a camera
+ * pointed at empty space, which would make every coverage assertion below read
+ * zero for a reason that has nothing to do with the geometry.
+ */
+const CENTRE_X = renderX((SECTOR_WIDTH * TILE_SIZE) / 2);
+const CENTRE_Z = (SECTOR_WIDTH * TILE_SIZE) / 2;
 
 /** Oblique view from the south, roughly the angle the game camera uses. */
 const OBLIQUE: Camera = {
-  eye: [CENTRE, 3400, CENTRE + 5200],
-  target: [CENTRE, 0, CENTRE],
+  eye: [CENTRE_X, 3400, CENTRE_Z + 5200],
+  target: [CENTRE_X, 0, CENTRE_Z],
   fov: Math.PI / 4
 };
 
 /** Straight down -- terrain should fill the frame completely. */
 const TOP_DOWN: Camera = {
-  eye: [CENTRE, 7600, CENTRE + 1],
-  target: [CENTRE, 0, CENTRE],
+  eye: [CENTRE_X, 7600, CENTRE_Z + 1],
+  target: [CENTRE_X, 0, CENTRE_Z],
   fov: Math.PI / 4
 };
 
 /** Below ground looking up: terrain is one-sided, so it should mostly vanish. */
 const UNDERNEATH: Camera = {
-  eye: [CENTRE, -3400, CENTRE + 5200],
-  target: [CENTRE, 0, CENTRE],
+  eye: [CENTRE_X, -3400, CENTRE_Z + 5200],
+  target: [CENTRE_X, 0, CENTRE_Z],
   fov: Math.PI / 4
 };
 

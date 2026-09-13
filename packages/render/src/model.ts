@@ -1,5 +1,6 @@
 import { shadeChannel, unpackFill } from './colour.js';
 import { COLOUR_TRANSPARENT } from './constants.js';
+import { RENDER_X_SIGN, renderX } from './render-space.js';
 
 /**
  * A faithful stand-in for the client's `GameModel`, reduced to what geometry
@@ -16,11 +17,11 @@ import { COLOUR_TRANSPARENT } from './constants.js';
  * defined in that space -- the light direction (-50, -10, -50) is meaningless
  * in any other -- so it must stay that way for face normals to come out right.
  *
- * {@link RscModel.build} emits **render space**: the same x and z, but
- * y = +height, so a consumer can drop the buffers into a right-handed, Y-up
- * three.js scene with no transform. Negating one axis mirrors handedness, which
- * flips which side of each triangle faces the camera; `build` compensates in
- * the winding it emits (see the comment on `emitFace`).
+ * {@link RscModel.build} emits **render space**: `diag(RENDER_X_SIGN, -1, 1)`
+ * of that, i.e. y = +height so three.js can use it Y-up, and x negated so that
+ * +x is EAST rather than west. See `render-space.ts` for why the x flip is
+ * there and why the winding reversal in `emitFace` is the same change: the two
+ * are only correct together.
  */
 
 export interface Face {
@@ -445,25 +446,39 @@ export class RscModel {
       // fill otherwise, with the intensity subtracted in the first case and
       // added in the second (Scene#generateScanlines, `polygon.visibility`).
       //
-      // Negating Y on the way out mirrors handedness, so the side that the
-      // client draws ends up counter-clockwise -- i.e. three.js front-facing --
-      // when a back-fill face keeps the client's vertex order and a front-fill
-      // face is reversed.
+      // ====================================================================
+      //  WINDING. THIS IS THE OTHER HALF OF `RENDER_X_SIGN`; THE TWO ARE ONE
+      //  CHANGE AND MUST MOVE TOGETHER. See render-space.ts.
+      // ====================================================================
+      //
+      // Render space is client space through T = diag(RENDER_X_SIGN, -1, 1),
+      // so det(T) = -RENDER_X_SIGN. Emitting the source vertex order gives a
+      // triangle whose right-hand-rule normal is `det(T) * T^-T * n`, while
+      // the side the CLIENT draws is `+T^-T * n` for a front fill and
+      // `-T^-T * n` for a back fill. They agree -- i.e. the drawn side is the
+      // three.js front face -- exactly when `(isFront ? 1 : -1)` equals
+      // `-RENDER_X_SIGN`; otherwise the order has to be reversed.
+      //
+      // At RENDER_X_SIGN = +1 that reverses front fills (the old, mirrored
+      // space). At -1 it reverses back fills instead. Flip one without the
+      // other and every surface shows the face it is meant to hide: roofs
+      // become visible only from underneath, walls only from inside.
+      const reverse = isFront === (RENDER_X_SIGN > 0);
       const n = verts.length;
       const corner: number[] = [];
-      for (let i = 0; i < n; i++) corner.push(isFront ? n - 1 - i : i);
+      for (let i = 0; i < n; i++) corner.push(reverse ? n - 1 - i : i);
 
       const base = positions.length / 3;
 
-      // Flat normal in render space. A direction d in client space images to
-      // (d.x, -d.y, d.z); the geometric normal of the render-space polygon is
-      // n' = (-n.x, n.y, -n.z). The side the client draws is +n' for a back
-      // fill and -n' for a front fill, so a front fill negates.
-      const rawNX = -lit.faceNormalX[faceIndex]!;
-      const rawNY = lit.faceNormalY[faceIndex]!;
-      const rawNZ = -lit.faceNormalZ[faceIndex]!;
+      // Flat normal in render space, pointing at the side being drawn. A
+      // "which side is visible" normal is defined by a half-space test, so it
+      // maps by T^-T = diag(RENDER_X_SIGN, -1, 1) with NO determinant factor,
+      // and the front/back fill supplies the sign.
+      const sign = isFront ? 1 : -1;
+      const rawNX = RENDER_X_SIGN * lit.faceNormalX[faceIndex]!;
+      const rawNY = -lit.faceNormalY[faceIndex]!;
+      const rawNZ = lit.faceNormalZ[faceIndex]!;
       const mag = Math.sqrt(rawNX * rawNX + rawNY * rawNY + rawNZ * rawNZ) || 1;
-      const sign = isFront ? -1 : 1;
       const nx = (sign * rawNX) / mag;
       const ny = (sign * rawNY) / mag;
       const nz = (sign * rawNZ) / mag;
@@ -474,7 +489,9 @@ export class RscModel {
       for (let i = 0; i < n; i++) {
         const v = verts[corner[i]!]!;
 
-        positions.push(this.vertexX[v]!, -this.vertexY[v]!, this.vertexZ[v]!);
+        // The mirror itself: T = diag(RENDER_X_SIGN, -1, 1). Every position in
+        // the package passes through this one line.
+        positions.push(renderX(this.vertexX[v]!), -this.vertexY[v]!, this.vertexZ[v]!);
         normals.push(nx, ny, nz);
 
         // Scene#generateScanlines, exactly:
@@ -517,8 +534,10 @@ export class RscModel {
       // taking "the first three corners of the quad table" shears the texture on
       // every split tile, which is why this is derived rather than tabulated.
       //
-      // Keyed on the *source* corner, so reversing the winding for a front fill
-      // does not mirror the texture.
+      // Keyed on the *source* corner and solved in CLIENT space, so neither the
+      // winding reversal nor `RENDER_X_SIGN` mirrors the texture relative to the
+      // surface it sits on. (The world as a whole is unmirrored by
+      // RENDER_X_SIGN, textures included -- that is the point of it.)
       const uvOf = faceUvs(
         verts.map((v) => [this.vertexX[v]!, this.vertexY[v]!, this.vertexZ[v]!])
       );

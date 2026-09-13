@@ -18,6 +18,7 @@ import {
 } from '@rsc-editor/schema';
 import { LandscapeView, neighbourKey, neighboursFrom } from './landscape-view.js';
 import type { GeometryData } from './model.js';
+import { renderX } from './render-space.js';
 import type { SceneryModelSource } from './scenery.js';
 
 /**
@@ -228,11 +229,19 @@ export function distinctPositions(geometry: GeometryData): Set<string> {
   return out;
 }
 
-/** Edge shared by exactly two triangles of a split tile, as grid coordinates. */
+/**
+ * Edge shared by exactly two triangles of a split tile, as GRID coordinates.
+ *
+ * `renderX` undoes the east-is-+x mirror (`render-space.ts`) so the answer is
+ * in tile columns rather than in render units. Reporting the raw x here would
+ * make every diagonal assertion read `-20,21`, which hides what the test is
+ * actually about.
+ */
 export function sharedEdge(
   triangles: Array<Array<[number, number, number]>>
 ): Set<string> {
-  const key = (c: [number, number, number]): string => `${c[0] / 128},${c[2] / 128}`;
+  const key = (c: [number, number, number]): string =>
+    `${renderX(c[0]) / 128},${c[2] / 128}`;
   const first = new Set(triangles[0]!.map(key));
   const second = new Set(triangles[1]!.map(key));
   return new Set([...first].filter((k) => second.has(k)));
