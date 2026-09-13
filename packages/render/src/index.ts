@@ -26,6 +26,17 @@
  * a flat colour. Build one atlas at import, `NearestFilter`, no mipmaps, and
  * multiply the sample by the vertex colour.
  *
+ * `uvs` are per-face and derived the way `Scene#rasterize` derives its texture
+ * plane -- origin at `vertex[0]`, one axis to `vertex[1]`, the other to
+ * `vertex[last]` -- so one copy of the texture is stretched over each polygon
+ * and there is no wrapping. `atlas.ts` remaps them into a packed sheet:
+ * `gridAtlasLayout()` for the placement (it reproduces `packTextureAtlas()` in
+ * `@rsc-editor/cache` from image sizes alone, so it needs no archive and runs
+ * in a browser) and `atlasUvs()` for the remap. Untextured triangles are sent
+ * to a white cell, which keeps the whole thing one unlit `map * vertexColor`
+ * draw call. Do the multiply on the raw 8-bit values -- no colour-space
+ * conversion, no tone mapping -- because that is where the client does it.
+ *
  * ## Known deviations from the client
  *
  * 1. **Per-vertex ambience jitter is deterministic.** The client rolls
@@ -43,6 +54,15 @@
  *    darkens terrain around blocking scenery; that needs the scenery pass.
  * 5. **Quads are fan-triangulated.** Only ever applied where the client itself
  *    guarantees the polygon planar.
+ * 6. **Texture coordinates are vertex attributes, not a per-pixel plane.** The
+ *    client evaluates its texture plane per pixel with no perspective
+ *    correction, which visibly swims on a steep polygon. We emit the same plane
+ *    as uvs at the corners and let the GPU interpolate it correctly. The two
+ *    agree exactly at the vertices and differ in the client's favour only where
+ *    the client is wrong.
+ * 7. **Scenery is not built.** `scenery.ts` enumerates placements from the
+ *    lanes; the `.ob3` model builder behind `SceneryBuilder` is not implemented,
+ *    so no scenery reaches a mesh.
  *
  * Ownership: the `renderer` agent. See CLAUDE.md.
  */
@@ -89,6 +109,18 @@ export {
 } from './landscape-view.js';
 
 export {
+  atlasUvRect,
+  atlasUvs,
+  gridAtlasLayout,
+  texturesUsed,
+  type AtlasCell,
+  type AtlasLayout,
+  type ImageSize,
+  type UvRect
+} from './atlas.js';
+
+export {
+  faceUvs,
   RscModel,
   TERRAIN_LIGHT,
   WALL_LIGHT,

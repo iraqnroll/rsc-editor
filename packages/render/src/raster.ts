@@ -15,9 +15,14 @@ import type { GeometryData } from './model.js';
  * which makes it usable both as a debugging tool and as a deterministic
  * golden-image check in CI.
  *
- * It is deliberately not a renderer: no textures, no perspective-correct
- * interpolation, no clipping beyond a near-plane reject. It only has to be
- * good enough to answer "is this the right shape, the right way out?".
+ * It is deliberately not a renderer: no perspective-correct interpolation, no
+ * clipping beyond a near-plane reject. It only has to be good enough to answer
+ * "is this the right shape, the right way out, with the right texture on it?".
+ *
+ * Texturing was added for that last question. The GPU path samples an atlas with
+ * `NearestFilter`, no mipmaps and an alpha test, and so does this, so a preview
+ * rendered here is the same decision the scene makes -- which is the only way to
+ * check the atlas uv mapping without a browser.
  */
 
 export interface Camera {
@@ -29,10 +34,31 @@ export interface Camera {
   near?: number;
 }
 
+/**
+ * An RGBA sheet to sample, plus how. Nearest-neighbour only, which is what the
+ * scene uses on the GPU -- `NearestFilter`, no mipmaps -- so this is not an
+ * approximation of the real thing, it is the same rule.
+ */
+export interface RasterTexture {
+  data: Uint8Array;
+  width: number;
+  height: number;
+  /** below this alpha the pixel is discarded, matching the material's alphaTest */
+  alphaTest?: number;
+}
+
 export interface RasterOptions {
   width: number;
   height: number;
   camera: Camera;
+  /**
+   * Sample `geometry.uvs` from this sheet and multiply by the vertex colour.
+   *
+   * The uvs must already be in atlas space (`atlasUvs()` in `atlas.ts`). Without
+   * it the rasteriser draws flat vertex colours, which is how the winding and
+   * shading tests use it.
+   */
+  texture?: RasterTexture;
   /**
    * Backface culling. `'ccw'` keeps triangles wound counter-clockwise on
    * screen, `'cw'` the opposite, `'none'` keeps everything.
@@ -115,9 +141,15 @@ export function rasterize(
   const cr = [0, 0, 0];
   const cg = [0, 0, 0];
   const cb = [0, 0, 0];
+  const tu = [0, 0, 0];
+  const tv = [0, 0, 0];
+
+  const atlas = options.texture;
+  const alphaTest = atlas?.alphaTest ?? 0.5;
 
   for (const geometry of geometries) {
-    const { positions, colours, indices } = geometry;
+    const { positions, colours, indices, uvs } = geometry;
+    const textured = !!atlas && uvs.length === positions.length / 3 * 2;
 
     for (let t = 0; t < geometry.triangleCount; t++) {
       let behind = false;
@@ -146,6 +178,11 @@ export function rasterize(
         cr[k] = colours[vi * 3]!;
         cg[k] = colours[vi * 3 + 1]!;
         cb[k] = colours[vi * 3 + 2]!;
+
+        if (textured) {
+          tu[k] = uvs[vi * 2]!;
+          tv[k] = uvs[vi * 2 + 1]!;
+        }
       }
 
       if (behind) continue;
@@ -183,12 +220,36 @@ export function rasterize(
           const z = w0 * sz[0]! + w1 * sz[1]! + w2 * sz[2]!;
           const pi = y * width + x;
           if (z >= depth[pi]!) continue;
+
+          let mr = 1;
+          let mg = 1;
+          let mb = 1;
+
+          if (textured && atlas) {
+            // Nearest sample, uv measured down from the top of the sheet -- the
+            // same convention `atlasUvRect` uses and the scene binds with
+            // `flipY = false`.
+            const u = w0 * tu[0]! + w1 * tu[1]! + w2 * tu[2]!;
+            const v = w0 * tv[0]! + w1 * tv[1]! + w2 * tv[2]!;
+            const tx = Math.min(atlas.width - 1, Math.max(0, Math.floor(u * atlas.width)));
+            const ty = Math.min(atlas.height - 1, Math.max(0, Math.floor(v * atlas.height)));
+            const to = (tx + ty * atlas.width) * 4;
+
+            // Cutouts (DECISIONS section 8) arrive as alpha 0 and must punch a
+            // hole, so the pixel is discarded before the depth write.
+            if (atlas.data[to + 3]! / 255 < alphaTest) continue;
+
+            mr = atlas.data[to]! / 255;
+            mg = atlas.data[to + 1]! / 255;
+            mb = atlas.data[to + 2]! / 255;
+          }
+
           depth[pi] = z;
 
           const o = pi * 4;
-          rgba[o] = Math.max(0, Math.min(255, (w0 * cr[0]! + w1 * cr[1]! + w2 * cr[2]!) * 255));
-          rgba[o + 1] = Math.max(0, Math.min(255, (w0 * cg[0]! + w1 * cg[1]! + w2 * cg[2]!) * 255));
-          rgba[o + 2] = Math.max(0, Math.min(255, (w0 * cb[0]! + w1 * cb[1]! + w2 * cb[2]!) * 255));
+          rgba[o] = Math.max(0, Math.min(255, (w0 * cr[0]! + w1 * cr[1]! + w2 * cr[2]!) * mr * 255));
+          rgba[o + 1] = Math.max(0, Math.min(255, (w0 * cg[0]! + w1 * cg[1]! + w2 * cg[2]!) * mg * 255));
+          rgba[o + 2] = Math.max(0, Math.min(255, (w0 * cb[0]! + w1 * cb[1]! + w2 * cb[2]!) * mb * 255));
           rgba[o + 3] = 255;
         }
       }

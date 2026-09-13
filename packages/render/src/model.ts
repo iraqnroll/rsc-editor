@@ -123,6 +123,57 @@ export function emptyGeometry(): GeometryData {
   };
 }
 
+/**
+ * Solve each vertex of a polygon into the (v0->v1, v0->vLast) basis the client
+ * textures it with.
+ *
+ * For the shapes this package emits -- triangles and planar parallelograms --
+ * this is exact, and it collapses to the obvious corner table. It is written as
+ * a projection rather than a table so an n-gon (which a `.ob3` model can carry)
+ * gets the *plane's* uv at each corner, which is what the client's per-pixel
+ * plane evaluation would have produced there.
+ *
+ * Returns a flat `[u0, v0, u1, v1, ...]`, one pair per input vertex.
+ */
+export function faceUvs(points: ReadonlyArray<readonly [number, number, number]>): number[] {
+  const n = points.length;
+  const out = new Array<number>(n * 2).fill(0);
+  if (n < 3) return out;
+
+  const o = points[0]!;
+  const p1 = points[1]!;
+  const p2 = points[n - 1]!;
+
+  const ax = p1[0] - o[0];
+  const ay = p1[1] - o[1];
+  const az = p1[2] - o[2];
+  const bx = p2[0] - o[0];
+  const by = p2[1] - o[1];
+  const bz = p2[2] - o[2];
+
+  const aa = ax * ax + ay * ay + az * az;
+  const bb = bx * bx + by * by + bz * bz;
+  const ab = ax * bx + ay * by + az * bz;
+  const det = aa * bb - ab * ab;
+
+  // Degenerate face (the two axes are parallel, or one has no length): the
+  // client's texture plane is undefined here too. Leave the face at uv 0.
+  if (det === 0) return out;
+
+  for (let i = 0; i < n; i++) {
+    const p = points[i]!;
+    const px = p[0] - o[0];
+    const py = p[1] - o[1];
+    const pz = p[2] - o[2];
+    const pa = px * ax + py * ay + pz * az;
+    const pb = px * bx + py * by + pz * bz;
+    out[i * 2] = (pa * bb - pb * ab) / det;
+    out[i * 2 + 1] = (pb * aa - pa * ab) / det;
+  }
+
+  return out;
+}
+
 export class RscModel {
   readonly vertexX: number[] = [];
   readonly vertexY: number[] = [];
@@ -385,14 +436,30 @@ export class RscModel {
         );
       }
 
-      // Per-face uv. RSC textures are stretched across the whole polygon, so
-      // the corners are the unit square (a triangle takes the first three).
-      // Keyed on the *source* corner so reversing the winding does not mirror
-      // the texture.
-      const quadUv = [0, 0, 1, 0, 1, 1, 0, 1];
+      // Per-face uv, from `Scene#rasterize`'s texture plane.
+      //
+      // The client does not store uvs. For a textured polygon it builds a plane
+      // out of three of the face's own vertices and evaluates it per pixel:
+      //
+      //     i1 = ai[0];            // origin        = vertex[0]
+      //     i3 = i1 - ai[1];       // one axis, to  vertex[1]
+      //     k--;                   // k = vertexCount - 1
+      //     i6 = ai[k] - i1;       // other axis, to vertex[LAST]
+      //
+      // So the texture is stretched once across v0->v1 (u) and once across
+      // v0->v_last (v). For a quad that is the unit square in vertex order; for
+      // a TRIANGLE it makes vertex 2 the v axis, i.e. uv (0,1) and not (1,1) --
+      // taking "the first three corners of the quad table" shears the texture on
+      // every split tile, which is why this is derived rather than tabulated.
+      //
+      // Keyed on the *source* corner, so reversing the winding for a front fill
+      // does not mirror the texture.
+      const uvOf = faceUvs(
+        verts.map((v) => [this.vertexX[v]!, this.vertexY[v]!, this.vertexZ[v]!])
+      );
       for (let i = 0; i < n; i++) {
-        const c = corner[i]! % 4;
-        uvs.push(quadUv[c * 2]!, quadUv[c * 2 + 1]!);
+        const c = corner[i]!;
+        uvs.push(uvOf[c * 2]!, uvOf[c * 2 + 1]!);
       }
 
       // Fan triangulation. Only ever applied to polygons the client itself

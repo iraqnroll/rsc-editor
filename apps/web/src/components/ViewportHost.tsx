@@ -23,6 +23,7 @@ export function ViewportHost() {
   const world = useEditor((s) => s.world);
   const hoverTile = useEditor((s) => s.hoverTile);
   const selection = useEditor((s) => s.selection);
+  const config = useEditor((s) => s.config);
   const activeTool = useEditor((s) => s.activeTool);
   const toolSettings = useEditor((s) => s.toolSettings);
   const showGrid = useEditor((s) => s.showGrid);
@@ -68,6 +69,9 @@ export function ViewportHost() {
         sectors={viewportSectors}
         activeSector={activeSector}
         lockFor={lockFor}
+        /* The 3D viewport meshes overlays, wall fills and roof heights out of
+           the definition tables; the lanes alone cannot say what overlay 3 is. */
+        config={config}
         hoverTile={hoverTile}
         selection={selection}
         brushRadius={brush.radius}
