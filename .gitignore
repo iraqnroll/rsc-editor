@@ -21,3 +21,8 @@ exports/
 
 # Golden-image diffs produced by failing render tests
 **/__image_snapshots__/__diff_output__/
+
+# Debug renders written by packages/render's preview test. Regenerated on every
+# run; the test asserts geometric properties, not pixel equality, so these are
+# for looking at rather than for diffing against.
+packages/render/preview/
