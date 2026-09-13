@@ -22,7 +22,7 @@
  */
 
 import { create } from 'zustand';
-import { LOCK_HEARTBEAT_MS, invert, sectorKey } from '@rsc-editor/schema';
+import { invert, sectorKey } from '@rsc-editor/schema';
 import type {
   DefinitionKind,
   Lock,
@@ -33,8 +33,8 @@ import type {
   SectorCoord,
   ServerMessage
 } from '@rsc-editor/schema';
-import { getApi } from '../data/api.js';
-import type { EditorApi, WorldIndex } from '../data/api.js';
+import { AuthRequiredError, NoProjectError, getApi } from '../data/api.js';
+import type { EditorApi, LinkState, WorldIndex } from '../data/api.js';
 import { applySectorOp, describeOp, opId, opTileCount } from '../ops/apply.js';
 import type { BuildResult, RegionClipboard, RegionRect } from '../ops/builders.js';
 import type { WorldTile } from '../ops/coords.js';
@@ -77,11 +77,32 @@ export type Notice =
   | { kind: 'info'; message: string }
   | { kind: 'error'; message: string };
 
-export type ConnectionState = 'idle' | 'connecting' | 'ready' | 'error';
+/**
+ * Bootstrap state.
+ *
+ * `auth-required` and `no-project` are states, not errors: an anonymous first
+ * load and a brand-new account with no project are both entirely normal, and
+ * showing them as a red failure page would be a lie. `error` is reserved for
+ * something that actually went wrong.
+ */
+export type ConnectionState =
+  | 'idle'
+  | 'connecting'
+  | 'ready'
+  | 'auth-required'
+  | 'no-project'
+  | 'error';
 
 export interface EditorState {
   api: EditorApi;
   connection: ConnectionState;
+  /**
+   * Transport state, which is NOT the same thing as `connection`. Bootstrap
+   * succeeds once; the socket can drop and come back many times afterwards, and
+   * "your edits are not reaching anyone right now" has to be visible when it
+   * does.
+   */
+  link: LinkState;
   error: string | null;
 
   me: Presence | null;
@@ -113,6 +134,9 @@ export interface EditorState {
 
   /* actions */
   connect(): Promise<void>;
+  signIn(username: string): Promise<void>;
+  signOut(): Promise<void>;
+  openProject(projectId: string): Promise<void>;
   ensureSector(coord: SectorCoord): void;
   readSector: (coord: SectorCoord) => SectorBuffers | undefined;
 
@@ -148,6 +172,14 @@ export interface EditorState {
 /** Ops we applied locally, so the echo from the server is not applied twice. */
 const localOpIds = new Set<string>();
 
+/**
+ * Subscribe to the transport exactly once, however often `connect()` retries —
+ * and hold the unsubscribes, so signing out detaches instead of leaving a
+ * second handler behind for the next session to double-apply everything with.
+ */
+let subscribed = false;
+let unsubscribers: Array<() => void> = [];
+
 function applyDefinitionFields(
   config: RscConfig,
   kind: DefinitionKind,
@@ -173,6 +205,7 @@ function applyDefinitionFields(
 export const useEditor = create<EditorState>()((set, get) => ({
   api: getApi(),
   connection: 'idle',
+  link: 'offline',
   error: null,
 
   me: null,
@@ -206,17 +239,24 @@ export const useEditor = create<EditorState>()((set, get) => ({
 
   async connect() {
     const { api } = get();
-    if (get().connection !== 'idle') return;
-    set({ connection: 'connecting' });
+    // Retryable from every terminal state: signing in or creating a project
+    // calls straight back in here.
+    if (get().connection === 'connecting' || get().connection === 'ready') return;
+    set({ connection: 'connecting', error: null });
 
-    api.subscribe(handleServerMessage);
+    if (!subscribed) {
+      subscribed = true;
+      unsubscribers = [
+        api.subscribe(handleServerMessage),
+        api.subscribeLink((link) => useEditor.setState({ link }))
+      ];
+    }
 
     try {
-      const [session, world, config] = await Promise.all([
-        api.connect(),
-        api.loadWorld(),
-        api.loadConfig()
-      ]);
+      // Sequenced, not Promise.all: `connect()` is what resolves which project
+      // we are in, and the world index and definitions are both scoped to it.
+      const session = await api.connect();
+      const [world, config] = await Promise.all([api.loadWorld(), api.loadConfig()]);
 
       const locks: Record<string, Lock> = {};
       for (const lock of session.locks) locks[sectorKey(lock.sector)] = lock;
@@ -225,15 +265,25 @@ export const useEditor = create<EditorState>()((set, get) => ({
 
       set({
         connection: 'ready',
+        link: api.link,
         me: session.you,
         peers,
         locks,
         headSeq: session.headSeq,
         world,
-        config
+        config,
+        notice:
+          world.present.length === 0
+            ? {
+                kind: 'info',
+                message:
+                  'This project has no map data yet. Import a cache with tools/import-cache to populate it.'
+              }
+            : null
       });
 
-      // Pick a sensible first sector: the middle of the populated region.
+      // Pick a sensible first sector: the middle of the populated region. An
+      // empty project has none, and that is a legitimate state — not a crash.
       const first = world.present[Math.floor(world.present.length / 2)];
       if (first) {
         const [plane, x, y] = first.split('/').map(Number);
@@ -241,18 +291,71 @@ export const useEditor = create<EditorState>()((set, get) => ({
         get().setActiveSector(coord);
       }
 
-      // Heartbeat: the real server expires a lock after LOCK_TTL_MS without one.
-      setInterval(() => {
-        const state = get();
-        const mine = state.me?.userId;
-        if (!mine) return;
-        for (const lock of Object.values(state.locks)) {
-          if (lock.userId === mine) void state.api.claimLock(lock.sector);
-        }
-      }, LOCK_HEARTBEAT_MS);
+      // Lock heartbeats belong to the transport, not here: the live client
+      // sends `lock.heartbeat` on its own timer for exactly the sectors the
+      // socket holds. A store-side re-claim loop would race it and, on a
+      // sector someone else took, would spam denials.
     } catch (err) {
+      // No `error` for these two: the gate itself is the explanation, and a red
+      // "Sign in to continue" box on a first, anonymous load reads as a fault
+      // when nothing has gone wrong. The error slot is reserved for a failed
+      // attempt, which `signIn` does set.
+      if (err instanceof AuthRequiredError) {
+        set({ connection: 'auth-required', error: null });
+        return;
+      }
+      if (err instanceof NoProjectError) {
+        set({ connection: 'no-project', error: null });
+        return;
+      }
       set({ connection: 'error', error: err instanceof Error ? err.message : String(err) });
     }
+  },
+
+  async signIn(username) {
+    set({ error: null });
+    try {
+      await get().api.signIn(username);
+      set({ connection: 'idle' });
+      await get().connect();
+    } catch (err) {
+      set({
+        connection: 'auth-required',
+        error: err instanceof Error ? err.message : String(err)
+      });
+    }
+  },
+
+  async signOut() {
+    await get().api.signOut().catch(() => undefined);
+    for (const off of unsubscribers) off();
+    unsubscribers = [];
+    subscribed = false;
+    set({
+      connection: 'auth-required',
+      link: 'offline',
+      error: null,
+      me: null,
+      peers: {},
+      locks: {},
+      world: null,
+      config: null,
+      sectors: {},
+      activeSector: null
+    });
+  },
+
+  async openProject(projectId) {
+    get().api.useProject(projectId);
+    set({
+      connection: 'idle',
+      world: null,
+      config: null,
+      sectors: {},
+      locks: {},
+      activeSector: null
+    });
+    await get().connect();
   },
 
   ensureSector(coord) {
@@ -663,7 +766,7 @@ function handleServerMessage(message: ServerMessage): void {
       store.setState({
         notice: {
           kind: 'error',
-          message: `The server rejected ${message.ids.length} op(s): ${message.reason}. Reload the sector to resync.`
+          message: `${REJECTION_REASON[message.reason]} The server refused ${message.ids.length} op(s) (${message.reason}); your local copy of that sector is now ahead of the server — reload it to resync.`
         }
       });
       break;
@@ -672,10 +775,36 @@ function handleServerMessage(message: ServerMessage): void {
       store.setState({ notice: { kind: 'error', message: message.message } });
       break;
 
+    /**
+     * Only the RECONNECT path emits this; the first `joined` is returned
+     * through `connect()`s promise instead. Peers, locks and the server's head
+     * may all have moved while we were away, so this replaces them wholesale
+     * rather than merging — a stale lock we kept would show the wrong person
+     * holding a sector, which is precisely the thing that must never be wrong.
+     */
     case 'joined':
+      store.setState((s) => {
+        const locks: Record<string, Lock> = {};
+        for (const lock of message.locks) locks[sectorKey(lock.sector)] = lock;
+        const peers: Record<string, Presence> = {};
+        for (const p of message.peers) peers[p.userId] = p;
+        return {
+          me: message.you,
+          peers,
+          locks,
+          headSeq: Math.max(s.headSeq, message.headSeq)
+        };
+      });
       break;
   }
 }
+
+const REJECTION_REASON: Record<string, string> = {
+  'no-lock': 'You do not hold that sector.',
+  stale: 'That edit was based on state the server has since changed.',
+  invalid: 'That edit did not pass server validation.',
+  'out-of-bounds': 'That sector does not exist in this project.'
+};
 
 /* ------------------------------------------------------------ selectors -- */
 

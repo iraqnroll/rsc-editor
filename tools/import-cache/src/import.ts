@@ -15,6 +15,7 @@ import {
   getProjectBySlug,
   parseDefinition,
   putDefinition,
+  putMember,
   putSector,
   slugify,
   upsertUserFromDiscord,
@@ -420,6 +421,25 @@ async function resolveProject(
           're-import into it, or --slug to import alongside it.'
       );
     }
+
+    /**
+     * `--owner` has to apply on re-import too, not only on creation.
+     *
+     * Accepting the flag and ignoring it produces the worst possible outcome:
+     * an import that reports complete success into a project the invoking user
+     * is not a member of. Because a non-member gets an identical 404 to "does
+     * not exist" (deliberate, so project ids cannot be enumerated), the editor
+     * then says "you are not a member of any project" and the obvious
+     * conclusion is that the import failed. It did not.
+     *
+     * Membership is added rather than the owner column rewritten: taking a
+     * project away from whoever owns it is not something a re-import should
+     * decide, but the person running the import plainly needs to see it.
+     */
+    if (options.ownerId) {
+      await putMember(db, existing.id, options.ownerId, 'owner');
+    }
+
     return { project: existing, created: false };
   }
 

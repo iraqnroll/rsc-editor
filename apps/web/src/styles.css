@@ -1005,3 +1005,132 @@ input[type="color"] {
   white-space: nowrap;
   border: 0;
 }
+
+/* ------------------------------------------------------------------ gates -- */
+/*
+ * Sign-in and project selection. Deliberately the same dark shell as the editor
+ * so the transition into the app is not a flash of a different product.
+ */
+
+.gate {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 24px;
+  background: var(--bg-0);
+}
+
+.gate__card {
+  width: 100%;
+  max-width: 420px;
+  padding: 24px;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+}
+
+.gate__brand {
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--fg-1);
+  font-size: 11px;
+}
+
+.gate__brand span {
+  color: var(--accent);
+  margin: 0 2px;
+}
+
+.gate__title {
+  margin: 6px 0 14px;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.gate__discord {
+  display: block;
+  margin: 14px 0 0;
+  text-align: center;
+  text-decoration: none;
+}
+
+.gate__or {
+  margin: 14px 0 6px;
+  color: var(--fg-2);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.gate__form {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+
+.gate__form .field {
+  flex: 1;
+}
+
+.gate__list {
+  list-style: none;
+  margin: 12px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.gate__project {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  padding: 8px 10px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.gate__project:hover {
+  background: var(--bg-3);
+  border-color: var(--line-strong);
+}
+
+.gate__project-name {
+  font-weight: 600;
+}
+
+.gate__error {
+  margin: 12px 0 0;
+  padding: 8px 10px;
+  color: var(--danger);
+  background: rgba(242, 109, 109, 0.08);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius);
+}
+
+.gate__signout {
+  margin-top: 16px;
+}
+
+/* Connection state in the status bar. `reconnecting` pulses, because a static
+ * amber dot is exactly the thing people stop noticing. */
+.dot--pulse {
+  animation: dot-pulse 1.1s ease-in-out infinite;
+}
+
+@keyframes dot-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
+}

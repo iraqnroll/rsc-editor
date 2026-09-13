@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useEditor } from './state/editorStore.js';
 import { useKeyboard } from './hooks/useKeyboard.js';
+import { LoginGate, ProjectGate } from './components/Gate.js';
 import { Inspector } from './components/Inspector.js';
 import { Resizer } from './components/Resizer.js';
 import { ShortcutsModal } from './components/ShortcutsModal.js';
@@ -53,6 +54,8 @@ export function App() {
   const redo = useEditor((s) => s.redo);
   const undoDepth = useEditor((s) => s.undoStack.length);
   const redoDepth = useEditor((s) => s.redoStack.length);
+  const apiMode = useEditor((s) => s.api.mode);
+  const signOut = useEditor((s) => s.signOut);
 
   const [railWidth, setRailWidth] = usePersistedWidth('rsc.rail', 252);
   const [inspectorWidth, setInspectorWidth] = usePersistedWidth('rsc.inspector', 352);
@@ -65,11 +68,19 @@ export function App() {
     void connect();
   }, [connect]);
 
+  // Neither of these is a failure: an anonymous first load and an account with
+  // no project are both normal. Only `error` is red.
+  if (connection === 'auth-required') return <LoginGate />;
+  if (connection === 'no-project') return <ProjectGate />;
+
   if (connection === 'error') {
     return (
       <main style={{ padding: 32 }}>
         <h1>RSC Editor</h1>
         <p style={{ color: 'var(--danger)' }}>{error}</p>
+        <button type="button" className="btn" onClick={() => void connect()}>
+          Retry
+        </button>
       </main>
     );
   }
@@ -87,9 +98,12 @@ export function App() {
           Redo
         </button>
         <span className="topbar__spacer" />
-        <span className="hint">
-          Phase 2 shell &mdash; mock data, placeholder viewport
-        </span>
+        <span className="hint">{apiMode === 'mock' ? 'mock backend' : 'live backend'}</span>
+        {apiMode === 'live' && (
+          <button type="button" className="btn btn--sm" onClick={() => void signOut()}>
+            Sign out
+          </button>
+        )}
       </header>
 
       <div className="workspace">

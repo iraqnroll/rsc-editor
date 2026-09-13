@@ -49,7 +49,17 @@ import type {
   TileDef,
   WallObjectDef
 } from '@rsc-editor/schema';
-import type { EditorApi, LockResult, OpSubmitResult, SessionSnapshot, WorldIndex } from './api.js';
+import type { AuthUser } from './auth.js';
+import type {
+  EditorApi,
+  LinkState,
+  LockResult,
+  OpSubmitResult,
+  ProjectSummary,
+  SessionSnapshot,
+  TextureAtlasAsset,
+  WorldIndex
+} from './api.js';
 
 /* ------------------------------------------------------------------ rng -- */
 
@@ -426,15 +436,23 @@ function delay<T>(value: T, ms = LATENCY_MS): Promise<T> {
 export function createMockApi(): EditorApi {
   const projectId = uuid(0xabc);
   const subscribers = new Set<(m: ServerMessage) => void>();
+  const linkSubscribers = new Set<(s: LinkState) => void>();
   const sectors = new Map<string, SectorFrame>();
   const locks = new Map<string, Lock>();
   const world = buildWorldIndex();
   let config: RscConfig | null = null;
   let seq = 0;
   let heartbeat: ReturnType<typeof setInterval> | null = null;
+  let link: LinkState = 'offline';
 
   function emit(m: ServerMessage): void {
     for (const fn of subscribers) fn(m);
+  }
+
+  function setLink(next: LinkState): void {
+    if (link === next) return;
+    link = next;
+    for (const fn of [...linkSubscribers]) fn(next);
   }
 
   function expiry(): string {
@@ -454,10 +472,15 @@ export function createMockApi(): EditorApi {
     });
   }
 
-  return {
+  const api: EditorApi = {
     mode: 'mock',
 
+    get link(): LinkState {
+      return link;
+    },
+
     async connect(): Promise<SessionSnapshot> {
+      setLink('connecting');
       // A peer wandering around, so presence in the status bar is not static.
       heartbeat = setInterval(() => {
         const peer = PEERS[0];
@@ -475,19 +498,23 @@ export function createMockApi(): EditorApi {
         emit({ t: 'peer.update', presence: next });
       }, 3000);
 
-      return delay({
+      const snapshot = await delay({
         projectId,
         you: YOU,
         peers: PEERS,
         locks: [...locks.values()],
         headSeq: seq
       });
+      setLink('live');
+      return snapshot;
     },
 
     disconnect(): void {
       if (heartbeat) clearInterval(heartbeat);
       heartbeat = null;
-      subscribers.clear();
+      // Subscribers survive, matching LiveApi: `subscribe()` hands back its own
+      // unsubscribe, and a reconnect must not need the caller to re-register.
+      setLink('offline');
     },
 
     async loadConfig(): Promise<RscConfig> {
@@ -582,6 +609,66 @@ export function createMockApi(): EditorApi {
     subscribe(handler: (message: ServerMessage) => void): () => void {
       subscribers.add(handler);
       return () => subscribers.delete(handler);
+    },
+
+    subscribeLink(handler: (state: LinkState) => void): () => void {
+      linkSubscribers.add(handler);
+      return () => linkSubscribers.delete(handler);
+    },
+
+    /**
+     * No server-side atlas in mock mode.
+     *
+     * `null` is the contract for "use your bundled sheet", so the scene keeps
+     * the committed `texture-atlas.png` and mock mode stays runnable with no
+     * backend at all — which is the entire point of it.
+     */
+    async loadTextureAtlas(): Promise<TextureAtlasAsset | null> {
+      return null;
+    },
+
+    /* -------------------------------------------------- session/projects -- */
+
+    async currentUser(): Promise<AuthUser | null> {
+      return { id: YOU.userId, displayName: YOU.displayName, avatarUrl: null, globalRole: 'user' };
+    },
+
+    async signIn(): Promise<AuthUser> {
+      return { id: YOU.userId, displayName: YOU.displayName, avatarUrl: null, globalRole: 'user' };
+    },
+
+    async signOut(): Promise<void> {
+      api.disconnect();
+    },
+
+    async listProjects(): Promise<ProjectSummary[]> {
+      return [
+        {
+          id: projectId,
+          name: 'Mock world',
+          slug: 'mock-world',
+          description: 'Generated in the browser. Not real map data.',
+          headSeq: seq,
+          role: 'owner'
+        }
+      ];
+    },
+
+    async createProject(input: { name: string }): Promise<ProjectSummary> {
+      return {
+        id: projectId,
+        name: input.name,
+        slug: 'mock-world',
+        description: null,
+        headSeq: seq,
+        role: 'owner'
+      };
+    },
+
+    useProject(): void {
+      // One project only; switching is meaningless in the mock.
     }
   };
+
+  return api;
 }

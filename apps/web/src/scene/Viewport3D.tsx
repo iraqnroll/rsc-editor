@@ -45,7 +45,7 @@ import {
 import { SECTOR_WIDTH, sectorKey } from '@rsc-editor/schema';
 import { TILE_SIZE } from '@rsc-editor/render';
 import type { WorldTile } from '../ops/coords.js';
-import { ATLAS_ALPHA_TEST, ATLAS_LAYOUT, loadAtlasTexture } from './atlas-texture.js';
+import { ATLAS_ALPHA_TEST, loadAtlas, type ResolvedAtlas } from './atlas-texture.js';
 import {
   clampFly,
   clampOrbit,
@@ -549,7 +549,7 @@ export function Viewport3D(props: ViewportProps) {
   } | null>(null);
   const lastHover = useRef<WorldTile | null>(null);
 
-  const [atlas, setAtlas] = useState<Texture | null>(null);
+  const [atlas, setAtlas] = useState<ResolvedAtlas | null>(null);
   const [atlasError, setAtlasError] = useState<string | null>(null);
   const [version, setVersion] = useState(0);
   const [plates, setPlates] = useState<Plate[]>([]);
@@ -565,17 +565,28 @@ export function Viewport3D(props: ViewportProps) {
   const cache = useMemo(() => new SectorGeometryCache(), []);
   useEffect(() => () => cache.clear(), [cache]);
 
-  /* atlas */
+  /**
+   * The atlas -- the project's own sheet when the server has one, else bundled.
+   *
+   * Keyed on `config` rather than mounting once, because the scene mounts
+   * before the API has opened a project and the sheet lives under the project.
+   * `config` arriving is the signal that a project exists; `loadAtlas()`
+   * deliberately does not memoise a too-early miss, so this second call is the
+   * one that gets the real sheet. Resolving to the same result is a no-op.
+   */
   useEffect(() => {
     let alive = true;
-    loadAtlasTexture().then(
-      (texture) => alive && setAtlas(texture),
+    loadAtlas().then(
+      (resolved) => {
+        if (!alive) return;
+        setAtlas((current) => (current?.source === 'server' ? current : resolved));
+      },
       (err: unknown) => alive && setAtlasError(err instanceof Error ? err.message : String(err))
     );
     return () => {
       alive = false;
     };
-  }, []);
+  }, [config]);
 
   /* sectors -> mesh queue */
   const sectorList = useMemo(() => {
@@ -594,7 +605,7 @@ export function Viewport3D(props: ViewportProps) {
 
   useEffect(() => {
     if (!atlasSettled) return;
-    if (cache.request(sectorList, config ?? null, atlas ? ATLAS_LAYOUT : null)) {
+    if (cache.request(sectorList, config ?? null, atlas ? atlas.layout : null)) {
       setVersion((v) => v + 1);
     }
   }, [cache, sectorList, config, atlas, atlasSettled]);
@@ -816,7 +827,7 @@ export function Viewport3D(props: ViewportProps) {
             {...props}
             sectorList={sectorList}
             cache={cache}
-            atlas={atlas}
+            atlas={atlas?.texture ?? null}
             orbitRef={orbitRef}
             modeRef={modeRef}
             flyRef={flyRef}
@@ -852,7 +863,11 @@ export function Viewport3D(props: ViewportProps) {
                 : atlasError
                   ? `textures unavailable: ${atlasError}`
                   : atlas
-                    ? 'geometry and shading from packages/render — unlit, as the client draws it'
+                    ? `geometry and shading from packages/render — unlit, as the client draws it · ${
+                        atlas.source === 'server'
+                          ? "this project's atlas"
+                          : 'bundled atlas'
+                      }`
                     : 'loading textures…'}
           </span>
           <span style={{ color: 'var(--fg-2)' }}>

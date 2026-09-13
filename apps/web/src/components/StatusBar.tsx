@@ -1,17 +1,49 @@
 /**
  * Bottom bar: connection, position, lock state, presence.
  *
- * The lock readout is the important one. "Read-only because someone else holds
- * this sector" must never be a mystery — the status bar names them, in their
- * colour, matching the viewport tint and the minimap cell.
+ * Two readouts here exist to stop a specific lie.
+ *
+ * The first is the data source. "mock data" has to be impossible to miss, and
+ * so does its opposite — someone who thinks they are editing a scratch world
+ * and is actually editing the shared one is the worse of the two mistakes, so
+ * live mode is labelled just as loudly.
+ *
+ * The second is the link. `reconnecting` means edits are being applied
+ * optimistically to a local mirror that nobody else can see and that has not
+ * been sequenced. That is a materially different state from `live` and it gets
+ * its own colour and a pulse, not a silent amber dot.
  */
 
 import { sectorKey } from '@rsc-editor/schema';
+import type { LinkState } from '../data/api.js';
 import { useEditor } from '../state/editorStore.js';
 import { TOOL_BY_ID } from '../tools/registry.js';
 
+const LINK_LABEL: Record<LinkState, string> = {
+  offline: 'offline',
+  connecting: 'connecting',
+  live: 'live',
+  reconnecting: 'reconnecting'
+};
+
+const LINK_COLOUR: Record<LinkState, string> = {
+  offline: 'var(--danger)',
+  connecting: 'var(--warn)',
+  live: 'var(--ok)',
+  reconnecting: 'var(--warn)'
+};
+
+const LINK_TITLE: Record<LinkState, string> = {
+  offline: 'Not connected. Nothing you do is reaching the server.',
+  connecting: 'Opening the realtime connection.',
+  live: 'Connected. Edits are sequenced by the server as you make them.',
+  reconnecting:
+    'The realtime connection dropped and is being retried. Edits are local and unconfirmed until it returns.'
+};
+
 export function StatusBar({ onShowShortcuts }: { onShowShortcuts: () => void }) {
   const connection = useEditor((s) => s.connection);
+  const link = useEditor((s) => s.link);
   const apiMode = useEditor((s) => s.api.mode);
   const me = useEditor((s) => s.me);
   const peers = useEditor((s) => s.peers);
@@ -27,15 +59,40 @@ export function StatusBar({ onShowShortcuts }: { onShowShortcuts: () => void }) 
   const mine = !!lock && lock.userId === me?.userId;
   const owner = lock ? (mine ? me : peers[lock.userId]) : undefined;
 
-  const dotColour =
-    connection === 'ready' ? 'var(--ok)' : connection === 'error' ? 'var(--danger)' : 'var(--warn)';
+  // Bootstrap failures outrank the transport: "connecting" next to a red
+  // bootstrap error would be two different answers to the same question.
+  const state: LinkState =
+    connection === 'error' || connection === 'auth-required' || connection === 'no-project'
+      ? 'offline'
+      : connection === 'connecting' || connection === 'idle'
+        ? 'connecting'
+        : link;
 
   return (
     <footer className="statusbar">
-      <span className="statusbar__item" title={`Data source: ${apiMode}`}>
-        <span className="dot" style={{ background: dotColour }} />
-        {connection}
-        {apiMode === 'mock' && <strong style={{ color: 'var(--warn)' }}>&nbsp;mock data</strong>}
+      <span className="statusbar__item" title={LINK_TITLE[state]}>
+        <span
+          className={state === 'reconnecting' ? 'dot dot--pulse' : 'dot'}
+          style={{ background: LINK_COLOUR[state] }}
+        />
+        {/* Never the word "live" in mock mode: "live | mock data" reads as a
+            contradiction, and the one thing this bar must not be is ambiguous. */}
+        {apiMode === 'mock' && state === 'live' ? 'connected' : LINK_LABEL[state]}
+      </span>
+
+      <span
+        className="statusbar__item"
+        title={
+          apiMode === 'mock'
+            ? 'Generated in the browser. Nothing you do here is saved or shared.'
+            : 'Real project data from the server. Edits are shared and persistent.'
+        }
+      >
+        {apiMode === 'mock' ? (
+          <strong style={{ color: 'var(--warn)' }}>mock data</strong>
+        ) : (
+          <strong style={{ color: 'var(--ok)' }}>live data</strong>
+        )}
       </span>
 
       <span className="statusbar__item statusbar__item--mono">
