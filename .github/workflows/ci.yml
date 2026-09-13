@@ -8,6 +8,24 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+
+    # Without this the integration suites skip themselves and CI goes green
+    # having proved much less than it looks like it did.
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: rsc
+          POSTGRES_PASSWORD: rsc
+          POSTGRES_DB: rsc_editor
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U rsc"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
       - uses: actions/checkout@v4
 
@@ -21,6 +39,16 @@ jobs:
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
+
+      # The service container only creates the dev database; the test suite
+      # uses a separate one so it can never truncate working data.
+      - name: Create test database
+        run: |
+          PGPASSWORD=rsc psql -h localhost -U rsc -d rsc_editor \
+            -c 'CREATE DATABASE rsc_editor_test OWNER rsc'
+
+      - name: Migrate
+        run: pnpm db:migrate
 
       # Typecheck runs BEFORE tests, deliberately.
       #

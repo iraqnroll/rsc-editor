@@ -1,0 +1,43 @@
+# Local development stack.
+#
+# Postgres only, deliberately: the app and the web client run on the host under
+# pnpm, where they reload fast. Containerising them would slow the inner loop
+# for no benefit until we deploy.
+#
+#   docker compose -f docker/docker-compose.yml up -d
+#
+# The credentials here are local-only and match apps/server/.env.example.
+
+services:
+  postgres:
+    # Postgres is not interchangeable here: the op log's seq allocation relies
+    # on row-lock-until-commit semantics and the definition columns are jsonb.
+    # See docs/DECISIONS.md and packages/db/src/ops.ts.
+    image: postgres:17-alpine
+    container_name: rsc-editor-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: rsc
+      POSTGRES_PASSWORD: rsc
+      POSTGRES_DB: rsc_editor
+      # The images' default locale collation is fine for us and initdb is
+      # faster without ICU.
+      POSTGRES_INITDB_ARGS: '--encoding=UTF8'
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      # Creates the separate database the integration tests drop and recreate,
+      # so a test run can never truncate your working data.
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # `pg_isready` returns success while the server is still in its initdb
+      # restart window, so check that a real query works instead.
+      test: ['CMD-SHELL', 'psql -U rsc -d rsc_editor -c "select 1" || exit 1']
+      interval: 3s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+
+volumes:
+  postgres-data:

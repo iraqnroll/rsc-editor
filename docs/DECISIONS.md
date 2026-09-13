@@ -166,4 +166,48 @@ needing admin, everything lives under `~\.local` and is on the user PATH:
 - `~\.local\git` — PortableGit 2.55.0
 - pnpm 12.4.1 via corepack
 
-Docker is still **not installed**; it is needed from Phase 2 for Postgres.
+Docker Desktop is installed **per-user**, not machine-wide:
+`%LOCALAPPDATA%\Programs\DockerDesktop\resources\bin`. It is on the user PATH,
+but a shell started before the install will not see it.
+
+## 10. Integration tests skip themselves without a database
+
+`packages/db` and `apps/server` each carry an `integration.test.ts` that talks to
+a real Postgres. They decide at collection time, with a top-level `await` probe,
+whether a server is reachable and `describe.skipIf` themselves out if not — so
+`pnpm test` still works on a machine with no Docker, and CI gets the full run
+when a service container is present.
+
+```sh
+pnpm db:up          # docker compose up -d
+pnpm db:migrate     # both the dev and test databases
+pnpm test
+```
+
+The test suite uses a **separate database** (`rsc_editor_test`, created by
+`docker/initdb/`). Tests assert exact row counts and create schema freely;
+sharing a database with your working data would eventually destroy it.
+
+`pnpm db:migrate` runs `scripts/migrate.mjs` rather than an npm script, because
+`DATABASE_URL=... drizzle-kit migrate` is a POSIX shell idiom that silently does
+nothing on Windows — half the team would migrate the wrong database.
+
+### What running against a real server settled
+
+- `gen_random_uuid()` is available (Postgres 17, built in — no `pgcrypto`).
+- The `bytea` custom type round-trips a full sector frame byte-for-byte,
+  including negative Int32 values in the diagonal lane.
+- The `ops` append-only trigger fires: `UPDATE ops` raises.
+- **The seq allocator does what it claims.** With writer A's transaction held
+  open, writer B provably cannot obtain a seq; it blocks until A commits, and
+  then gets the next number. 40 concurrent appenders produce a dense 1..40 with
+  no gaps and no duplicates, and a rolled-back append hands its number back —
+  which a `SEQUENCE` would not.
+- Sessions resolve only while live, and only when the cookie is correctly
+  signed; an unsigned cookie carrying a *valid* token is refused.
+- A non-member gets an identical 404 for "not yours" and "does not exist", so
+  project existence does not leak.
+
+Still unverified: the Discord OAuth **callback** (the redirect half is confirmed
+to build a correct authorize URL, but completing a login needs a real Discord
+app), and the down migrations.

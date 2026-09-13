@@ -11,6 +11,8 @@ pins, or the definition schemas. It records findings that cost real time.
 
 ```sh
 pnpm install
+pnpm db:up           # Postgres in Docker
+pnpm db:migrate      # dev + test databases
 pnpm test            # all packages
 pnpm typecheck       # REQUIRED before claiming done -- see below
 pnpm build
@@ -18,6 +20,9 @@ pnpm dev
 ```
 
 Per-package: `pnpm --filter @rsc-editor/cache test`
+
+The integration suites skip themselves when no Postgres is reachable, so the
+tests pass without Docker — but they then prove much less. Run `db:up` first.
 
 ## Hard rules
 
@@ -79,7 +84,11 @@ change there, say so in your report rather than making it.
 
 - Phase 0 (foundations, contracts) — done
 - Phase 1 (cache fidelity gate) — **passed**, 594/594 byte-exact
-- Phase 2 (cache pkg, db+api+auth, static 3D renderer, UI shell) — next
-- Phases 3-5 — see `PLAN.md`
+- Phase 2 — done: models/textures, client-accurate geometry (visually verified),
+  db + API + Discord auth (verified against real Postgres), editor shell
+- Phase 3 (editing + realtime: locks, presence, op broadcast) — next
+- Phases 4-5 — see `PLAN.md`
 
-Docker is not yet installed on this machine; Phase 2 needs it for Postgres.
+Not yet verified anywhere: the Discord OAuth **callback** (needs a real Discord
+app), texture mapping in the renderer (UVs are placeholders pending the atlas),
+and any browser interaction in `apps/web`.

@@ -14,7 +14,12 @@
     "test": "turbo run test",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
-    "format": "prettier --write \"**/*.{ts,tsx,js,json,md}\""
+    "format": "prettier --write \"**/*.{ts,tsx,js,json,md}\"",
+    "db:up": "docker compose -f docker/docker-compose.yml up -d",
+    "db:down": "docker compose -f docker/docker-compose.yml down",
+    "db:logs": "docker compose -f docker/docker-compose.yml logs -f postgres",
+    "db:migrate": "node scripts/migrate.mjs",
+    "db:psql": "docker exec -it rsc-editor-postgres psql -U rsc -d rsc_editor"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

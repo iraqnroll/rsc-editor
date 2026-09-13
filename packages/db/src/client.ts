@@ -37,6 +37,15 @@ export interface CreateDbOptions {
   max?: number;
   /** seconds an idle connection is kept. */
   idleTimeout?: number;
+  /**
+   * Seconds to wait for a connection before giving up.
+   *
+   * postgres.js defaults to 30s, which is right for a server starting up
+   * alongside its database and wrong for anything asking "is there a database
+   * here at all?" -- a health probe or a test deciding whether to skip wants an
+   * answer in seconds, not half a minute.
+   */
+  connectTimeout?: number;
   /** log every statement. */
   debug?: boolean;
 }
@@ -45,6 +54,9 @@ export function createDb(url: string, options: CreateDbOptions = {}): DbHandle {
   const client = postgres(url, {
     max: options.max ?? 10,
     idle_timeout: options.idleTimeout ?? 30,
+    ...(options.connectTimeout === undefined
+      ? {}
+      : { connect_timeout: options.connectTimeout }),
     // Dates come back as JS Date objects (drizzle `mode: 'date'`), and bigint
     // columns are declared `mode: 'number'`, so nothing here needs a custom
     // type parser.
