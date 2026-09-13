@@ -119,7 +119,45 @@ after the real mistake. `tsc --noEmit` catches it instantly.
 
 CI runs typecheck before tests, and so should you.
 
-## 8. Toolchain is user-local and portable
+## 8. Resolve models by name; `objectDef.model.id` is off by one
+
+**Verified: 409 of 1189 objects carry a wrong `model.id`.**
+
+`config.models` is not a section of `config85.jag`. rsc-config synthesises it
+while decoding objects, using:
+
+```js
+index = this.models.push(name);   // returns the new LENGTH, not the new index
+```
+
+So the first object to mention a given name records `index + 1`; every later
+object referencing the same name gets the correct value. Object 0 ("Tree") has
+`model.name: "tree2"` and `model.id: 1`, but `models[1]` is `"tree"` and
+`models[0]` is `"tree2"`.
+
+This fails quietly and looks like a rendering bug: a third of all scenery would
+draw as *some other object's model*. **`model.name` is the only reliable key.**
+Use `modelIndexOf()` in `packages/cache`.
+
+### Related: the cache ships a dangling model reference
+
+`config.models` contains `runiteruck1`; the archive contains `runiterock1.ob3`.
+Its only user is object 211 ("Rock"). The real client hits the same dead end.
+`loadModels` reports it in `.missing` rather than silently repairing it —
+repairing would make an export differ from its import.
+
+### Related: two more load-bearing "transparent" values
+
+Alongside the `transparent` colour keyword in §6:
+
+- **`texture: 0` is a real texture**, not a falsy absence. rsc-models' own
+  encoder tests `if (face.texture)` and emits `NaN` for it; 12 face sides in the
+  cache use texture 0. Check the shape of the fill, never its truthiness.
+- **Pure green `0x00ff00` in a texture palette is a cutout**, punching a hole
+  through whatever is behind it. Exactly six sprites rely on it: `doorway`,
+  `crumbled`, `tentbottom`, `tentdoor`, `lowcrumbled`, `flames`.
+
+## 9. Toolchain is user-local and portable
 
 This machine had no Node, Git or Docker. Rather than machine-wide installers
 needing admin, everything lives under `~\.local` and is on the user PATH:

@@ -84,12 +84,24 @@ export const npcDefSchema = z.object({
 });
 export type NpcDef = z.infer<typeof npcDefSchema>;
 
-/** Scenery. `model` links into the `models` name table. */
+/**
+ * Scenery.
+ *
+ * `model.name` is the ONLY reliable link to a model. Do not use `model.id`:
+ * it is off by one for the first object that mentions each name, because
+ * rsc-config builds the name table with `index = this.models.push(name)`,
+ * which returns the new length rather than the new index. Measured against
+ * the real cache: 409 of 1189 objects carry a wrong id. Resolve by name.
+ */
 export const objectDefSchema = z.object({
   name: z.string(),
   description: z.string(),
   commands: z.array(command),
-  model: z.object({ name: z.string(), id: z.number().int() }),
+  model: z.object({
+    name: z.string(),
+    /** unreliable -- see above; resolve models by `name` instead */
+    id: z.number().int()
+  }),
   /** footprint in tiles; 0 occurs in the cache (object 581), so not positive-only */
   width: z.number().int().min(0),
   height: z.number().int().min(0),
@@ -196,7 +208,11 @@ export const configSchema = z.object({
   animations: z.array(animationDefSchema),
   spells: z.array(spellDefSchema),
   prayers: z.array(prayerDefSchema),
-  /** model name table; objectDef.model.id indexes into this */
+  /**
+   * Model name table. Note this is NOT a section of config85.jag -- rsc-config
+   * synthesises it while decoding objects. Look models up by name;
+   * `objectDef.model.id` is unreliable (see objectDefSchema).
+   */
   models: z.array(z.string())
 });
 export type RscConfig = z.infer<typeof configSchema>;

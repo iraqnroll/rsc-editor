@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.4.1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Typecheck runs BEFORE tests, deliberately.
+      #
+      # vitest runs through esbuild, which strips types without checking them.
+      # An import of a name a module never exported becomes `undefined` at
+      # runtime rather than an error -- that exact mistake once turned every
+      # buffer offset into NaN and surfaced as a baffling "bad magic" failure
+      # far from its cause. Green tests do not imply type correctness.
+      # See docs/DECISIONS.md section 7.
+      - name: Typecheck
+        run: pnpm -r exec tsc --noEmit
+
+      # The fidelity gate: all 594 landscape files in fixtures/data204 must
+      # re-encode byte-identically. Zero tolerance -- a regression here means
+      # the editor silently corrupts people's maps on export.
+      - name: Test
+        run: pnpm -r test

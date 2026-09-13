@@ -10,3 +10,5 @@
 export * from './landscape-codec.js';
 export * from './landscape.js';
 export * from './config.js';
+export * from './models.js';
+export * from './textures.js';
