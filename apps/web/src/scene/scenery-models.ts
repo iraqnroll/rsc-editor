@@ -41,7 +41,7 @@ import {
   type SceneryModel as RenderSceneryModel,
   type SceneryModelSource
 } from '@rsc-editor/render';
-import { getApi, type SceneryModelsAsset } from '../data/api.js';
+import { getApi, isProjectNotOpen, type SceneryModelsAsset } from '../data/api.js';
 
 export interface ResolvedModels {
   source: SceneryModelSource;
@@ -88,19 +88,32 @@ let pending: Promise<ResolvedModels | null> | null = null;
 /**
  * Fetch and decode the models once per session.
  *
- * Memoised including the `null`: unlike the atlas, there is no bundled fallback
- * to get wrong, so a definitive absence stays absent rather than re-requesting
- * several megabytes on every re-render. `resetSceneryModels()` is the seam for a
- * project switch.
+ * Memoised including a definitive `null`: unlike the atlas there is no bundled
+ * fallback to get wrong, so a real absence stays absent rather than
+ * re-requesting several megabytes on every re-render.
+ *
+ * The exception is being asked BEFORE a project is open. The scene mounts first,
+ * so the very first call can fail on timing alone — and caching that pins "no
+ * scenery" for the whole session while the badge cheerfully explains that this
+ * project has no models asset. It does; we just asked before we knew which
+ * project we meant. `isProjectNotOpen` misses are dropped from the memo so the
+ * caller's retry (keyed on `config` arriving) gets a real answer.
+ *
+ * The texture atlas had exactly this bug first. Two is a pattern, hence the
+ * shared predicate.
  */
 export function loadSceneryModels(): Promise<ResolvedModels | null> {
   if (pending) return pending;
 
-  pending = (async (): Promise<ResolvedModels | null> => {
+  const attempt = (async (): Promise<ResolvedModels | null> => {
     let asset: SceneryModelsAsset | null;
     try {
       asset = await getApi().loadModels();
     } catch (err) {
+      if (isProjectNotOpen(err)) {
+        pending = null; // asked too early; let the next call try properly
+        return null;
+      }
       // `loadModels()` is contracted to answer null rather than throw, but a
       // transport failure is still not a reason to blank the viewport.
       console.warn('[scenery] could not load the models asset, drawing without scenery:', err);
@@ -122,7 +135,8 @@ export function loadSceneryModels(): Promise<ResolvedModels | null> {
     };
   })();
 
-  return pending;
+  pending = attempt;
+  return attempt;
 }
 
 /** Test seam, and what a project switch must call. */

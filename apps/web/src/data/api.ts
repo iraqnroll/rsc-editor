@@ -111,6 +111,24 @@ export class NoProjectError extends Error {
   }
 }
 
+/**
+ * "Asked too early", as distinct from "there is nothing there".
+ *
+ * The scene mounts before the API has finished opening a project, so any asset
+ * requested from a mount effect can fail with `NoProjectError` purely on
+ * timing. That is NOT a definitive answer and must never be cached: memoising
+ * it pins the failure for the rest of the session, and the symptom is the
+ * editor looking completely fine while silently missing its textures, or its
+ * models, forever.
+ *
+ * This has now bitten twice — the texture atlas and the scenery models — so the
+ * predicate lives here rather than being re-implemented per loader. Any asset
+ * loader that memoises must consult it before caching a miss.
+ */
+export function isProjectNotOpen(err: unknown): boolean {
+  return err instanceof Error && err.name === 'NoProjectError';
+}
+
 export interface EditorApi {
   /** Surfaced in the status bar so nobody mistakes mock data for real data. */
   readonly mode: 'mock' | 'live';

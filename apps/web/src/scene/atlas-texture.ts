@@ -47,7 +47,7 @@
 
 import { NearestFilter, NoColorSpace, Texture } from 'three';
 import type { AtlasLayout } from '@rsc-editor/render';
-import { getApi } from '../data/api.js';
+import { getApi, isProjectNotOpen } from '../data/api.js';
 import atlasUrl from './texture-atlas.png';
 import { TEXTURE_ATLAS_LAYOUT } from './texture-atlas.generated.js';
 
@@ -119,10 +119,9 @@ async function textureFromPng(png: ArrayBuffer): Promise<Texture> {
 
 let pending: Promise<ResolvedAtlas> | null = null;
 
-/** `true` when the API has no project open yet, so asking was premature. */
-function isNotReadyYet(err: unknown): boolean {
-  return err instanceof Error && err.name === 'NoProjectError';
-}
+// "asked too early" vs "there is nothing there" — see isProjectNotOpen's note in
+// data/api.ts. Shared rather than re-implemented, because this exact mistake has
+// now been made twice.
 
 /**
  * Resolve the atlas: the project's own sheet if the server has one, otherwise
@@ -147,7 +146,7 @@ export function loadAtlas(): Promise<ResolvedAtlas> {
     try {
       asset = await getApi().loadTextureAtlas();
     } catch (err) {
-      if (isNotReadyYet(err)) {
+      if (isProjectNotOpen(err)) {
         // Not an error, just early. Drop the memo so the next call retries.
         pending = null;
         return { texture: await loadAtlasTexture(), layout: ATLAS_LAYOUT, source: 'bundled' };
