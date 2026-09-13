@@ -1,0 +1,18 @@
+packages:
+  - 'apps/*'
+  - 'packages/*'
+  - 'tools/*'
+
+# @2003scape/rsc-landscape hard-depends on node-canvas, which has no prebuilt
+# binary for Node 22+ and needs Python + MSVC to build from source. We do not
+# depend on rsc-landscape at runtime (packages/cache owns the codec outright),
+# but packages/render will want it as a golden-image test oracle. When it does,
+# this override swaps in a prebuilt, API-compatible replacement so nothing in
+# this repo ever needs a C toolchain. See docs/DECISIONS.md.
+overrides:
+  canvas: npm:@napi-rs/canvas@^0.1.80
+
+# Allow-list for postinstall scripts. Keep this short and deliberate: anything
+# added here runs arbitrary code at install time.
+allowBuilds:
+  esbuild: true

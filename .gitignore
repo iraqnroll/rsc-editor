@@ -1,0 +1,23 @@
+node_modules/
+dist/
+build/
+.turbo/
+coverage/
+*.tsbuildinfo
+
+.env
+.env.local
+.env.*.local
+
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Exported caches produced by the editor (never commit generated game data)
+out/
+exports/
+
+# Golden-image diffs produced by failing render tests
+**/__image_snapshots__/__diff_output__/
