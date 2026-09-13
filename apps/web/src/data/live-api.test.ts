@@ -619,6 +619,90 @@ describe('texture atlas', () => {
   });
 });
 
+describe('world map asset', () => {
+  it('is null when the route 404s, which is a project with no imported cache', async () => {
+    const { api } = await connected();
+    // The default fake server answers 404 for anything it does not know, which
+    // is exactly what the real server does until the importer has run. The map
+    // panel must fall back to its sector grid, not raise.
+    expect(await api.loadWorldMap(0)).toBeNull();
+    api.disconnect();
+  });
+
+  it('returns the png and the meta together, and caches per plane', async () => {
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47]).buffer;
+    routes.push([
+      /cache-assets\/world-map\/0\/meta$/,
+      () =>
+        json({
+          plane: 0,
+          originSector: { x: 48, y: 37 },
+          sectors: { width: 17, height: 19 },
+          tileSize: 1,
+          image: { width: 816, height: 912 }
+        })
+    ]);
+    routes.push([
+      /cache-assets\/world-map\/0$/,
+      () => new Response(png, { headers: { 'content-type': 'image/png' } })
+    ]);
+
+    const { api } = await connected();
+    const asset = await api.loadWorldMap(0);
+    expect(asset?.meta.originSector).toEqual({ x: 48, y: 37 });
+    expect(asset?.png.byteLength).toBe(4);
+
+    const before = requests.filter((r) => /world-map/.test(r.url)).length;
+    await api.loadWorldMap(0);
+    expect(requests.filter((r) => /world-map/.test(r.url))).toHaveLength(before);
+    // A different plane is a different asset and must still be fetched.
+    await api.loadWorldMap(1);
+    expect(requests.filter((r) => /world-map\/1/.test(r.url)).length).toBeGreaterThan(0);
+    api.disconnect();
+  });
+
+  it('refuses a meta that does not match the contract rather than drawing at 0,0', async () => {
+    routes.push([/cache-assets\/world-map\/0\/meta$/, () => json({ plane: 0 })]);
+    routes.push([/cache-assets\/world-map\/0$/, () => new Response(new Uint8Array([1]).buffer)]);
+    const { api } = await connected();
+    expect(await api.loadWorldMap(0)).toBeNull();
+    api.disconnect();
+  });
+});
+
+describe('entity sprites', () => {
+  it('is null when the route 404s; the definition editors then say so', async () => {
+    const { api } = await connected();
+    expect(await api.loadEntitySprites()).toBeNull();
+    api.disconnect();
+  });
+
+  it('indexes the cells by sprite id', async () => {
+    routes.push([
+      /cache-assets\/entity-sprites\/layout$/,
+      () =>
+        json({
+          sheet: { width: 64, height: 32 },
+          cells: [
+            { spriteId: 0, x: 0, y: 0, width: 32, height: 32 },
+            { spriteId: 5, x: 32, y: 0, width: 24, height: 32 }
+          ]
+        })
+    ]);
+    routes.push([
+      /cache-assets\/entity-sprites$/,
+      () => new Response(new Uint8Array([1, 2]).buffer, { headers: { 'content-type': 'image/png' } })
+    ]);
+
+    const { api } = await connected();
+    const sheet = await api.loadEntitySprites();
+    expect(sheet?.cells.get(5)).toEqual({ spriteId: 5, x: 32, y: 0, width: 24, height: 32 });
+    expect(sheet?.cells.get(1)).toBeUndefined();
+    expect(sheet?.png.byteLength).toBe(2);
+    api.disconnect();
+  });
+});
+
 describe('atlas layout adapter', () => {
   const wire = {
     sheet: { width: 1024, height: 896 },

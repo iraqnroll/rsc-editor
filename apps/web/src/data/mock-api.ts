@@ -52,13 +52,15 @@ import type {
 import type { AuthUser } from './auth.js';
 import type {
   EditorApi,
+  EntitySpriteSheet,
   LinkState,
   LockResult,
   OpSubmitResult,
   ProjectSummary,
   SessionSnapshot,
   TextureAtlasAsset,
-  WorldIndex
+  WorldIndex,
+  WorldMapAsset
 } from './api.js';
 
 /* ------------------------------------------------------------------ rng -- */
@@ -624,6 +626,23 @@ export function createMockApi(): EditorApi {
      * backend at all — which is the entire point of it.
      */
     async loadTextureAtlas(): Promise<TextureAtlasAsset | null> {
+      return null;
+    },
+
+    /**
+     * No cache assets in mock mode either, and deliberately so.
+     *
+     * `null` is the same contract as the texture atlas: the map panel falls back
+     * to its flat sector grid and the definition editors say "no sprite sheet".
+     * Synthesising a fake world map here would make mock mode look like a
+     * project with an imported cache, which is exactly the confusion the
+     * "mock data" badge exists to prevent.
+     */
+    async loadWorldMap(): Promise<WorldMapAsset | null> {
+      return null;
+    },
+
+    async loadEntitySprites(): Promise<EntitySpriteSheet | null> {
       return null;
     },
 

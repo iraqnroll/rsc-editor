@@ -31,6 +31,7 @@ export function ViewportHost() {
   const showLockTint = useEditor((s) => s.showLockTint);
   const setHoverTile = useEditor((s) => s.setHoverTile);
   const setSelection = useEditor((s) => s.setSelection);
+  const setViewCentre = useEditor((s) => s.setViewCentre);
   const ensureSector = useEditor((s) => s.ensureSector);
 
   const viewportSectors = useMemo(() => {
@@ -84,6 +85,23 @@ export function ViewportHost() {
         onPick={(tile, mods) => applyGesture(tile, mods)}
         onHover={(tile) => {
           setHoverTile(tile);
+          // Where the map draws "you are here".
+          //
+          // The renderer seam has no camera-out event (src/scene/viewport-props.ts
+          // is owned by the `renderer` agent and the orbit state lives inside
+          // Viewport3D), so this publishes the POINTER, which is a real world tile
+          // under the 3D view and is labelled as such on the map. `setViewCentre`
+          // refuses to overwrite a `camera` reading, so the day the render loop
+          // publishes a real pose this stops mattering with no change here.
+          if (tile) {
+            setViewCentre({
+              plane: tile.plane,
+              wx: tile.wx,
+              wy: tile.wy,
+              tilesAcross: null,
+              source: 'pointer'
+            });
+          }
           // Stream in whatever the pointer wanders over, so a brush near a
           // boundary has its neighbour loaded before it needs it.
           if (tile) {

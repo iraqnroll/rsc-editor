@@ -14,6 +14,8 @@ import { definitionSchemas } from '@rsc-editor/schema';
 import type { DefinitionKind } from '@rsc-editor/schema';
 import { useEditor } from '../state/editorStore.js';
 import { ColourSwatch } from './ColourField.js';
+import { DefinitionPreview } from './DefinitionPreview.js';
+import { EntitySprite } from './EntitySprite.js';
 import { SchemaForm } from './SchemaForm.js';
 import { introspectObject } from './zod-introspect.js';
 
@@ -133,6 +135,10 @@ export function DefinitionEditor() {
       <div className="pane__scroll">
         {selected ? (
           <div className="defform">
+            {/* What this definition actually is: the item's sprite, the
+                object's model BY NAME, the wall's two fills. Drawn from the
+                draft, so an edit is reflected before it is saved. */}
+            <DefinitionPreview kind={kind} index={index} entry={value} config={config} />
             <SchemaForm
               fields={fields}
               value={value}
@@ -221,6 +227,17 @@ function VirtualList({
               onClick={() => onSelect(i)}
             >
               <span className="row__idx">{i}</span>
+              {/* The item list is the one place an icon pays for itself: 1290
+                  rows of names is a spreadsheet, 1290 rows of icons is a cache
+                  browser. `items.sprite` is the index; nothing is guessed. */}
+              {kind === 'items' && (
+                <EntitySprite
+                  plain
+                  spriteId={typeof entry.sprite === 'number' ? entry.sprite : null}
+                  size={20}
+                  label={String(entry.name ?? `#${i}`)}
+                />
+              )}
               {'colour' in entry && <ColourSwatch value={asColour(entry.colour)} />}
               {'colourFront' in entry && <ColourSwatch value={asColour(entry.colourFront)} />}
               <span className="row__name">{label(entry, i)}</span>

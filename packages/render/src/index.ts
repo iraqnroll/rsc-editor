@@ -51,7 +51,9 @@
  *    96x96 region snapped to the client's grid. Identical within one aligned
  *    region; better for a building that straddles the client's region seam.
  * 4. **Scenery-driven terrain ambience is not applied.** `World#method404`
- *    darkens terrain around blocking scenery; that needs the scenery pass.
+ *    darkens the terrain vertices around a blocking object. That is an edit to
+ *    the TERRAIN driven by the scenery pass, so it would have to run before the
+ *    terrain is meshed, and it is the one part of scenery still missing.
  * 5. **Quads are fan-triangulated.** Only ever applied where the client itself
  *    guarantees the polygon planar.
  * 6. **Texture coordinates are vertex attributes, not a per-pixel plane.** The
@@ -60,9 +62,18 @@
  *    as uvs at the corners and let the GPU interpolate it correctly. The two
  *    agree exactly at the vertices and differ in the client's favour only where
  *    the client is wrong.
- * 7. **Scenery is not built.** `scenery.ts` enumerates placements from the
- *    lanes; the `.ob3` model builder behind `SceneryBuilder` is not implemented,
- *    so no scenery reaches a mesh.
+ * 7. **A scenery footprint is resolved against the neighbours, not against a
+ *    96x96 region.** The client's greedy scan starts at the corner of the 2x2
+ *    block it assembled, so a multi-tile object straddling that corner is drawn
+ *    a second time, shifted. `listScenery` starts one footprint earlier, using
+ *    read-only neighbour lanes, so each object is drawn exactly once whichever
+ *    sector you are looking at.
+ * 8. **Scenery is batched, not copied per placement.** The client copies a fresh
+ *    `GameModel` for every object and hands each to the scene. We build one
+ *    geometry per (model, direction) and instance it. The arithmetic is
+ *    identical because the only per-placement difference is a translation, and
+ *    nothing in the lighting depends on one -- but the rotation does, which is
+ *    why the direction is part of the key and not part of the instance.
  *
  * Ownership: the `renderer` agent. See CLAUDE.md.
  */
@@ -125,6 +136,7 @@ export {
   TERRAIN_LIGHT,
   WALL_LIGHT,
   ROOF_LIGHT,
+  SCENERY_LIGHT,
   emptyGeometry,
   type Face,
   type LightSettings,
@@ -139,11 +151,31 @@ export { buildWalls, type WallOptions } from './walls.js';
 export { buildRoofs, countRoofedTiles, type RoofOptions } from './roofs.js';
 
 export {
+  buildScenery,
+  buildSceneryModel,
+  emptySceneryMesh,
+  fillToInt,
+  flattenScenery,
   listScenery,
+  modelSourceFrom,
+  resolveScenery,
+  yawSceneryVertex,
+  NO_MODELS,
+  type ResolvedScenery,
+  type SceneryBatch,
   type SceneryBuilder,
+  type SceneryColourFill,
+  type SceneryFaceFill,
+  type SceneryInstance,
+  type SceneryMesh,
+  type SceneryModel,
+  type SceneryModelFace,
+  type SceneryModelOptions,
   type SceneryModelSource,
+  type SceneryModelVertex,
   type SceneryOptions,
-  type SceneryPlacement
+  type SceneryPlacement,
+  type SceneryTextureFill
 } from './scenery.js';
 
 export {
@@ -152,3 +184,20 @@ export {
   type SectorMesh,
   type SectorMeshOptions
 } from './sector-mesh.js';
+
+/**
+ * The software rasteriser, for previews that must not open a GPU context -- a
+ * picker showing forty models cannot have forty WebGL canvases.
+ *
+ * `software-raster.js`, NOT `raster.js`: the latter adds a PNG encoder built on
+ * `node:zlib` and must stay out of the browser bundle.
+ */
+export {
+  rasterize,
+  type Camera,
+  type RasterOptions,
+  type RasterResult,
+  type RasterTexture
+} from './software-raster.js';
+
+export { modelPreviewCamera, type ModelPreviewFraming } from './model-preview.js';

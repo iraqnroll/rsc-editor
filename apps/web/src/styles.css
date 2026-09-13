@@ -557,22 +557,117 @@ input[type="color"] {
   font-size: 14px;
 }
 
-/* -------------------------------------------------------------- minimap -- */
+/* ------------------------------------------------------------ world map -- */
 
-.minimap {
-  display: block;
-  width: 100%;
-  height: auto;
-  image-rendering: pixelated;
+.worldmap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
+}
+
+.worldmap--full {
+  flex: 1;
+  min-height: 0;
+}
+
+.worldmap__box {
+  position: relative;
   background: var(--bg-0);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  cursor: crosshair;
+  overflow: hidden;
+}
+
+.worldmap__canvas {
+  display: block;
+  cursor: grab;
   touch-action: none;
 }
 
-.minimap:focus-visible {
+.worldmap__canvas:active {
+  cursor: grabbing;
+}
+
+.worldmap__canvas:focus-visible {
   box-shadow: var(--focus);
+}
+
+.worldmap__tools {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  opacity: 0.55;
+  transition: opacity 120ms;
+}
+
+.worldmap__box:hover .worldmap__tools {
+  opacity: 1;
+}
+
+.worldmap__scale {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--fg-1);
+  background: rgba(13, 15, 18, 0.8);
+  padding: 1px 5px;
+  border-radius: var(--radius);
+}
+
+.worldmap__badge {
+  position: absolute;
+  left: 4px;
+  bottom: 4px;
+  font-size: 10px;
+  color: var(--fg-1);
+  background: rgba(13, 15, 18, 0.82);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 1px 6px;
+  pointer-events: none;
+}
+
+.worldmap__badge--error {
+  color: var(--danger);
+}
+
+.worldmap__readout {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px 8px;
+  font-size: 10.5px;
+  color: var(--fg-1);
+  min-height: 16px;
+}
+
+.worldmap__key {
+  font-family: var(--mono);
+  color: var(--fg-0);
+}
+
+.worldmap__owner {
+  font-weight: 600;
+}
+
+/* Specificity, not order: `.modal` sets a 560px width further down the file and
+   the map needs the room. */
+.modal.modal--map {
+  width: min(1180px, calc(100vw - 48px));
+  height: min(900px, calc(100vh - 48px));
+  max-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.modal.modal--map .worldmap {
+  flex: 1;
+  min-height: 0;
+  padding: 8px;
 }
 
 .legend {
@@ -801,6 +896,72 @@ input[type="color"] {
   flex-direction: column;
   gap: 11px;
   padding: 10px;
+}
+
+.defpreview {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 8px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.defpreview__text {
+  min-width: 0;
+  flex: 1;
+}
+
+.defpreview__name {
+  color: var(--fg-0);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.defpreview__facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px 8px;
+  margin-top: 4px;
+  font-size: 10.5px;
+  color: var(--fg-1);
+  font-family: var(--mono);
+}
+
+.defpreview__facts .row__tag {
+  margin-left: 0;
+}
+
+.defpreview__warn {
+  color: var(--warn);
+}
+
+.defpreview__media {
+  width: 56px;
+  flex: 0 0 56px;
+  min-height: 56px;
+  display: grid;
+  place-items: center;
+  gap: 4px;
+  background: var(--bg-0);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.defpreview__media--wall {
+  grid-auto-rows: min-content;
+  align-content: center;
+  padding: 4px;
+}
+
+.defpreview__side {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 9px;
 }
 
 .defform__dirty {

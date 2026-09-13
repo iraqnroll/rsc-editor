@@ -92,14 +92,45 @@ GET …/cache-assets/entity-sprites/layout   -> application/json
 ```
 
 Item and NPC sprites packed into one sheet, for the definition editors and
-pickers. Same layout shape as the texture atlas, keyed by sprite index:
+pickers. Same layout shape as the texture atlas, keyed by sprite index.
+
+As built: the sheet is **4096×2830** with **4,599 cells** — 450 item sprites and
+1,143 animation frames.
 
 ```jsonc
 {
-  "sheet": { "width": 1024, "height": 1024 },
-  "cells": [ { "spriteId": 0, "x": 0, "y": 0, "width": 32, "height": 32 } ]
+  "sheet": { "width": 4096, "height": 2830 },
+  "cells": [ { "spriteId": 0, "x": 0, "y": 0, "width": 32, "height": 32 } ],
+  // optional: NPC index -> a sprite id to show as its icon
+  "npcs": { "0": 1234 }
 }
 ```
+
+Sprite ids:
+
+- **items** are `ItemDef.sprite` verbatim (0–449), so an item definition looks
+  its own icon up with no indirection.
+- **animation frames** are `1000 + animationIndex * 27 + frame`, following the
+  client's own `j+15` / `j+18` slot layout (15 base, "a" at 15, "f" at 18). The
+  arithmetic means a missing set never renumbers another slot.
+
+`npcs` is additive and optional. `NpcDef` carries animation indices rather than a
+sprite, so without it the NPC editor has nothing to show; a client that does not
+understand it must fall back to no icon rather than failing.
+
+### Where the sprites actually live
+
+Item sprites are **not** in `entity24.jag`, which holds only animation sprites.
+They are `objects1.dat` … `objects15.dat` in **`media58.jag`**, thirty frames
+each. Established by accounting for every archive entry rather than by guessing:
+all 109 `entity24.jag` and 18 `entity24.mem` entries are `index.dat` or an
+animation, with nothing left over.
+
+The **frame count per entry is stored nowhere** — the client passes it in at each
+call site. The counts (15 base / 3 "a" / 9 "f" per animation, 30 per item file)
+are proved by showing they consume each entry's payload exactly. Reading one
+frame too many walks into the next group's header and yields a plausible sprite
+of nonsense, so the decoder bounds-checks before allocating.
 
 ### What is deliberately NOT here
 

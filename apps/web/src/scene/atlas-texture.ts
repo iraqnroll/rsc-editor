@@ -181,4 +181,50 @@ export function loadAtlas(): Promise<ResolvedAtlas> {
 /** Test seam: forget the memoised sheet. */
 export function resetAtlasCache(): void {
   pending = null;
+  pixels = null;
+}
+
+let pixels: Uint8Array | null = null;
+
+/**
+ * The atlas as raw RGBA, for the software rasteriser behind the model
+ * thumbnails.
+ *
+ * A `Texture` is a handle to an image the GPU will sample; the CPU cannot read
+ * it back. So the decoded image is drawn once into a scratch 2D canvas and its
+ * pixels are kept. Once, not per thumbnail -- the sheet is ~1024x1024, which is
+ * 4 MB, and re-extracting it per picker row would be the slowest thing in the
+ * editor.
+ *
+ * `null` when there is no DOM (tests) or no 2D context, in which case a
+ * thumbnail draws in flat colours. That is a degradation, not a failure: RSC's
+ * shading is already baked into the vertex colours, so an untextured thumbnail
+ * is the right shape and the right lighting with a flat fill where a texture
+ * would be.
+ */
+export function atlasPixels(texture: Texture): Uint8Array | null {
+  if (pixels) return pixels;
+
+  const image = texture.image as CanvasImageSource & { width?: number; height?: number };
+  if (!image || typeof document === 'undefined') return null;
+
+  const width = Number(image.width ?? 0);
+  const height = Number(image.height ?? 0);
+  if (!width || !height) return null;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  if (!context) return null;
+
+  context.drawImage(image, 0, 0);
+  try {
+    pixels = new Uint8Array(context.getImageData(0, 0, width, height).data.buffer);
+  } catch {
+    // A tainted canvas, which cannot happen for a same-origin blob but is not
+    // worth crashing a picker over.
+    return null;
+  }
+  return pixels;
 }

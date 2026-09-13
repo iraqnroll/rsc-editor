@@ -11,8 +11,7 @@ import { useMemo, useState } from 'react';
 import type { DefinitionKind } from '@rsc-editor/schema';
 import { useEditor } from '../state/editorStore.js';
 import { ColourSwatch } from '../defs/ColourField.js';
-import { modelNameOf } from '../defs/models.js';
-import { ModelThumbnail } from '../scene/ModelThumbnail.js';
+import { DefinitionPreview } from '../defs/DefinitionPreview.js';
 
 export interface DefPickerProps {
   kind: DefinitionKind;
@@ -47,8 +46,6 @@ export function DefPicker({ kind, value, onChange, label, preview }: DefPickerPr
   }, [list, query]);
 
   const selected = list[value];
-  // model.name, never model.id — see src/defs/models.ts.
-  const modelName = modelNameOf(selected);
 
   return (
     <div className="field">
@@ -57,16 +54,11 @@ export function DefPicker({ kind, value, onChange, label, preview }: DefPickerPr
         <span className="meta">#{value}</span>
       </div>
 
-      {preview && (
-        <div className="field__row">
-          <ModelThumbnail modelName={modelName} size={56} />
-          <div style={{ minWidth: 0 }}>
-            <div className="row__name" style={{ color: 'var(--fg-0)' }}>
-              {String(selected?.name ?? '—')}
-            </div>
-            <div className="hint">{String(selected?.description ?? '')}</div>
-          </div>
-        </div>
+      {/* The same header the definition editor uses, so a wall shows its two
+          fills and an object shows its model by NAME (never model.id — it is
+          wrong for 409 of 1189 objects, DECISIONS §8). */}
+      {preview && selected && (
+        <DefinitionPreview kind={kind} index={value} entry={selected} config={config} />
       )}
 
       <input

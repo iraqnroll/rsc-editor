@@ -1,6 +1,12 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { loadConfig, loadLandscape, type LoadedSector } from '@rsc-editor/cache';
+import {
+  loadConfig,
+  loadLandscape,
+  loadModels,
+  type LoadedSector,
+  type ModelLibrary
+} from '@rsc-editor/cache';
 import {
   SECTOR_WIDTH,
   emptySectorBuffers,
@@ -9,6 +15,7 @@ import {
 } from '@rsc-editor/schema';
 import { LandscapeView, neighbourKey } from './landscape-view.js';
 import type { GeometryData } from './model.js';
+import type { SceneryModelSource } from './scenery.js';
 
 /**
  * Test fixtures. Not exported from the package -- this file exists so the
@@ -37,12 +44,45 @@ export function realLandscape(): Map<string, LoadedSector> {
   return landscapeCache;
 }
 
+let modelCache: ModelLibrary | null = null;
+
+/**
+ * Every `.ob3` the config names, out of the real `models36.jag`.
+ *
+ * `.missing` is non-empty on the shipped cache -- `runiteruck1` is a typo for
+ * `runiterock1` and the real client hits the same dead end (DECISIONS section 8)
+ * -- which is exactly the degradation the scenery builder has to survive.
+ */
+export function realModels(): ModelLibrary {
+  modelCache ??= loadModels(
+    readFileSync(FIXTURES + 'models36.jag'),
+    realConfig().models
+  );
+  return modelCache;
+}
+
+/** `realModels()` as the `SceneryModelSource` the scenery builder consumes. */
+export function realModelSource(): SceneryModelSource {
+  const library = realModels();
+  return {
+    get: (name) => library.models.get(name),
+    has: (name) => library.models.has(name)
+  };
+}
+
 /**
  * A dense, fully surrounded plane-0 sector: 388 roofed tiles, 366 walls, 54
  * diagonals, 464 overlays, and all eight neighbours present in the cache. If a
  * fixture swap changes those numbers the tests that lean on them will say so.
  */
 export const DENSE_SECTOR = { plane: 0, x: 60, y: 51 } as const;
+
+/**
+ * A plane-0 sector with a `.loc` entry, i.e. one that actually carries scenery.
+ * Only two free-world sectors do (DECISIONS section 2), so this is not a choice
+ * so much as the only place to look.
+ */
+export const SCENERY_SECTOR = { plane: 0, x: 50, y: 50 } as const;
 
 export function tileIndexOf(x: number, y: number): number {
   return x * SECTOR_WIDTH + y;

@@ -16,6 +16,7 @@ import { ShortcutsModal } from './components/ShortcutsModal.js';
 import { StatusBar } from './components/StatusBar.js';
 import { ToolPalette } from './components/ToolPalette.js';
 import { ViewportHost } from './components/ViewportHost.js';
+import { WorldMapModal } from './components/WorldMapModal.js';
 import './styles.css';
 
 const RAIL_MIN = 180;
@@ -56,6 +57,8 @@ export function App() {
   const redoDepth = useEditor((s) => s.redoStack.length);
   const apiMode = useEditor((s) => s.api.mode);
   const signOut = useEditor((s) => s.signOut);
+  const worldMapOpen = useEditor((s) => s.worldMapOpen);
+  const setWorldMapOpen = useEditor((s) => s.setWorldMapOpen);
 
   const [railWidth, setRailWidth] = usePersistedWidth('rsc.rail', 252);
   const [inspectorWidth, setInspectorWidth] = usePersistedWidth('rsc.inspector', 352);
@@ -96,6 +99,14 @@ export function App() {
         </button>
         <button type="button" className="btn btn--sm" disabled={redoDepth === 0} onClick={redo}>
           Redo
+        </button>
+        <button
+          type="button"
+          className="btn btn--sm"
+          title="Full-window world map (M)"
+          onClick={() => setWorldMapOpen(true)}
+        >
+          Map
         </button>
         <span className="topbar__spacer" />
         <span className="hint">{apiMode === 'mock' ? 'mock backend' : 'live backend'}</span>
@@ -139,6 +150,7 @@ export function App() {
       <StatusBar onShowShortcuts={openShortcuts} />
 
       {showShortcuts && <ShortcutsModal onClose={() => setShowShortcuts(false)} />}
+      {worldMapOpen && <WorldMapModal onClose={() => setWorldMapOpen(false)} />}
     </div>
   );
 }

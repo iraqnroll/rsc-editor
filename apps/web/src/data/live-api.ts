@@ -14,7 +14,13 @@
  *   GET  /api/projects/:id/definitions/:kind        -> { kind, definitions }
  *   GET  /api/projects/:id/ops?since&limit          -> { ops, head, caughtUp }
  *   GET  /api/projects/:id/cache-assets/texture-atlas[/layout]
+ *   GET  /api/projects/:id/cache-assets/world-map/:plane[/meta]
+ *   GET  /api/projects/:id/cache-assets/entity-sprites[/layout]
  *   WS   /ws                                        the frozen protocol
+ *
+ * Every cache-asset route answers 404 until the importer has built it. That is
+ * a NORMAL state for a fresh project, so all three loaders resolve to `null`
+ * rather than throwing, and every consumer has a documented fallback.
  *
  * REST responses are WRAPPED (`{ project }`, `{ projects }`, `{ ops, head,
  * caughtUp }`). Unwrapping is done at the call site, once, so the rest of the
@@ -81,6 +87,12 @@ import {
   type AtlasLayoutWire,
   type TextureAtlasAsset
 } from './atlas.js';
+import {
+  entitySpriteSheetFromWire,
+  isEntitySpriteLayoutWire,
+  type EntitySpriteSheet
+} from './entity-sprites.js';
+import { isWorldMapMeta, type WorldMapAsset } from './world-map.js';
 import { devLogin, fetchMe, logout, type AuthUser } from './auth.js';
 import { apiBinary, apiJson, isApiHttpError, websocketUrl } from './http.js';
 import {
@@ -220,6 +232,18 @@ export function createLiveApi(options: LiveApiOptions = {}): EditorApi {
   // startup (the store and the scene) must not each pay for them.
   let configInFlight: Promise<RscConfig> | null = null;
   let atlasInFlight: Promise<TextureAtlasAsset | null> | null = null;
+
+  /**
+   * Cache assets are immutable for the life of a project and are requested by
+   * several panels at once (the map panel on every plane switch, the item and
+   * NPC editors on every selection). They are cached per project — including
+   * the `null` that means "this project has no imported cache", so a 404 is
+   * paid for once rather than on every render.
+   */
+  const worldMaps = new Map<number, WorldMapAsset | null>();
+  const worldMapsInFlight = new Map<number, Promise<WorldMapAsset | null>>();
+  let sprites: EntitySpriteSheet | null | undefined;
+  let spritesInFlight: Promise<EntitySpriteSheet | null> | null = null;
 
   const sectorCache = new Map<string, SectorFrame>();
   const heldLocks = new Set<string>();
@@ -747,6 +771,49 @@ export function createLiveApi(options: LiveApiOptions = {}): EditorApi {
     }
   }
 
+  /**
+   * The coloured world map for one plane.
+   *
+   * PNG and meta are fetched together because one without the other is useless:
+   * the meta is what says which sector the top-left pixel belongs to, and
+   * guessing that would put every overlay in the wrong place. A 404 on either
+   * is `null` — the normal state of a project whose cache has not been imported.
+   */
+  async function loadWorldMapOnce(plane: number): Promise<WorldMapAsset | null> {
+    const id = requireProject();
+    const base = `/api/projects/${encodeURIComponent(id)}/cache-assets/world-map/${plane}`;
+    try {
+      const [png, metaJson] = await Promise.all([apiBinary(base), apiJson<unknown>(`${base}/meta`)]);
+      if (!isWorldMapMeta(metaJson)) {
+        console.warn('[live-api] world map meta did not match the expected shape');
+        return null;
+      }
+      return { png, meta: metaJson };
+    } catch (err) {
+      if (isApiHttpError(err) && (err.status === 404 || err.status === 501)) return null;
+      throw err;
+    }
+  }
+
+  async function loadEntitySpritesOnce(): Promise<EntitySpriteSheet | null> {
+    const id = requireProject();
+    const base = `/api/projects/${encodeURIComponent(id)}/cache-assets/entity-sprites`;
+    try {
+      const [png, layoutJson] = await Promise.all([
+        apiBinary(base),
+        apiJson<unknown>(`${base}/layout`)
+      ]);
+      if (!isEntitySpriteLayoutWire(layoutJson)) {
+        console.warn('[live-api] entity sprite layout did not match the expected shape');
+        return null;
+      }
+      return entitySpriteSheetFromWire(png, layoutJson);
+    } catch (err) {
+      if (isApiHttpError(err) && (err.status === 404 || err.status === 501)) return null;
+      throw err;
+    }
+  }
+
   /* ----------------------------------------------------------- commands -- */
 
   async function claimLock(coord: SectorCoord): Promise<LockResult> {
@@ -956,6 +1023,41 @@ export function createLiveApi(options: LiveApiOptions = {}): EditorApi {
       return atlasInFlight;
     },
 
+    /**
+     * The coloured world map for one plane. `null` means "no map in this
+     * project" and the map panel draws its sector grid instead.
+     */
+    loadWorldMap(plane: number): Promise<WorldMapAsset | null> {
+      if (worldMaps.has(plane)) return Promise.resolve(worldMaps.get(plane) ?? null);
+      const existing = worldMapsInFlight.get(plane);
+      if (existing) return existing;
+      const request = loadWorldMapOnce(plane)
+        .then((result) => {
+          worldMaps.set(plane, result);
+          return result;
+        })
+        .finally(() => {
+          worldMapsInFlight.delete(plane);
+        });
+      worldMapsInFlight.set(plane, request);
+      return request;
+    },
+
+    /** Item/NPC sprites for the definition editors. `null` on 404. */
+    loadEntitySprites(): Promise<EntitySpriteSheet | null> {
+      if (sprites !== undefined) return Promise.resolve(sprites);
+      if (spritesInFlight) return spritesInFlight;
+      spritesInFlight = loadEntitySpritesOnce()
+        .then((result) => {
+          sprites = result;
+          return result;
+        })
+        .finally(() => {
+          spritesInFlight = null;
+        });
+      return spritesInFlight;
+    },
+
     async submitOps(ops: Op[]): Promise<OpSubmitResult> {
       if (ops.length === 0) return { ok: true, seq: lastSeq };
       const ids = ops.map((o) => o.id);
@@ -1047,6 +1149,10 @@ export function createLiveApi(options: LiveApiOptions = {}): EditorApi {
       configInFlight = null;
       atlas = undefined;
       atlasInFlight = null;
+      worldMaps.clear();
+      worldMapsInFlight.clear();
+      sprites = undefined;
+      spritesInFlight = null;
       sectorCache.clear();
       subscribedSectors.clear();
       heldLocks.clear();

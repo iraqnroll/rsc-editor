@@ -22,6 +22,22 @@
  * A dense real sector meshes in ~100ms (`packages/render/src/perf.test.ts`).
  * Twenty-five of them in one go is a two-second stall, so `drain()` builds at
  * most a budget's worth per call and the caller pumps it from the frame loop.
+ *
+ * ## Why scenery is not a per-sector geometry
+ *
+ * Terrain, walls and roofs are one merged buffer each per sector. Scenery is
+ * not, and must not be: a world is one tree model and thousands of trees. The
+ * geometry is keyed `(model, direction)` and lives on the CACHE rather than on
+ * a sector -- shared by every sector that contains that model -- and a sector
+ * contributes only a list of world positions. `sceneryDraws()` merges those into
+ * one `InstancedMesh` per key for the whole loaded neighbourhood, which is one
+ * draw call per distinct model rather than one per placement or one per model
+ * per sector.
+ *
+ * The direction is part of the KEY and not part of the instance transform. It
+ * has to be: the client relights a model after transforming it, so the yaw
+ * changes the baked vertex colours. Rotating with the instance matrix would put
+ * a tree in the right place with the wrong shading.
  */
 
 import { BufferAttribute, BufferGeometry, Sphere, Vector3 } from 'three';
@@ -34,7 +50,8 @@ import {
   buildSectorMesh,
   neighboursFrom,
   type AtlasLayout,
-  type GeometryData
+  type GeometryData,
+  type SceneryModelSource
 } from '@rsc-editor/render';
 
 /** World units spanned by one sector edge. */
@@ -44,6 +61,24 @@ export interface SectorSource {
   coord: SectorCoord;
   buffers: SectorBuffers;
   rev: number;
+}
+
+/**
+ * One sector's contribution to a scenery batch: where the copies stand, in
+ * WORLD space (the sector origin is already added, unlike the terrain layers,
+ * which are drawn inside a translated group).
+ *
+ * World space because scenery batches are merged across every loaded sector --
+ * a world has one tree model and thousands of trees, so the draw call has to be
+ * per model, not per model per sector.
+ */
+export interface SceneryPlacements {
+  /** `"modelName|direction"`, the key of the geometry these instance */
+  key: string;
+  modelName: string;
+  /** xyz triples, `count * 3` */
+  positions: Float32Array;
+  count: number;
 }
 
 export interface SectorGeometrySet {
@@ -61,6 +96,25 @@ export interface SectorGeometrySet {
    * into a tile without inverting any coordinates by hand.
    */
   terrainTiles: Int32Array;
+  /** this sector's placements, by batch key. Geometry lives on the cache. */
+  scenery: SceneryPlacements[];
+  /** terrain + walls + roofs, as uploaded */
+  triangles: number;
+  /** scenery triangles actually drawn, i.e. counting every instance */
+  sceneryTriangles: number;
+  /** model names this sector wanted that the model source does not have */
+  missingModels: string[];
+}
+
+/** One instanced draw: one geometry, one transform per copy of it. */
+export interface SceneryDraw {
+  key: string;
+  modelName: string;
+  geometry: BufferGeometry;
+  /** `count * 16`, column-major, translation only -- the yaw is in the geometry */
+  matrices: Float32Array;
+  count: number;
+  /** triangles per copy */
   triangles: number;
 }
 
@@ -113,6 +167,11 @@ export interface CacheStats {
   cached: number;
   pending: number;
   triangles: number;
+  /** scenery triangles drawn across every loaded sector */
+  sceneryTriangles: number;
+  /** instanced draws the scene issues for scenery */
+  sceneryDraws: number;
+  sceneryInstances: number;
 }
 
 export class SectorGeometryCache {
@@ -123,6 +182,20 @@ export class SectorGeometryCache {
   private sectors: ReadonlyMap<string, SectorSource> = new Map();
   private config: RscConfig | null = null;
   private layout: AtlasLayout | null = null;
+  private models: SceneryModelSource | null = null;
+  /**
+   * `(model, direction)` geometry, shared by every sector.
+   *
+   * Two caches, deliberately. The plain-data one is `@rsc-editor/render`'s, so a
+   * sector that repeats a model pays nothing to mesh it; the `BufferGeometry`
+   * one is three's, so the same model uploaded once is drawn by every sector
+   * that contains it. Keying the GPU side per sector would put the same tree on
+   * the card twenty-five times.
+   */
+  private readonly sceneryData = new Map<string, GeometryData>();
+  private readonly sceneryGeometry = new Map<string, BufferGeometry>();
+  /** merged instanced draws; invalidated whenever the entry set changes */
+  private draws: SceneryDraw[] | null = null;
   built = 0;
 
   /**
@@ -132,17 +205,22 @@ export class SectorGeometryCache {
   request(
     sectors: ReadonlyMap<string, SectorSource>,
     config: RscConfig | null,
-    layout: AtlasLayout | null
+    layout: AtlasLayout | null,
+    models: SceneryModelSource | null = null
   ): boolean {
     const layoutChanged = layout !== this.layout;
     const configChanged = config !== this.config;
+    const modelsChanged = models !== this.models;
     this.sectors = sectors;
     this.config = config;
     this.layout = layout;
+    this.models = models;
 
     // A new atlas or a definition edit invalidates every mesh: fills come from
-    // `config.tiles` / `config.wallObjects`, and uvs from the layout.
-    if (layoutChanged || configChanged) this.clear();
+    // `config.tiles` / `config.wallObjects`, and uvs from the layout. Models
+    // arriving invalidates them too, because a sector meshed before they landed
+    // carries no scenery at all.
+    if (layoutChanged || configChanged || modelsChanged) this.clear();
 
     const wanted = new Map<string, { coord: SectorCoord; signature: string }>();
     for (const [key, sector] of sectors) {
@@ -156,6 +234,7 @@ export class SectorGeometryCache {
       if (!want || want.signature !== entry.signature) {
         dispose(entry);
         this.entries.delete(key);
+        this.draws = null;
         dirty = true;
       }
     }
@@ -187,6 +266,7 @@ export class SectorGeometryCache {
       if (!want || !sector || this.entries.has(key)) continue;
 
       this.entries.set(key, this.build(key, sector, want.signature));
+      this.draws = null;
       this.built++;
       did = true;
     }
@@ -203,24 +283,58 @@ export class SectorGeometryCache {
       neighbours: neighboursFrom(sector.coord, this.sectors)
     });
 
-    const mesh = buildSectorMesh(view, this.config!);
+    const originX = sector.coord.x * SECTOR_SPAN;
+    const originZ = sector.coord.y * SECTOR_SPAN;
+
+    const mesh = buildSectorMesh(view, this.config!, {
+      ...(this.models ? { models: this.models } : {}),
+      sceneryGeometryCache: this.sceneryData
+    });
 
     const terrain = toBufferGeometry(mesh.terrain, this.layout);
     const walls = toBufferGeometry(mesh.walls, this.layout);
     const roofs = toBufferGeometry(mesh.roofs, this.layout);
 
+    const scenery: SceneryPlacements[] = [];
+    for (const batch of mesh.scenery.batches) {
+      // Upload the geometry once for the whole world, not once per sector.
+      if (!this.sceneryGeometry.has(batch.key)) {
+        const geometry = toBufferGeometry(batch.geometry, this.layout);
+        if (!geometry) continue;
+        this.sceneryGeometry.set(batch.key, geometry);
+      }
+
+      const positions = new Float32Array(batch.instances.length * 3);
+      for (let i = 0; i < batch.instances.length; i++) {
+        const instance = batch.instances[i]!;
+        positions[i * 3] = originX + instance.x;
+        positions[i * 3 + 1] = instance.y;
+        positions[i * 3 + 2] = originZ + instance.z;
+      }
+
+      scenery.push({
+        key: batch.key,
+        modelName: batch.modelName,
+        positions,
+        count: batch.instances.length
+      });
+    }
+
     return {
       key,
       coord: sector.coord,
       signature,
-      originX: sector.coord.x * SECTOR_SPAN,
-      originZ: sector.coord.y * SECTOR_SPAN,
+      originX,
+      originZ,
       terrain,
       walls,
       roofs,
       terrainTiles: mesh.terrain.triangleTiles,
+      scenery,
       triangles:
-        mesh.terrain.triangleCount + mesh.walls.triangleCount + mesh.roofs.triangleCount
+        mesh.terrain.triangleCount + mesh.walls.triangleCount + mesh.roofs.triangleCount,
+      sceneryTriangles: mesh.scenery.triangleCount,
+      missingModels: mesh.scenery.missing
     };
   }
 
@@ -232,14 +346,95 @@ export class SectorGeometryCache {
     return this.entries.get(key);
   }
 
+  /**
+   * Every loaded sector's scenery, merged into one instanced draw per
+   * (model, direction).
+   *
+   * Merging across sectors is the whole point: the 5x5 neighbourhood the scene
+   * keeps loaded contains one geometry per distinct model but thousands of
+   * copies of it, and per-sector batches would multiply the draw count by 25 for
+   * no benefit. Memoised until the entry set changes, because it runs from the
+   * render path.
+   */
+  sceneryDraws(): SceneryDraw[] {
+    if (this.draws) return this.draws;
+
+    const byKey = new Map<string, { modelName: string; parts: Float32Array[]; count: number }>();
+    for (const entry of this.entries.values()) {
+      for (const batch of entry.scenery) {
+        let group = byKey.get(batch.key);
+        if (!group) {
+          group = { modelName: batch.modelName, parts: [], count: 0 };
+          byKey.set(batch.key, group);
+        }
+        group.parts.push(batch.positions);
+        group.count += batch.count;
+      }
+    }
+
+    const draws: SceneryDraw[] = [];
+    for (const [key, group] of byKey) {
+      const geometry = this.sceneryGeometry.get(key);
+      if (!geometry || group.count === 0) continue;
+
+      // Column-major 4x4s with the translation in elements 12..14. The yaw is
+      // already baked into the geometry -- it changes the lighting, so it cannot
+      // be an instance transform without diverging from the client.
+      const matrices = new Float32Array(group.count * 16);
+      let at = 0;
+      for (const part of group.parts) {
+        for (let i = 0; i < part.length / 3; i++) {
+          const o = at * 16;
+          matrices[o] = 1;
+          matrices[o + 5] = 1;
+          matrices[o + 10] = 1;
+          matrices[o + 12] = part[i * 3]!;
+          matrices[o + 13] = part[i * 3 + 1]!;
+          matrices[o + 14] = part[i * 3 + 2]!;
+          matrices[o + 15] = 1;
+          at++;
+        }
+      }
+
+      draws.push({
+        key,
+        modelName: group.modelName,
+        geometry,
+        matrices,
+        count: group.count,
+        triangles: (geometry.getIndex()?.count ?? 0) / 3
+      });
+    }
+
+    this.draws = draws;
+    return draws;
+  }
+
+  /** Model names wanted by loaded sectors that the model source cannot supply. */
+  missingModels(): string[] {
+    const out = new Set<string>();
+    for (const entry of this.entries.values()) {
+      for (const name of entry.missingModels) out.add(name);
+    }
+    return [...out].sort();
+  }
+
   stats(): CacheStats {
     let triangles = 0;
-    for (const entry of this.entries.values()) triangles += entry.triangles;
+    let sceneryTriangles = 0;
+    for (const entry of this.entries.values()) {
+      triangles += entry.triangles;
+      sceneryTriangles += entry.sceneryTriangles;
+    }
+    const draws = this.sceneryDraws();
     return {
       built: this.built,
       cached: this.entries.size,
       pending: this.queue.length,
-      triangles
+      triangles,
+      sceneryTriangles,
+      sceneryDraws: draws.length,
+      sceneryInstances: draws.reduce((n, draw) => n + draw.count, 0)
     };
   }
 
@@ -247,6 +442,13 @@ export class SectorGeometryCache {
     for (const entry of this.entries.values()) dispose(entry);
     this.entries.clear();
     this.queue = [];
+    this.draws = null;
+    // Scenery geometry is shared between sectors, so it survives an eviction --
+    // but not a clear, which is what a changed atlas layout or model source
+    // triggers, and both of those invalidate the uploaded buffers.
+    for (const geometry of this.sceneryGeometry.values()) geometry.dispose();
+    this.sceneryGeometry.clear();
+    this.sceneryData.clear();
   }
 }
 

@@ -35,6 +35,7 @@ import type {
 } from '@rsc-editor/schema';
 import { AuthRequiredError, NoProjectError, getApi } from '../data/api.js';
 import type { EditorApi, LinkState, WorldIndex } from '../data/api.js';
+import { resetEntitySpriteCache } from '../data/useCacheAssets.js';
 import { applySectorOp, describeOp, opId, opTileCount } from '../ops/apply.js';
 import type { BuildResult, RegionClipboard, RegionRect } from '../ops/builders.js';
 import type { WorldTile } from '../ops/coords.js';
@@ -93,6 +94,38 @@ export type ConnectionState =
   | 'no-project'
   | 'error';
 
+/**
+ * Where the 3D view is looking, in world tiles, so the map and the viewport
+ * agree about where you are.
+ *
+ * ============================================================================
+ *  RENDERER SEAM. `source: 'camera'` is the one we want and the one we cannot
+ *  produce from here.
+ * ============================================================================
+ *
+ * `ViewportProps` (src/scene/viewport-props.ts, owned by the `renderer` agent)
+ * has no camera-out event, and the orbit state lives inside `Viewport3D`. So
+ * today this is published from the pointer — `onHover` gives a real world tile
+ * whenever the cursor is over terrain, which IS where you are working, and it is
+ * labelled `pointer` on the map rather than passed off as the camera.
+ *
+ * One line in the render loop replaces it exactly:
+ *
+ *     useEditor.getState().setViewCentre({
+ *       plane, wx, wy, tilesAcross, source: 'camera'
+ *     });
+ *
+ * at which point the map draws a real viewport rectangle instead of a crosshair.
+ */
+export interface ViewCentre {
+  plane: number;
+  wx: number;
+  wy: number;
+  /** Tiles visible across the viewport, when the source knows. */
+  tilesAcross: number | null;
+  source: 'camera' | 'pointer';
+}
+
 export interface EditorState {
   api: EditorApi;
   connection: ConnectionState;
@@ -117,6 +150,8 @@ export interface EditorState {
 
   activeSector: SectorCoord | null;
   hoverTile: WorldTile | null;
+  /** Where the 3D view is looking; drawn on the world map. */
+  viewCentre: ViewCentre | null;
   selection: RegionRect | null;
   clipboard: RegionClipboard | null;
 
@@ -131,6 +166,9 @@ export interface EditorState {
   showGrid: boolean;
   showSectorBorders: boolean;
   showLockTint: boolean;
+  /** The full-window world map. Here, not in App, so `M` and the rail's
+   *  "expand" button drive the same thing from opposite ends of the tree. */
+  worldMapOpen: boolean;
 
   /* actions */
   connect(): Promise<void>;
@@ -142,6 +180,7 @@ export interface EditorState {
 
   setActiveSector(coord: SectorCoord | null): void;
   setHoverTile(tile: WorldTile | null): void;
+  setViewCentre(view: ViewCentre | null): void;
   setSelection(rect: RegionRect | null): void;
   setClipboard(clip: RegionClipboard | null): void;
 
@@ -165,6 +204,7 @@ export interface EditorState {
   setNotice(notice: Notice | null): void;
 
   toggleOverlay(which: 'showGrid' | 'showSectorBorders' | 'showLockTint'): void;
+  setWorldMapOpen(open: boolean): void;
 }
 
 /* ------------------------------------------------------------- helpers -- */
@@ -220,6 +260,7 @@ export const useEditor = create<EditorState>()((set, get) => ({
 
   activeSector: null,
   hoverTile: null,
+  viewCentre: null,
   selection: null,
   clipboard: null,
 
@@ -234,6 +275,7 @@ export const useEditor = create<EditorState>()((set, get) => ({
   showGrid: true,
   showSectorBorders: true,
   showLockTint: true,
+  worldMapOpen: false,
 
   /* ---------------------------------------------------------- lifecycle -- */
 
@@ -331,6 +373,7 @@ export const useEditor = create<EditorState>()((set, get) => ({
     for (const off of unsubscribers) off();
     unsubscribers = [];
     subscribed = false;
+    resetEntitySpriteCache();
     set({
       connection: 'auth-required',
       link: 'offline',
@@ -347,13 +390,18 @@ export const useEditor = create<EditorState>()((set, get) => ({
 
   async openProject(projectId) {
     get().api.useProject(projectId);
+    // A different project is a different cache: the shared sprite sheet and the
+    // map images belong to the old one and must not be shown against the new
+    // one's definitions.
+    resetEntitySpriteCache();
     set({
       connection: 'idle',
       world: null,
       config: null,
       sectors: {},
       locks: {},
-      activeSector: null
+      activeSector: null,
+      viewCentre: null
     });
     await get().connect();
   },
@@ -420,6 +468,31 @@ export const useEditor = create<EditorState>()((set, get) => ({
 
   setHoverTile(tile) {
     set({ hoverTile: tile });
+  },
+
+  /**
+   * Only replaces a `camera` reading with another `camera` reading: once the
+   * renderer publishes a real pose, pointer motion must not drag the map marker
+   * away from where the camera actually is.
+   */
+  setViewCentre(view) {
+    if (!view) {
+      set({ viewCentre: null });
+      return;
+    }
+    const current = get().viewCentre;
+    if (current?.source === 'camera' && view.source !== 'camera') return;
+    if (
+      current &&
+      current.plane === view.plane &&
+      current.wx === view.wx &&
+      current.wy === view.wy &&
+      current.tilesAcross === view.tilesAcross &&
+      current.source === view.source
+    ) {
+      return; // identical reading: do not wake every subscriber
+    }
+    set({ viewCentre: view });
   },
 
   setSelection(rect) {
@@ -618,6 +691,10 @@ export const useEditor = create<EditorState>()((set, get) => ({
 
   toggleOverlay(which) {
     set((s) => ({ [which]: !s[which] }) as Partial<EditorState>);
+  },
+
+  setWorldMapOpen(open) {
+    set({ worldMapOpen: open });
   }
 }));
 

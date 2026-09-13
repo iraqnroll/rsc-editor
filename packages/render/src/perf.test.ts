@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
+import type { GeometryData } from './model.js';
 import { buildSectorMesh, viewSector } from './sector-mesh.js';
-import { DENSE_SECTOR, realConfig, realLandscape } from './test-support.js';
+import {
+  DENSE_SECTOR,
+  SCENERY_SECTOR,
+  realConfig,
+  realLandscape,
+  realModelSource
+} from './test-support.js';
 
 /**
  * A build-cost budget, not a benchmark.
@@ -49,5 +56,71 @@ describe('meshing cost', () => {
     expect(triangles).toBeGreaterThan(100_000);
     // Generous, so it fails on a regression rather than on a slow machine.
     expect(elapsed).toBeLessThan(20_000);
+  });
+
+  /**
+   * What scenery adds to a sector's mesh cost.
+   *
+   * The answer has to stay small, because the scene meshes one sector per frame
+   * and scenery is on top of the terrain/wall/roof pass that already costs
+   * ~100ms. The shared geometry cache is what makes it small: the second sector
+   * that contains a tree pays for the placements only.
+   */
+  it('adds little to a sector that is full of scenery', () => {
+    const config = realConfig();
+    const landscape = realLandscape();
+    const view = viewSector(SCENERY_SECTOR, landscape);
+    expect(view).not.toBeNull();
+
+    const time = (fn: () => void): number => {
+      fn(); // warm
+      const started = performance.now();
+      for (let i = 0; i < 5; i++) fn();
+      return (performance.now() - started) / 5;
+    };
+
+    const bare = time(() => {
+      buildSectorMesh(view!, config, { terrain: { vertexNoise: false } });
+    });
+
+    // Cold cache: every distinct (model, direction) built from scratch.
+    const cold = time(() => {
+      buildSectorMesh(view!, config, {
+        terrain: { vertexNoise: false },
+        models: realModelSource(),
+        sceneryGeometryCache: new Map()
+      });
+    });
+
+    // Warm cache, which is what the scene actually runs: one shared map across
+    // every loaded sector.
+    const shared = new Map<string, GeometryData>();
+    const warm = time(() => {
+      buildSectorMesh(view!, config, {
+        terrain: { vertexNoise: false },
+        models: realModelSource(),
+        sceneryGeometryCache: shared
+      });
+    });
+
+    const mesh = buildSectorMesh(view!, config, {
+      terrain: { vertexNoise: false },
+      models: realModelSource(),
+      sceneryGeometryCache: shared
+    });
+
+    // eslint-disable-next-line no-console
+    console.log(
+      `scenery sector ${SCENERY_SECTOR.x}/${SCENERY_SECTOR.y}: ` +
+        `${mesh.scenery.instances.length} objects, ${mesh.scenery.batches.length} batches, ` +
+        `${mesh.scenery.uniqueTriangles} unique / ${mesh.scenery.triangleCount} drawn triangles; ` +
+        `no scenery ${bare.toFixed(1)}ms, cold ${cold.toFixed(1)}ms, warm ${warm.toFixed(1)}ms`
+    );
+
+    expect(mesh.scenery.batches.length).toBeGreaterThan(10);
+    // Instancing is the point: far fewer triangles uploaded than drawn.
+    expect(mesh.scenery.triangleCount).toBeGreaterThan(mesh.scenery.uniqueTriangles * 2);
+    // A warm cache must not cost anything like a full sector mesh.
+    expect(warm - bare).toBeLessThan(bare);
   });
 });

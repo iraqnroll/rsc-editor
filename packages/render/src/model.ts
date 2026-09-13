@@ -33,6 +33,22 @@ export interface Face {
   tile: number;
   /** false for padding faces that exist only to light the sector's edge right */
   keep: boolean;
+  /**
+   * Per-face override of {@link LightSettings.gouraud}; `undefined` follows the
+   * model-wide setting.
+   *
+   * The client stores shading mode per face, not per model: `faceIntensity[i]`
+   * is either a real flat intensity or the `magic` sentinel, and
+   * `Scene#generateScanlines` branches on that sentinel for every face it draws.
+   * `_setLight_from6` (terrain, walls, roofs) stamps every face the same way,
+   * which is why the model-wide flag is enough for those. `_setLight_from5`
+   * -- the one scenery uses -- does NOT touch `faceIntensity` at all, so an
+   * `.ob3` model keeps whatever its own illumination byte said: byte 0 leaves 0
+   * (flat), anything else leaves `magic` (gouraud). A tree is therefore a
+   * mixture of flat and smooth faces, and collapsing it to one mode per model
+   * changes what it looks like.
+   */
+  gouraud?: boolean;
 }
 
 /**
@@ -74,6 +90,23 @@ export const ROOF_LIGHT: LightSettings = {
   gouraud: true,
   ambient: 50,
   diffuse: 50,
+  x: -50,
+  y: -10,
+  z: -50
+};
+
+/**
+ * `World#addModels`: `gameModel._setLight_from5(48, 48, -50, -10, -50)`.
+ *
+ * `_setLight_from5` takes no gouraud flag and does not reset `faceIntensity`,
+ * so the `.ob3`'s own per-face illumination byte decides flat vs smooth. The
+ * `gouraud` here is only the fallback for a face that does not say; the scenery
+ * builder sets {@link Face.gouraud} on every face it creates.
+ */
+export const SCENERY_LIGHT: LightSettings = {
+  gouraud: false,
+  ambient: 48,
+  diffuse: 48,
   x: -50,
   y: -10,
   z: -50
@@ -203,6 +236,25 @@ export class RscModel {
     return index;
   }
 
+  /**
+   * Append a vertex unconditionally, skipping the `vertexAt` coincidence check.
+   *
+   * Needed by the scenery builder, which has to reproduce the client's ORDER of
+   * operations: `GameModel#copy` merges the source model -- deduplicating on the
+   * raw `.ob3` coordinates -- and only then applies the yaw. Two distinct source
+   * vertices can land on the same point once the integer rotation has rounded
+   * them, and the client keeps those separate. Feeding rotated coordinates to
+   * `vertexAt` would merge them, which silently changes the smoothed normals.
+   */
+  pushVertex(x: number, y: number, z: number): number {
+    const index = this.vertexX.length;
+    this.vertexX.push(x);
+    this.vertexY.push(y);
+    this.vertexZ.push(z);
+    this.vertexAmbience.push(0);
+    return index;
+  }
+
   /** `GameModel#setVertexAmbience`. Stored signed, as the client's Int8Array is. */
   setVertexAmbience(vertex: number, ambience: number): void {
     this.vertexAmbience[vertex] = (ambience << 24) >> 24;
@@ -213,9 +265,10 @@ export class RscModel {
     front: number,
     back: number,
     tile = -1,
-    keep = true
+    keep = true,
+    gouraud?: boolean
   ): number {
-    this.faces.push({ vertices, front, back, tile, keep });
+    this.faces.push({ vertices, front, back, tile, keep, gouraud });
     return this.faces.length - 1;
   }
 
@@ -297,27 +350,38 @@ export class RscModel {
       ) | 0;
     const divisor = (lightDiffuse * magnitude) >> 8;
 
+    // `GameModel#light`, which branches per face on the `magic` sentinel:
+    // a non-magic face gets a flat intensity, a magic one contributes its
+    // normal to its vertices instead. Our `Face.gouraud` is that sentinel.
+    const isGouraud = (i: number): boolean =>
+      this.faces[i]!.gouraud ?? settings.gouraud;
+
     const faceIntensity = new Int32Array(faceCount);
-    if (!settings.gouraud) {
-      for (let i = 0; i < faceCount; i++) {
-        faceIntensity[i] =
-          ((faceNormalX[i]! * settings.x +
-            faceNormalY[i]! * settings.y +
-            faceNormalZ[i]! * settings.z) /
-            divisor) |
-          0;
+    let anyGouraud = false;
+
+    for (let i = 0; i < faceCount; i++) {
+      if (isGouraud(i)) {
+        anyGouraud = true;
+        continue;
       }
+      faceIntensity[i] =
+        ((faceNormalX[i]! * settings.x +
+          faceNormalY[i]! * settings.y +
+          faceNormalZ[i]! * settings.z) /
+          divisor) |
+        0;
     }
 
     const vertexIntensity = new Int32Array(vertexCount);
 
-    if (settings.gouraud) {
+    if (anyGouraud) {
       const normalX = new Int32Array(vertexCount);
       const normalY = new Int32Array(vertexCount);
       const normalZ = new Int32Array(vertexCount);
       const normalCount = new Int32Array(vertexCount);
 
       for (let i = 0; i < faceCount; i++) {
+        if (!isGouraud(i)) continue;
         for (const v of this.faces[i]!.vertices) {
           normalX[v]! += faceNormalX[i]!;
           normalY[v]! += faceNormalY[i]!;
@@ -418,10 +482,11 @@ export class RscModel {
         //   visibility >= 0 (back):  ambience + intensity + vertexAmbience
         // Note the vertex ambience is *added* in both cases -- only the
         // intensity changes sign with the facing.
-        const intensity = settings.gouraud
+        const gouraud = face.gouraud ?? settings.gouraud;
+        const intensity = gouraud
           ? lit.vertexIntensity[v]!
           : lit.faceIntensity[faceIndex]!;
-        const ambience = settings.gouraud ? this.vertexAmbience[v]! : 0;
+        const ambience = gouraud ? this.vertexAmbience[v]! : 0;
 
         let shade = isFront
           ? lit.lightAmbience - intensity + ambience

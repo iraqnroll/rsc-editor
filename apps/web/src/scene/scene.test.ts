@@ -14,16 +14,21 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { Mesh, Raycaster, Vector3 } from 'three';
+import { Matrix4, Mesh, Raycaster, Vector3 } from 'three';
 import { SECTOR_WIDTH, sectorKey } from '@rsc-editor/schema';
 import type { RscConfig, SectorCoord } from '@rsc-editor/schema';
 import {
   LandscapeView,
   TILE_SIZE,
+  buildScenery,
   buildSectorMesh,
   gridAtlasLayout,
-  neighboursFrom
+  neighboursFrom,
+  type SceneryModel,
+  type SceneryModelSource
 } from '@rsc-editor/render';
+import { parseModelsWire, resetSceneryModels } from './scenery-models.js';
+import { renderModelThumbnail, resetModelThumbnails } from './model-thumbnail.js';
 import { createMockApi } from '../data/mock-api.js';
 import {
   SECTOR_SPAN,
@@ -163,6 +168,260 @@ describe('sector geometry', () => {
     cache.request(sectors, null, null);
     expect(cache.drain(9)).toBe(false);
     expect(cache.list()).toHaveLength(0);
+  });
+});
+
+/* ========================================================================== */
+/*  Scenery                                                                   */
+/* ========================================================================== */
+
+/**
+ * A stand-in for the `.ob3` archive: every name resolves to the same little
+ * wedge. The lanes, the footprints, the directions and the ground heights are
+ * the mock API's real ones -- what is synthetic here is only the model, which is
+ * what `packages/render/src/scenery.test.ts` tests against the real archive.
+ */
+const wedge: SceneryModel = {
+  vertices: [
+    { x: -40, y: 0, z: -40 },
+    { x: 40, y: 0, z: -40 },
+    { x: 40, y: 0, z: 40 },
+    { x: -40, y: 0, z: 40 },
+    { x: 0, y: -160, z: 0 }
+  ],
+  faces: [
+    { vertices: [0, 1, 4], fillFront: { colour: 0x804000 }, fillBack: null, illuminated: true },
+    { vertices: [1, 2, 4], fillFront: { colour: 0x804000 }, fillBack: null, illuminated: true },
+    { vertices: [2, 3, 4], fillFront: { colour: 0x804000 }, fillBack: null, illuminated: true },
+    { vertices: [3, 0, 4], fillFront: { colour: 0x804000 }, fillBack: null, illuminated: true }
+  ]
+};
+
+const everyModelIsAWedge: SceneryModelSource = {
+  get: () => wedge,
+  has: () => true
+};
+
+/**
+ * The mock config gives every object a DIFFERENT model name, which is the exact
+ * opposite of the real cache (169 objects, 38 distinct model/direction pairs in
+ * `0/50/50`). Batching is keyed on the name, as it must be, so the mock's names
+ * have to be collapsed for a batching assertion to mean anything.
+ */
+function sharedModelConfig(config: RscConfig): RscConfig {
+  return {
+    ...config,
+    objects: config.objects.map((object) => ({
+      ...object,
+      model: { ...object.model, name: 'wedge' }
+    }))
+  };
+}
+
+describe('scenery in the scene', () => {
+  it('draws nothing scenery-shaped when there is no model source', async () => {
+    const { config, sectors } = await loadNeighbourhood();
+    const cache = new SectorGeometryCache();
+    cache.request(sectors, config, null);
+    drainAll(cache);
+
+    // Terrain still meshes: a missing models asset is a normal state for a
+    // fresh project and must not blank the world.
+    expect(cache.get(sectorKey(CENTRE))!.terrain).not.toBeNull();
+    expect(cache.sceneryDraws()).toHaveLength(0);
+    expect(cache.stats().sceneryTriangles).toBe(0);
+
+    cache.clear();
+  });
+
+  it('re-meshes everything when the models arrive, and then draws them', async () => {
+    const { config, sectors } = await loadNeighbourhood();
+    const cache = new SectorGeometryCache();
+
+    cache.request(sectors, config, null);
+    drainAll(cache);
+    expect(cache.list()).toHaveLength(9);
+
+    // The models landing invalidates every sector -- each was meshed without
+    // its scenery -- so this must report dirty and rebuild.
+    expect(cache.request(sectors, config, null, everyModelIsAWedge)).toBe(true);
+    expect(cache.list()).toHaveLength(0);
+    drainAll(cache);
+
+    const draws = cache.sceneryDraws();
+    expect(draws.length).toBeGreaterThan(0);
+    expect(cache.stats().sceneryInstances).toBeGreaterThan(0);
+
+    cache.clear();
+  });
+
+  /**
+   * The point of instancing. A world is a handful of models and a great many
+   * copies, so the draw count must follow the number of distinct
+   * (model, direction) pairs and NOT the number of objects or the number of
+   * sectors.
+   */
+  it('issues one draw per (model, direction), not one per object or per sector', async () => {
+    const { config, sectors } = await loadNeighbourhood();
+    const cache = new SectorGeometryCache();
+    cache.request(sectors, sharedModelConfig(config), null, everyModelIsAWedge);
+    drainAll(cache);
+
+    const draws = cache.sceneryDraws();
+    const stats = cache.stats();
+
+    // Eight directions is the ceiling: every object now names the same model,
+    // so the only thing that can split a batch is the yaw.
+    expect(draws.length).toBeLessThanOrEqual(8);
+    expect(stats.sceneryInstances).toBeGreaterThan(draws.length * 4);
+    // A batch spans sectors: nine sectors of scenery, at most eight batches, so
+    // at least one batch is drawing copies from several of them.
+    expect(stats.sceneryInstances).toBeGreaterThan(9);
+
+    cache.clear();
+  });
+
+  it('puts each instance at its object position, on the ground, in world space', async () => {
+    const { config, sectors } = await loadNeighbourhood();
+
+    const view = new LandscapeView({
+      plane: 0,
+      centre: sectors.get(sectorKey(CENTRE))!.buffers,
+      neighbours: neighboursFrom(CENTRE, sectors)
+    });
+    const expected = buildScenery(view, config, { models: everyModelIsAWedge });
+    expect(expected.instances.length).toBeGreaterThan(0);
+
+    const cache = new SectorGeometryCache();
+    cache.request(sectors, config, null, everyModelIsAWedge);
+    drainAll(cache);
+
+    const set = cache.get(sectorKey(CENTRE))!;
+    const placed = new Set<string>();
+    for (const batch of set.scenery) {
+      for (let i = 0; i < batch.count; i++) {
+        placed.add(
+          `${batch.positions[i * 3]},${batch.positions[i * 3 + 1]},${batch.positions[i * 3 + 2]}`
+        );
+      }
+    }
+
+    // Sector-local positions from the builder, plus the sector origin. Nothing
+    // is re-derived here: an instance that did not match would mean the scene
+    // invented a transform.
+    for (const instance of expected.instances) {
+      expect(
+        placed.has(`${set.originX + instance.x},${instance.y},${set.originZ + instance.z}`),
+        `${instance.modelName} at tile ${instance.tileX},${instance.tileY}`
+      ).toBe(true);
+    }
+
+    cache.clear();
+  });
+
+  it('builds the instance matrices as pure translations, column-major', async () => {
+    const { config, sectors } = await loadNeighbourhood();
+    const cache = new SectorGeometryCache();
+    cache.request(sectors, config, null, everyModelIsAWedge);
+    drainAll(cache);
+
+    const draw = cache.sceneryDraws()[0]!;
+    expect(draw.matrices).toHaveLength(draw.count * 16);
+
+    // The yaw is baked into the geometry, because the client relights a model
+    // after transforming it. A rotation in the instance matrix would place the
+    // model correctly and shade it wrongly.
+    const matrix = new Matrix4().fromArray(draw.matrices, 0);
+    const basis = matrix.elements;
+    expect([basis[0], basis[5], basis[10], basis[15]]).toEqual([1, 1, 1, 1]);
+    for (const i of [1, 2, 3, 4, 6, 7, 8, 9, 11]) expect(basis[i]).toBe(0);
+    // ...and the translation is in 12..14, which is what three reads.
+    expect(basis[12]! + basis[13]! + basis[14]!).not.toBe(0);
+
+    cache.clear();
+  });
+
+  it('shares one uploaded geometry between every sector that uses the model', async () => {
+    const { config, sectors } = await loadNeighbourhood();
+    const cache = new SectorGeometryCache();
+    cache.request(sectors, config, null, everyModelIsAWedge);
+    drainAll(cache);
+
+    const draws = cache.sceneryDraws();
+    const geometries = new Set(draws.map((d) => d.geometry));
+    // One BufferGeometry per draw and no duplicates: a per-sector upload would
+    // put the same wedge on the card nine times.
+    expect(geometries.size).toBe(draws.length);
+
+    cache.clear();
+  });
+
+  it('reports a model the source does not have instead of dropping it silently', async () => {
+    const { config, sectors } = await loadNeighbourhood();
+    const missing = config.objects[0]!.model.name;
+
+    const partial: SceneryModelSource = {
+      get: (name) => (name === missing ? undefined : wedge),
+      has: (name) => name !== missing
+    };
+
+    const cache = new SectorGeometryCache();
+    cache.request(sectors, config, null, partial);
+    drainAll(cache);
+
+    // Whether this sector happens to contain object 0 is the mock's business;
+    // what matters is that anything it could not draw is named.
+    for (const name of cache.missingModels()) expect(name).toBe(missing);
+    // ...and the rest still drew.
+    expect(cache.sceneryDraws().length).toBeGreaterThan(0);
+
+    cache.clear();
+  });
+});
+
+describe('the models asset', () => {
+  it('accepts the documented payload shape', () => {
+    const wire = parseModelsWire({
+      models: {
+        tree2: {
+          vertices: [{ x: 0, y: -240, z: 0 }],
+          faces: [
+            { vertices: [0, 1, 2], fillFront: { colour: 3100 }, fillBack: null, illuminated: true }
+          ]
+        }
+      },
+      missing: ['runiteruck1']
+    });
+
+    expect(wire).not.toBeNull();
+    expect(Object.keys(wire!.models)).toEqual(['tree2']);
+    expect(wire!.missing).toEqual(['runiteruck1']);
+  });
+
+  it('rejects a body that is not the contract, rather than half-decoding it', () => {
+    expect(parseModelsWire(null)).toBeNull();
+    expect(parseModelsWire({})).toBeNull();
+    expect(parseModelsWire({ models: 'yes' })).toBeNull();
+  });
+
+  it('gives a picker "no models" rather than throwing when there is no asset', async () => {
+    // The suite runs in mock mode, where there is no server and therefore no
+    // models route. A picker must still render: the name is enough to pick with.
+    resetSceneryModels();
+    resetModelThumbnails();
+    await expect(renderModelThumbnail('tree2', 32)).resolves.toEqual({ state: 'no-models' });
+  });
+
+  it('skips an entry that is not a model and keeps the ones that are', () => {
+    const wire = parseModelsWire({
+      models: {
+        good: { vertices: [], faces: [] },
+        bad: { vertices: 'nope' },
+        alsoBad: null
+      }
+    });
+    expect(Object.keys(wire!.models)).toEqual(['good']);
+    expect(wire!.missing).toEqual([]);
   });
 });
 

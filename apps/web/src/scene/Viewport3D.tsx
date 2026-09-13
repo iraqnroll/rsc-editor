@@ -24,7 +24,7 @@
  * values the client multiplies. See `atlas-texture.ts`.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import {
   BufferAttribute,
@@ -33,8 +33,10 @@ import {
   ColorManagement,
   DoubleSide,
   FrontSide,
+  InstancedMesh,
   LinearSRGBColorSpace,
   Mesh,
+  MeshBasicMaterial,
   NoToneMapping,
   Raycaster,
   Vector2,
@@ -70,9 +72,11 @@ import {
   SectorGeometryCache,
   SECTOR_SPAN,
   WorldHeights,
+  type SceneryDraw,
   type SectorGeometrySet,
   type SectorSource
 } from './sector-geometry.js';
+import { loadSceneryModels, type ResolvedModels } from './scenery-models.js';
 import type { ViewportProps } from './viewport-props.js';
 
 // The vertex colours are final sRGB values, not linear working-space colours.
@@ -250,8 +254,94 @@ function SceneContents(props: SceneProps) {
         );
       })}
 
+      <SceneryLayer draws={cache.sceneryDraws()} atlas={atlas} />
+
       <Overlays {...props} />
     </>
+  );
+}
+
+/* ========================================================================== */
+/*  Scenery                                                                   */
+/* ========================================================================== */
+
+/**
+ * Every `.ob3` model in the loaded neighbourhood, one instanced draw per
+ * (model, direction).
+ *
+ * Not inside `SectorLayer`: scenery batches span sectors on purpose. A world is
+ * a handful of tree models and thousands of trees, so the draw call has to be
+ * per model, and per model per sector would be twenty-five times as many for no
+ * benefit. See the header of `sector-geometry.ts`.
+ *
+ * Same material as the terrain layers, for the same reasons -- unlit, vertex
+ * colours from RSC's own lighting, `alphaTest` for the pure-green cutouts that
+ * doorways and flames depend on.
+ */
+function SceneryLayer({ draws, atlas }: { draws: SceneryDraw[]; atlas: Texture | null }) {
+  // One material for every scenery batch rather than one per batch. Identical
+  // settings, so three compiles the same program either way, but a hundred
+  // material objects rebuilt whenever a sector finishes meshing is churn for
+  // nothing. Owned here, so disposed here -- r3f only disposes what it created.
+  const material = useMemo(
+    () =>
+      new MeshBasicMaterial({
+        vertexColors: true,
+        map: atlas,
+        side: FrontSide,
+        // `alphaTest` WITHOUT `transparent`, exactly as the sector layers: a
+        // pure-green palette entry is a CUTOUT (DECISIONS section 8), a hole
+        // rather than a translucent surface, and doorways and flames need it.
+        alphaTest: ATLAS_ALPHA_TEST,
+        toneMapped: false
+      }),
+    [atlas]
+  );
+
+  useEffect(() => () => material.dispose(), [material]);
+
+  return (
+    <>
+      {draws.map((draw) => (
+        <SceneryBatchMesh key={draw.key} draw={draw} material={material} />
+      ))}
+    </>
+  );
+}
+
+function SceneryBatchMesh({
+  draw,
+  material
+}: {
+  draw: SceneryDraw;
+  material: MeshBasicMaterial;
+}) {
+  const ref = useRef<InstancedMesh>(null);
+
+  // Layout, not passive: r3f mounts the mesh with an all-zero instance matrix,
+  // and an effect that lands after paint would show one frame of every model
+  // collapsed at the world origin.
+  useLayoutEffect(() => {
+    const mesh = ref.current;
+    if (!mesh) return;
+    (mesh.instanceMatrix.array as Float32Array).set(draw.matrices);
+    mesh.instanceMatrix.needsUpdate = true;
+    // Over the instances, so a batch spread across the neighbourhood is not
+    // frustum-culled by the bounds of a single copy at the world origin.
+    mesh.computeBoundingSphere();
+  }, [draw]);
+
+  return (
+    <instancedMesh
+      ref={ref}
+      // `args` is the constructor call, so a changed count or geometry
+      // reconstructs the mesh -- which is what has to happen when a sector
+      // finishes meshing and adds copies to a batch.
+      args={[draw.geometry, material, draw.count]}
+      // Scenery is not pickable yet, and raycasting thousands of instances on
+      // every pointer move is not free. The terrain is what the editor picks.
+      raycast={() => null}
+    />
   );
 }
 
@@ -551,10 +641,20 @@ export function Viewport3D(props: ViewportProps) {
 
   const [atlas, setAtlas] = useState<ResolvedAtlas | null>(null);
   const [atlasError, setAtlasError] = useState<string | null>(null);
+  /** `undefined` = still asking, `null` = definitively none. */
+  const [models, setModels] = useState<ResolvedModels | null | undefined>(undefined);
   const [version, setVersion] = useState(0);
   const [plates, setPlates] = useState<Plate[]>([]);
   const [mode, setMode] = useState<CameraMode>('orbit');
-  const [hud, setHud] = useState({ triangles: 0, sectors: 0, pending: 0, fps: 0 });
+  const [hud, setHud] = useState({
+    triangles: 0,
+    sectors: 0,
+    pending: 0,
+    fps: 0,
+    sceneryDraws: 0,
+    sceneryInstances: 0,
+    sceneryTriangles: 0
+  });
 
   const modeRef = useRef<CameraMode>('orbit');
   const flyRef = useRef<Set<string>>(new Set());
@@ -588,6 +688,26 @@ export function Viewport3D(props: ViewportProps) {
     };
   }, [config]);
 
+  /**
+   * The `.ob3` models, once per session.
+   *
+   * Keyed on `config` for the same reason the atlas is: the scene mounts before
+   * a project is open, and the asset lives under the project. A miss is a normal
+   * answer -- the route 404s until the importer has built the asset -- and
+   * resolves to `null`, which means "draw everything except scenery" rather than
+   * "draw nothing".
+   */
+  useEffect(() => {
+    let alive = true;
+    loadSceneryModels().then(
+      (resolved) => alive && setModels((current) => current ?? resolved),
+      () => alive && setModels(null)
+    );
+    return () => {
+      alive = false;
+    };
+  }, [config]);
+
   /* sectors -> mesh queue */
   const sectorList = useMemo(() => {
     const map = new Map<string, SectorSource>();
@@ -598,17 +718,25 @@ export function Viewport3D(props: ViewportProps) {
     return map;
   }, [sectors, plane]);
 
-  // Wait for the atlas to settle before the first mesh. A layout change
-  // invalidates every geometry (the uvs move), so meshing first and texturing
-  // second would mesh the whole neighbourhood twice.
-  const atlasSettled = atlas !== null || atlasError !== null;
+  // Wait for the atlas AND the models to settle before the first mesh. Either
+  // arriving invalidates every geometry -- a layout change moves the uvs, and
+  // models arriving means every sector was meshed without its scenery -- so
+  // meshing eagerly would mesh the whole neighbourhood two or three times.
+  const settled = (atlas !== null || atlasError !== null) && models !== undefined;
 
   useEffect(() => {
-    if (!atlasSettled) return;
-    if (cache.request(sectorList, config ?? null, atlas ? atlas.layout : null)) {
+    if (!settled) return;
+    if (
+      cache.request(
+        sectorList,
+        config ?? null,
+        atlas ? atlas.layout : null,
+        models?.source ?? null
+      )
+    ) {
       setVersion((v) => v + 1);
     }
-  }, [cache, sectorList, config, atlas, atlasSettled]);
+  }, [cache, sectorList, config, atlas, models, settled]);
 
   /* recentre on the active sector */
   useEffect(() => {
@@ -661,7 +789,10 @@ export function Viewport3D(props: ViewportProps) {
           triangles: stats.triangles,
           sectors: stats.cached,
           pending: stats.pending,
-          fps: Math.round((frames * 1000) / (now - last))
+          fps: Math.round((frames * 1000) / (now - last)),
+          sceneryDraws: stats.sceneryDraws,
+          sceneryInstances: stats.sceneryInstances,
+          sceneryTriangles: stats.sceneryTriangles
         });
         frames = 0;
         last = now;
@@ -779,6 +910,21 @@ export function Viewport3D(props: ViewportProps) {
 
   const ready = !!config;
 
+  /**
+   * Model names that are named by the config and absent from the archive.
+   *
+   * The union of what the importer reported (`models.missing`) and what the
+   * loaded sectors actually asked for and did not get. The shipped cache really
+   * does contain one: `runiteruck1`, used by object 211 ("Rock"), is a typo for
+   * the `runiterock1` entry that is in models36.jag, and the real client hits
+   * the same dead end. Surfacing it is the point -- repairing it would make an
+   * export differ from its import (DECISIONS section 8).
+   */
+  const missingModels = useMemo(
+    () => [...new Set([...(models?.missing ?? []), ...cache.missingModels()])].sort(),
+    [models, cache, version]
+  );
+
   return (
     <div className="viewport" ref={hostRef}>
       <div
@@ -853,7 +999,25 @@ export function Viewport3D(props: ViewportProps) {
         <div className="viewport__badge">
           <span>
             3D viewport &middot; {hud.sectors} sector{hud.sectors === 1 ? '' : 's'} &middot;{' '}
-            {hud.triangles.toLocaleString()} tris &middot; {hud.fps} fps
+            {(hud.triangles + hud.sceneryTriangles).toLocaleString()} tris &middot; {hud.fps} fps
+          </span>
+          {/*
+            Scenery gets its own line because "no scenery" is a state people must
+            be able to see. A world with the models asset missing looks plausible
+            and is not what the client draws; saying so beats a bare viewport.
+          */}
+          <span style={{ color: 'var(--fg-2)' }}>
+            {models === undefined
+              ? 'loading scenery models…'
+              : models === null
+                ? 'scenery: no models asset on this project — terrain, walls and roofs only'
+                : `scenery: ${hud.sceneryInstances.toLocaleString()} objects in ${hud.sceneryDraws} draw${
+                    hud.sceneryDraws === 1 ? '' : 's'
+                  }, ${models.count} models loaded${
+                    missingModels.length > 0
+                      ? ` · ${missingModels.length} not in the archive (${missingModels.slice(0, 3).join(', ')}${missingModels.length > 3 ? '…' : ''})`
+                      : ''
+                  }`}
           </span>
           <span style={{ color: 'var(--fg-2)' }}>
             {!ready

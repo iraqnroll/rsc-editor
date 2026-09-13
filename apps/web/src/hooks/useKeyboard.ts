@@ -32,6 +32,7 @@ export const SHORTCUTS: Shortcut[] = [
   { keys: 'G', description: 'Toggle the tile grid' },
   { keys: 'B', description: 'Toggle sector borders' },
   { keys: 'L', description: 'Toggle lock ownership tint' },
+  { keys: 'M', description: 'Full-window world map' },
   { keys: 'Esc', description: 'Dismiss a message / clear the selection' },
   { keys: '?', description: 'This sheet' }
 ];
@@ -127,6 +128,10 @@ export function useKeyboard(onShowShortcuts: () => void): void {
         case 'l':
         case 'L':
           store.toggleOverlay('showLockTint');
+          break;
+        case 'm':
+        case 'M':
+          store.setWorldMapOpen(!store.worldMapOpen);
           break;
         case 'Escape':
           if (store.notice) store.setNotice(null);

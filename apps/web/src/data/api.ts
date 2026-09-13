@@ -33,9 +33,13 @@ import type {
   ServerMessage
 } from '@rsc-editor/schema';
 import type { TextureAtlasAsset } from './atlas.js';
+import type { EntitySpriteSheet } from './entity-sprites.js';
+import type { WorldMapAsset } from './world-map.js';
 import type { AuthUser } from './auth.js';
 
 export type { TextureAtlasAsset, AtlasLayoutWire } from './atlas.js';
+export type { EntitySpriteSheet, EntitySpriteCell } from './entity-sprites.js';
+export type { WorldMapAsset, WorldMapMeta } from './world-map.js';
 export type { AuthUser } from './auth.js';
 
 /** What the server tells us at `joined` time, plus the sector inventory. */
@@ -127,6 +131,24 @@ export interface EditorApi {
    * sheet. It is not an error.
    */
   loadTextureAtlas(): Promise<TextureAtlasAsset | null>;
+
+  /**
+   * The coloured world map for one plane, PNG + meta.
+   *
+   * `null` on 404, exactly like `loadTextureAtlas`: a project with no imported
+   * cache legitimately has no map, and the map panel falls back to the flat
+   * sector grid. Callers must not treat it as an error.
+   */
+  loadWorldMap(plane: number): Promise<WorldMapAsset | null>;
+
+  /**
+   * Item/NPC sprites, for the definition editors.
+   *
+   * `null` on 404. Note what this is NOT: the cache contains no NPC or
+   * ground-item *placements*, so sprites make the definition editors legible and
+   * say nothing about what can be put in the world.
+   */
+  loadEntitySprites(): Promise<EntitySpriteSheet | null>;
 
   submitOps(ops: Op[]): Promise<OpSubmitResult>;
 
