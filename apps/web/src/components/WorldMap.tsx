@@ -18,6 +18,15 @@
  * grey sector tiles instead. One draw path, two backdrops — the fallback cannot
  * drift from the real thing because it *is* the real thing minus its pixels.
  *
+ * **The x axis is mirrored.** In RSC game x increases westward, so the map is
+ * drawn with x reversed and the Wilderness sits top *right*. Every conversion
+ * between map pixels and sectors/tiles goes through `data/world-map.ts`, which
+ * owns the flip; nothing here does its own `width - x`. The only place the
+ * mirror leaks into this file is the direction of the sector sweep and the grid
+ * loop, both flagged where they happen. A mirrored image under unmirrored
+ * overlays is worse than a flipped map: the error stops looking like a flip and
+ * starts looking like a lock highlight on the wrong sector.
+ *
  * Interaction: drag to pan, wheel to zoom about the cursor, click to jump,
  * double-click to zoom in, hover for the sector key and game coordinates.
  * A click that moved the map is a pan, not a jump — pixel-hunting on a 0.3x
@@ -411,11 +420,15 @@ export function WorldMap({
             );
           }}
           onKeyDown={(e) => {
+            // Arrow keys move the selection the way it moves ON SCREEN. The x
+            // axis is mirrored, so screen-left is sector x + 1: an arrow key
+            // that walks the opposite way from the highlight it is moving is
+            // the same bug as a mis-placed overlay, just felt with the hands.
             const step =
               e.key === 'ArrowLeft'
-                ? [-1, 0]
+                ? [1, 0]
                 : e.key === 'ArrowRight'
-                  ? [1, 0]
+                  ? [-1, 0]
                   : e.key === 'ArrowUp'
                     ? [0, -1]
                     : e.key === 'ArrowDown'
@@ -600,16 +613,20 @@ export function drawWorldMap(ctx: CanvasRenderingContext2D, args: DrawArgs): voi
 
   // Only the sectors actually on screen. The full grid is 17x19 today, but the
   // loop is the same cost at 65x56 and this is redrawn on every pointer move.
+  //
+  // The x axis is mirrored (data/world-map.ts), so the LEFT edge of the screen
+  // holds the HIGHEST sector x. min/max rather than assuming an order — getting
+  // this backwards empties the loop and the overlay silently disappears.
   const first = mapToSector(frame, -view.x / view.scale, -view.y / view.scale);
   const last = mapToSector(
     frame,
     (size.width - view.x) / view.scale,
     (size.height - view.y) / view.scale
   );
-  const x0 = Math.max(frame.originSector.x, first.x);
-  const y0 = Math.max(frame.originSector.y, first.y);
-  const x1 = Math.min(frame.originSector.x + frame.sectors.width - 1, last.x);
-  const y1 = Math.min(frame.originSector.y + frame.sectors.height - 1, last.y);
+  const x0 = Math.max(frame.originSector.x, Math.min(first.x, last.x));
+  const y0 = Math.max(frame.originSector.y, Math.min(first.y, last.y));
+  const x1 = Math.min(frame.originSector.x + frame.sectors.width - 1, Math.max(first.x, last.x));
+  const y1 = Math.min(frame.originSector.y + frame.sectors.height - 1, Math.max(first.y, last.y));
 
   const nameplates: Array<{ x: number; y: number; text: string; colour: string }> = [];
 
@@ -683,7 +700,11 @@ export function drawWorldMap(ctx: CanvasRenderingContext2D, args: DrawArgs): voi
     ctx.strokeStyle = spanPx >= 24 ? COLOURS.gridSector : COLOURS.grid;
     ctx.lineWidth = 1;
     ctx.beginPath();
-    for (let sx = x0; sx <= x1 + 1; sx++) {
+    // sectorToMap gives a sector's LEFT edge, and mirrored that is the right
+    // edge of sector sx+1 — so the boundary bounding the rightmost visible
+    // sector comes from x0-1, not from x1+1. Both ends are walked; one line
+    // drawn just off-screen is cheaper than a missing grid line at the edge.
+    for (let sx = x0 - 1; sx <= x1 + 1; sx++) {
       const [gx] = toScreen(sectorToMap(frame, sx, 0).x, 0);
       ctx.moveTo(Math.round(gx) + 0.5, 0);
       ctx.lineTo(Math.round(gx) + 0.5, size.height);
@@ -718,8 +739,12 @@ export function drawWorldMap(ctx: CanvasRenderingContext2D, args: DrawArgs): voi
   /* where the 3D view is looking */
   const centre = args.viewCentre;
   if (centre && centre.plane === plane) {
+    // Centre of the tile, not its corner: mirrored, "the corner" is the east
+    // side in x and the north side in y, so a corner-anchored crosshair leans
+    // in two different directions at once.
     const at = tileToMap(frame, centre.wx, centre.wy);
-    const [px, py] = toScreen(at.x, at.y);
+    const half = frame.tileSize / 2;
+    const [px, py] = toScreen(at.x + half, at.y + half);
     ctx.strokeStyle = COLOURS.view;
     ctx.lineWidth = 1.5;
     if (centre.tilesAcross && centre.tilesAcross > 0) {
