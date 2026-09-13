@@ -20,6 +20,7 @@ import { registerSessionAuth } from './auth/session.js';
 import { registerDefinitionRoutes } from './routes/definitions.js';
 import { registerMeRoutes } from './routes/me.js';
 import { registerMemberRoutes } from './routes/members.js';
+import { registerOpRoutes } from './routes/ops.js';
 import { registerProjectRoutes } from './routes/projects.js';
 import { registerSectorRoutes } from './routes/sectors.js';
 import { isUniqueViolation } from './routes/projects.js';
@@ -72,6 +73,7 @@ export async function buildApp(
   await registerProjectRoutes(app, ctx);
   await registerMemberRoutes(app, ctx);
   await registerSectorRoutes(app, ctx);
+  await registerOpRoutes(app, ctx);
   await registerDefinitionRoutes(app, ctx);
 
   app.get('/api/health', async () => ({ ok: true }));
