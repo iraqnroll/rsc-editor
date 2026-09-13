@@ -15,8 +15,18 @@ import { pathToFileURL } from 'node:url';
 import { createDb, deleteExpiredSessions } from '@rsc-editor/db';
 import { buildApp } from './app.js';
 import { ConfigError, loadConfig } from './config.js';
+import { registerRealtime } from './realtime/index.js';
 
 export { buildApp, type BuildAppOptions } from './app.js';
+export {
+  createRealtime,
+  registerRealtime,
+  Hub,
+  DEFAULT_REALTIME_CONFIG,
+  MAX_WS_MESSAGE_BYTES,
+  type RealtimeConfig,
+  type RegisterRealtimeOptions
+} from './realtime/index.js';
 export {
   loadConfig,
   ConfigError,
@@ -51,7 +61,7 @@ async function main(): Promise<void> {
   }
 
   const handle = createDb(config.databaseUrl);
-  const app = await buildApp({ config, db: handle.db });
+  const app = await buildApp({ config, db: handle.db, registerRealtime });
 
   const sweep = setInterval(() => {
     void deleteExpiredSessions(handle.db).catch((err: unknown) => {
