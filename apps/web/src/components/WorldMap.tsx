@@ -36,9 +36,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import { MAX_X_SECTORS, MAX_Y_SECTORS, sectorKey } from '@rsc-editor/schema';
-import type { Lock, Presence, SectorCoord } from '@rsc-editor/schema';
+import type { Lock, Presence, RscConfig, SectorCoord } from '@rsc-editor/schema';
 import { useEditor } from '../state/editorStore.js';
 import { PLAYER_SPAWN } from '../data/spawn.js';
+import { sectorMapImage } from '../data/live-map.js';
 import type { LoadedSector, ViewCentre } from '../state/editorStore.js';
 import type { WorldIndex } from '../data/api.js';
 import { useWorldMap, type DecodedImage } from '../data/useCacheAssets.js';
@@ -167,6 +168,7 @@ export function WorldMap({
   const peers = useEditor((s) => s.peers);
   const me = useEditor((s) => s.me);
   const sectors = useEditor((s) => s.sectors);
+  const config = useEditor((s) => s.config);
   const activeSector = useEditor((s) => s.activeSector);
   const viewCentre = useEditor((s) => s.viewCentre);
   const setActiveSector = useEditor((s) => s.setActiveSector);
@@ -263,6 +265,7 @@ export function WorldMap({
         image: map.status === 'ready' ? map.image : null,
         world,
         sectors,
+        config,
         locks,
         peers,
         me,
@@ -283,6 +286,7 @@ export function WorldMap({
     map.image,
     world,
     sectors,
+    config,
     locks,
     peers,
     me,
@@ -553,6 +557,8 @@ interface DrawArgs {
   image: DecodedImage | null;
   world: WorldIndex | null;
   sectors: Record<string, LoadedSector>;
+  /** definitions, for overlay colours in the live tile layer */
+  config: RscConfig | null;
   locks: Record<string, Lock>;
   peers: Record<string, Presence>;
   me: Presence | null;
@@ -579,7 +585,7 @@ function ownerColour(
  * coordinate system that can drift.
  */
 export function drawWorldMap(ctx: CanvasRenderingContext2D, args: DrawArgs): void {
-  const { frame, size, view, plane, image, world, sectors, locks, peers, me } = args;
+  const { frame, size, view, plane, image, world, sectors, config, locks, peers, me } = args;
   const span = sectorPixels(frame);
   const spanPx = span * view.scale;
 
@@ -658,6 +664,23 @@ export function drawWorldMap(ctx: CanvasRenderingContext2D, args: DrawArgs): voi
         // empty would be a lie in the other direction.
         ctx.fillStyle = COLOURS.absent;
         ctx.fillRect(px, py, spanPx, spanPx);
+      }
+
+      /**
+       * Live tiles for anything we have in memory, over the photograph.
+       *
+       * Before the lock tint and the outlines, so those still read on top, and
+       * only for loaded sectors -- which is exactly the neighbourhood being
+       * edited. See `data/live-map.ts` for why the PNG cannot do this itself.
+       */
+      if (loaded && spanPx >= 2) {
+        const tiles = sectorMapImage(sectors[key]!, config);
+        if (tiles) {
+          const smoothing = ctx.imageSmoothingEnabled;
+          ctx.imageSmoothingEnabled = false;
+          ctx.drawImage(tiles, px, py, spanPx, spanPx);
+          ctx.imageSmoothingEnabled = smoothing;
+        }
       }
 
       if (!present) continue;

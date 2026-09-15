@@ -41,6 +41,7 @@ import {
 } from '../data/api.js';
 import type { EditorApi, LinkState, WorldIndex } from '../data/api.js';
 import { resetEntitySpriteCache } from '../data/useCacheAssets.js';
+import { resetLiveMapCache } from '../data/live-map.js';
 import { applySectorOp, describeOp, opId, opTileCount } from '../ops/apply.js';
 import type { BuildResult, RegionClipboard, RegionRect } from '../ops/builders.js';
 import type { WorldTile } from '../ops/coords.js';
@@ -430,6 +431,7 @@ export const useEditor = create<EditorState>()((set, get) => ({
     unsubscribers = [];
     subscribed = false;
     resetEntitySpriteCache();
+    resetLiveMapCache();
     projectChosen = false;
     set({
       connection: 'auth-required',
@@ -452,6 +454,7 @@ export const useEditor = create<EditorState>()((set, get) => ({
     // map images belong to the old one and must not be shown against the new
     // one's definitions.
     resetEntitySpriteCache();
+    resetLiveMapCache();
     set({
       connection: 'idle',
       world: null,
@@ -476,6 +479,7 @@ export const useEditor = create<EditorState>()((set, get) => ({
     get().api.disconnect();
     projectChosen = false;
     resetEntitySpriteCache();
+    resetLiveMapCache();
     set({
       connection: 'choose-project',
       error: null,
