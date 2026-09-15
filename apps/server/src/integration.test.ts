@@ -5,6 +5,7 @@ import {
   createDb,
   createProject,
   createSession,
+  putMember,
   putSector,
   upsertUserFromDiscord,
   type Database,
@@ -222,6 +223,67 @@ describe.skipIf(!available)('routes against a real database', () => {
   });
 
   /* ------------------------------------------------------------- sectors -- */
+
+  it('creates an empty sector, once, so a hand-built world can start', async () => {
+    const { userId, cookie } = await login();
+    const project = await createProject(db, {
+      name: `Scratch ${randomUUID().slice(0, 6)}`,
+      ownerId: userId
+    });
+
+    // A project with no imported cache: the sector does not exist yet.
+    const before = await app.inject({
+      method: 'GET',
+      url: `/api/projects/${project.id}/sectors/0/50/50`,
+      headers: { cookie }
+    });
+    expect(before.statusCode).toBe(404);
+
+    const created = await app.inject({
+      method: 'POST',
+      url: `/api/projects/${project.id}/sectors/0/50/50`,
+      headers: { cookie }
+    });
+    expect(created.statusCode).toBe(201);
+    expect(created.json().sector).toMatchObject({ plane: 0, x: 50, y: 50, version: 1 });
+
+    // It is now a real sector, and therefore lockable -- which is the whole
+    // point: `sector_locks.sector_id` references `sectors.id`, so before this
+    // existed the sector could never be claimed and never be edited.
+    const after = await app.inject({
+      method: 'GET',
+      url: `/api/projects/${project.id}/sectors/0/50/50`,
+      headers: { cookie }
+    });
+    expect(after.statusCode).toBe(200);
+    expect(after.rawPayload.length).toBeGreaterThan(0);
+
+    // Creating never overwrites. This route must not be a way to wipe a sector.
+    const again = await app.inject({
+      method: 'POST',
+      url: `/api/projects/${project.id}/sectors/0/50/50`,
+      headers: { cookie }
+    });
+    expect(again.statusCode).toBe(409);
+    expect(again.json().error).toBe('sector_exists');
+  });
+
+  it('will not let a viewer create a sector', async () => {
+    const owner = await login();
+    const viewer = await login();
+    const project = await createProject(db, {
+      name: `Scratch ${randomUUID().slice(0, 6)}`,
+      ownerId: owner.userId
+    });
+    await putMember(db, project.id, viewer.userId, 'viewer');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/projects/${project.id}/sectors/0/51/51`,
+      headers: { cookie: viewer.cookie }
+    });
+    expect(res.statusCode).toBe(403);
+  });
 
   it('serves a stored sector as the exact binary frame', async () => {
     const { userId, cookie } = await login();
