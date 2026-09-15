@@ -442,3 +442,152 @@ The implementation record — the `diag(RENDER_X_SIGN, -1, 1)` derivation, every
 module that had to follow, and each test expectation that moved — is in
 `docs/HANDOFF-render-x-mirror.md`. This section is the authority on *why*; that
 file is the authority on *where*.
+
+## 14. mudclient draws three planes at once, and the storey lift is in the data
+
+`packages/render/src/planes.ts` used to open with this, as settled fact:
+
+> mudclient draws exactly one plane at a time.
+
+It is false, and everything built on it inherited the error. `World#_loadSection_from3`:
+
+```js
+this._loadSection_from4(x, y, plane, true);
+
+if (plane === 0) {
+    this._loadSection_from4(x, y, 1, false);
+    this._loadSection_from4(x, y, 2, false);
+    ...
+}
+```
+
+Standing on the ground, the client loads planes 1 and 2 as well and adds their
+`wallModels[plane]` and `roofModels[plane]` to the same scene. The `false` flag
+suppresses only the terrain model and the collision grid, and planes 1 and 2
+additionally have their terrain colour forced to `World.colourTransparent`. So
+an upper storey contributes its walls and its roof, and no visible deck — which
+is exactly what you see looking at a two-storey building from outside in the
+real game.
+
+Plane 3 is not in that chain: the `if (plane === 0)` means the dungeon is only
+ever loaded alone.
+
+### Where the separation actually comes from
+
+Not from the `.hei` — planes 1 and 2 are elevation 0 across every tile of
+`1/50/50` and `2/50/50` — and not from `getTerrainHeight`, which takes no plane
+argument. It comes from `terrainHeightLocal`, and specifically from the fact
+that the client **never resets it between plane loads**. It is re-seeded from the
+terrain only inside the `if (flag)` block, i.e. for the plane you are standing
+on. So the plane 1 and plane 2 loads inherit whatever plane 0 left behind:
+terrain, plus every wall height (`method428` adds `0x13880 + wallHeight` at each
+wall endpoint), levelled across each building, plus each roof's own height.
+
+An upper floor therefore stands on the roof deck of the floor below it, per
+corner, straight out of the data. **There is no storey constant in the client.**
+
+### Measured, so the deviation is on the record
+
+At Lumbridge castle, of the 128 corners carrying a plane-1 wall, lift above
+plane 0's terrain:
+
+| lift | corners | what it is |
+|---|---|---|
+| 192 | 99 | a standard wall height; corner not fully roofed |
+| 256 | 13 | 192 + a roof's own 64 — the corner carries a roof deck |
+| 198 / 204 / 268 | 3 / 1 / 1 | sloping ground under a levelled building |
+| 0 | 11 | nothing stands below; the client leaves these on the ground |
+
+`STOREY_HEIGHT = 192` was a good guess — three quarters of the castle's first
+floor lands on it exactly. It is still a scalar where the client has a grid, and
+the 11 zeroes are the case it gets qualitatively wrong: a flat +192 lifts walls
+into the air that the client draws standing on the ground.
+
+### What landed
+
+Ported and pinned by `packages/render/src/storeys.test.ts` against the real
+cache: `buildStoreyHeights()` chains planes 0 → 1 → 2 through the client's three
+passes and returns the grid each plane's geometry should be built against;
+`buildWalls` and `buildRoofs` both accept it. The roof raise was lifted out of
+`buildRoofs` into `applyRoofHeights` so the chain can run it without meshing —
+same sweep order, so it is indistinguishable from the client's interleaved
+version.
+
+### Making the stacked view actually show a storey
+
+The port is not what made upper floors visible. Getting from "the data is right"
+to "you can see it" took four more faults, and every one of them presented
+identically — a world with no upper floors and no error anywhere. They are worth
+listing because the next stacked-view bug will look the same.
+
+**1. A disposed cache, forever.** `PlaneSectorCache` was built in a `useMemo` and
+disposed by an effect cleanup. StrictMode mounts, unmounts and remounts in
+development; the cleanup ran, the memo did not, and the viewport spent the rest
+of the session holding a disposed cache that dropped every request in silence.
+The HUD read `0 read-only sectors` with nothing pending and nothing absent —
+which is the signature: not a failure, not an empty answer, no requests at all.
+It is now held in state and rebuilt when `isDisposed()`.
+
+**2. Every failure cached as "no sector there".** Only a 404 means that. A 401
+while the session settles, a 500, a dropped socket — those are the request
+failing, and recording them as absent loses storeys with no way back, because
+nothing asks twice. The one that actually bit was `NoProjectError`: the scene
+mounts before `connect()` opens the project, so on a cold load *every* ghost
+request rejects that way within milliseconds. `data/api.ts` documents that trap
+(`isProjectNotOpen`) and says it had already caught the texture atlas and the
+scenery models; this was the third. It now retries rather than concluding.
+
+**3. Opaque decks.** A deck is a solid horizontal slab across the whole
+building. Stacked two or three deep over the floor you are editing it hides
+everything below, and from a top-down camera all you see is the topmost
+floorboards. The client's answer is in the port above — plane 1 and 2 terrain is
+forced to `colourTransparent` — so `SectorLayer` draws no deck for any storey
+above the active one. Floors below keep theirs.
+
+**4. The offset, twice.** `planeOffsets` solves ONE number per plane by
+averaging `lower.groundY + STOREY_HEIGHT - upper.groundY` over every linked
+ladder in the loaded neighbourhood. That is right for nowhere in particular: at
+Wizards' Tower (`52/51`, ground 342) the tower's own ladders say 534 and a
+radius-1 neighbourhood averages to 438, so the upper storeys drew 96 units low,
+inside the floor beneath, and the number moved as you panned.
+
+The obvious fix — solve it per sector — is worse. Measured in the live scene it
+scattered one plane across 391, 438, 534, 576 …, tearing buildings apart at
+their sector seams and leaving a few hundred triangles at each height.
+**Coherently wrong beats incoherently right.** What ships is one offset per
+plane, solved at the active sector: the building you are working on is placed
+correctly and the rest of the world stays consistent with it.
+
+**5. Ghosts too faint to read.** `GHOST_OPACITY` was 0.34. That is fine for a
+floor with its deck, but once the decks are suppressed an upper storey is a thin
+ring of wall a few hundred triangles wide, and a third of the colour of dark
+stone over water reads as nothing. 0.72 keeps "you can see through it" while
+leaving a storey legible.
+
+### How it was finally settled
+
+Not by reasoning. Four rounds went into diagnosing this from the outside, and
+the first three fixes — all real bugs — were not the symptom. What ended it was
+a handle on the live scene from the browser and two dumps: meshes grouped by
+their parent's Y, which showed the floors present at the right heights (and
+caught the per-sector scatter), then painting those same meshes opaque, which
+showed them stacked exactly where they belonged on the tower.
+
+If the stacked view misbehaves again, do that first. `SectorGeometryCache` and
+the HUD can say a thing is loaded, meshed and placed and still be invisible.
+
+### Still open
+
+`planeOffsets` hardcodes `STOREY_HEIGHT` in its gap formula, so a building whose
+walls are not 192 high is placed as though they were. The tower is one: 16 of
+its 20 first-floor wall corners stand at 617 in the accumulated grid (ground 342
+plus a 275-high wall), not at 534.
+
+The grid has the right answer per corner. Using it means positioning
+upper-plane geometry absolutely rather than by a group translation, which moves
+`planeOffsets`, the connector layer, picking, the overlays and the camera
+presets — and an editor has to keep the deck you are editing pickable, which the
+client never has to care about. A first attempt at a per-corner offset also gave
+plane 2 only 64 units above plane 1 (a roof height, not a storey), so the mode
+over that grid is not yet trustworthy for the second storey either. It is the
+next real piece of work, not a tidy-up.

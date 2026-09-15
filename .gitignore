@@ -8,6 +8,11 @@ coverage/
 .env
 .env.local
 .env.*.local
+# Per-mode files too: apps/web/.env.development pins a project UUID that only
+# exists in one person's database.
+.env.development
+.env.production
+!.env.example
 
 .DS_Store
 Thumbs.db
