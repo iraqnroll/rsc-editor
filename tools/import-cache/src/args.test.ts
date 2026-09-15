@@ -93,4 +93,29 @@ describe('parseArgs', () => {
     expect(parseArgs(['--help'], {}).help).toBe(true);
     expect(parseArgs(['-h'], {}).help).toBe(true);
   });
+
+  it('imports definitions without a landscape when asked', () => {
+    const options = parseArgs(
+      ['--cache', './c', '--project', 'Scratch', '--no-landscape'],
+      { DATABASE_URL: 'postgres://x' }
+    );
+    expect(options.noLandscape).toBe(true);
+    expect(options.sceneryPath).toBeUndefined();
+  });
+
+  it('defaults to importing the landscape', () => {
+    const options = parseArgs(['--cache', './c', '--project', 'W'], {
+      DATABASE_URL: 'postgres://x'
+    });
+    expect(options.noLandscape).toBe(false);
+  });
+
+  it('refuses --no-landscape with --scenery rather than dropping every placement', () => {
+    expect(() =>
+      parseArgs(
+        ['--cache', './c', '--project', 'W', '--no-landscape', '--scenery', './s.json'],
+        { DATABASE_URL: 'postgres://x' }
+      )
+    ).toThrow(/cannot be combined/);
+  });
 });

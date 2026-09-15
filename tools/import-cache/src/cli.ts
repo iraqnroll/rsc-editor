@@ -39,6 +39,7 @@ async function main(argv: string[]): Promise<number> {
       replace: options.replace,
       dryRun: options.dryRun,
       verifyConfig: options.verifyConfig,
+      noLandscape: options.noLandscape,
       onProgress: options.quiet ? undefined : printProgress
     });
     process.stdout.write(formatSummary(summary));

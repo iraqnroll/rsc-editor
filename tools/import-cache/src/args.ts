@@ -15,6 +15,14 @@ export interface CliOptions {
   ownerId?: string;
   /** path to a scenery placement list; absent means no scenery is imported */
   sceneryPath?: string;
+  /**
+   * Import everything EXCEPT the landscape: no sectors, no scenery.
+   *
+   * The starting point for a world built by hand -- definitions, models,
+   * textures and sprites, over no terrain at all. See `--no-landscape` in
+   * {@link USAGE}.
+   */
+  noLandscape: boolean;
   databaseUrl: string;
   replace: boolean;
   dryRun: boolean;
@@ -34,6 +42,12 @@ Options
   --slug <slug>        override the derived slug
   --owner <uuid>       user id to own the project. Defaults to a
                        "cache-importer" service account, created on demand.
+  --no-landscape       import definitions and cache assets but NO sectors.
+                       The project comes out with the full RSC palette -- walls,
+                       objects, roofs, tiles, textures, models, sprites -- and an
+                       empty world to place them in. Create sectors from the
+                       editor. Incompatible with --scenery, which has nothing to
+                       apply itself to.
   --scenery <file>     also place scenery from a placement list
                        (fixtures/scenery/object-locs.json). OFF by default:
                        scenery is NOT in the cache -- the server sends it, and
@@ -68,6 +82,7 @@ export function parseArgs(
   const values = new Map<string, string>();
   let replace = false;
   let dryRun = false;
+  let noLandscape = false;
   let verifyConfig = true;
   let quiet = false;
   let help = false;
@@ -103,6 +118,9 @@ export function parseArgs(
       case '--dry-run':
         dryRun = true;
         continue;
+      case '--no-landscape':
+        noLandscape = true;
+        continue;
       case '--no-verify-config':
         verifyConfig = false;
         continue;
@@ -123,6 +141,7 @@ export function parseArgs(
       dryRun,
       verifyConfig,
       quiet,
+      noLandscape,
       help: true
     };
   }
@@ -145,6 +164,7 @@ export function parseArgs(
     dryRun,
     verifyConfig,
     quiet,
+    noLandscape,
     help: false
   };
 
@@ -157,6 +177,13 @@ export function parseArgs(
   // guarantee holds.
   const sceneryPath = values.get('--scenery');
   if (sceneryPath) options.sceneryPath = sceneryPath;
+
+  // Loud, not ignored -- the whole reason this parser is hand-rolled. Scenery
+  // is written into sector lanes, so with no sectors there is nothing for it to
+  // be written into and every placement would be silently dropped.
+  if (options.noLandscape && options.sceneryPath) {
+    throw new Error('--no-landscape and --scenery cannot be combined: there are no sectors to place scenery in');
+  }
 
   return options;
 }

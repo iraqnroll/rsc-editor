@@ -3,6 +3,7 @@ import {
   assertConfigRoundTrip,
   loadConfig,
   loadLandscape,
+  type LoadedSector,
   type SceneryImportReport
 } from '@rsc-editor/cache';
 import {
@@ -118,6 +119,15 @@ export interface ImportOptions {
    * should find that out now rather than at export time.
    */
   verifyConfig?: boolean;
+  /**
+   * Skip the landscape entirely: definitions and cache assets, no sectors.
+   *
+   * For a world authored by hand. The project gets RSC's full palette to build
+   * with and no terrain, and sectors are created from the editor as they are
+   * needed. `--scenery` is rejected alongside it, because scenery lives in
+   * sector lanes.
+   */
+  noLandscape?: boolean;
   onProgress?: (event: ProgressEvent) => void;
 }
 
@@ -220,20 +230,29 @@ export async function importCache(
     assertConfigRoundTrip(config, configArchive);
   }
 
-  report({ stage: 'landscape', message: 'decoding landscape archives' });
-  const loaded = loadLandscape({
-    landJag: cache.roles.land?.data,
-    mapsJag: cache.roles.maps?.data,
-    landMem: cache.roles.landMem?.data,
-    mapsMem: cache.roles.mapsMem?.data
-  });
-  const landscape = [...loaded.values()];
+  const noLandscape = options.noLandscape ?? false;
+
   report({
     stage: 'landscape',
-    message: `${landscape.length} populated sectors`,
-    done: landscape.length,
-    total: landscape.length
+    message: noLandscape ? 'skipped (--no-landscape)' : 'decoding landscape archives'
   });
+  const loaded = noLandscape
+    ? new Map<string, LoadedSector>()
+    : loadLandscape({
+        landJag: cache.roles.land?.data,
+        mapsJag: cache.roles.maps?.data,
+        landMem: cache.roles.landMem?.data,
+        mapsMem: cache.roles.mapsMem?.data
+      });
+  const landscape = [...loaded.values()];
+  if (!noLandscape) {
+    report({
+      stage: 'landscape',
+      message: `${landscape.length} populated sectors`,
+      done: landscape.length,
+      total: landscape.length
+    });
+  }
 
   /**
    * Scenery, if asked for, is applied to the decoded lanes before anything is
