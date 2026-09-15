@@ -698,3 +698,23 @@ describe('applyScenery', () => {
     expect(walls).toBe(wallsBefore);
   });
 });
+
+/**
+ * The one game coordinate the editor has to name out loud.
+ *
+ * `rsc-server` respawns a dead player at `regions.lumbridge`, which
+ * `@2003scape/rsc-data/regions.json` gives as `spawnX: 120, spawnY: 648`. The
+ * editor marks that tile so a map author can see where players arrive, and the
+ * marker is a hardcoded sector/tile -- so this pins the arithmetic that turned
+ * one into the other. If `tileAtGameCoords` ever moves, this fails and names the
+ * constant that has to move with it.
+ */
+describe('the player spawn, in cache coordinates', () => {
+  it('puts rsc-server\'s lumbridge spawn at 0/50/50 tile (24, 24)', () => {
+    expect(tileAtGameCoords(120, 648)).toEqual({
+      coord: { plane: 0, x: 50, y: 50 },
+      tileX: 24,
+      tileY: 24
+    });
+  });
+});

@@ -29,6 +29,8 @@ export function SectorBrowser() {
   const activeSector = useEditor((s) => s.activeSector);
   const claimLock = useEditor((s) => s.claimLock);
   const releaseLock = useEditor((s) => s.releaseLock);
+  const createSector = useEditor((s) => s.createSector);
+  const world = useEditor((s) => s.world);
   const setWorldMapOpen = useEditor((s) => s.setWorldMapOpen);
 
   // The panel follows the active sector's plane: jumping to a dungeon sector
@@ -36,6 +38,16 @@ export function SectorBrowser() {
   useEffect(() => {
     if (activeSector && activeSector.plane !== plane) setPlane(activeSector.plane);
   }, [activeSector?.plane]);
+
+  /**
+   * A sector the project has no row for at all.
+   *
+   * Distinct from "not loaded": this one does not exist, cannot be locked, and
+   * therefore cannot be edited until it is created. It is the normal state of
+   * every coordinate in a project imported with `--no-landscape`.
+   */
+  const activeIsAbsent =
+    !!activeSector && !!world && !world.present.includes(sectorKey(activeSector));
 
   const activeLock = activeSector ? locks[sectorKey(activeSector)] : undefined;
   const activeIsMine = !!activeLock && activeLock.userId === me?.userId;
@@ -80,6 +92,13 @@ export function SectorBrowser() {
         <span className="legend__item">
           <span className="swatch" style={{ background: '#0a0c0f' }} /> no data
         </span>
+        <span className="legend__item" title="Where rsc-server puts arriving and respawning players">
+          <span
+            className="swatch"
+            style={{ background: 'transparent', borderColor: '#ff5fa2', borderStyle: 'solid' }}
+          />{' '}
+          spawn
+        </span>
       </div>
 
       <Readout
@@ -103,14 +122,25 @@ export function SectorBrowser() {
       />
 
       <div className="field__row">
-        <button
-          type="button"
-          className="btn btn--sm btn--primary"
-          disabled={!activeSector || activeIsMine}
-          onClick={() => activeSector && void claimLock(activeSector)}
-        >
-          Claim
-        </button>
+        {activeIsAbsent ? (
+          <button
+            type="button"
+            className="btn btn--sm btn--primary"
+            title="This sector does not exist yet. Create it empty, then claim it to edit."
+            onClick={() => activeSector && void createSector(activeSector)}
+          >
+            Create sector
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="btn btn--sm btn--primary"
+            disabled={!activeSector || activeIsMine}
+            onClick={() => activeSector && void claimLock(activeSector)}
+          >
+            Claim
+          </button>
+        )}
         <button
           type="button"
           className="btn btn--sm"
@@ -119,6 +149,7 @@ export function SectorBrowser() {
         >
           Release
         </button>
+        {activeIsAbsent && <span className="hint">no data here yet</span>}
         {activeLock && !activeIsMine && (
           <span className="hint">read-only — held by {activeLock.displayName}</span>
         )}

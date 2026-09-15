@@ -184,6 +184,14 @@ export interface EditorState {
   openProject(projectId: string): Promise<void>;
   /** Return to the project chooser without signing out. */
   chooseProject(): void;
+  /**
+   * Bring an empty sector into existence and make it the active one.
+   *
+   * The only way to start a world that was not imported from a cache: a sector
+   * with no row cannot be locked, and one that cannot be locked cannot be
+   * edited. Not undoable -- see the route.
+   */
+  createSector(coord: SectorCoord): Promise<void>;
   ensureSector(coord: SectorCoord): void;
   readSector: (coord: SectorCoord) => SectorBuffers | undefined;
 
@@ -481,6 +489,39 @@ export const useEditor = create<EditorState>()((set, get) => ({
       viewCentre: null,
       notice: null
     });
+  },
+
+  async createSector(coord) {
+    const key = sectorKey(coord);
+    if (get().world?.present.includes(key)) return;
+
+    try {
+      await get().api.createSector(coord);
+    } catch (err) {
+      set({
+        notice: {
+          kind: 'error',
+          message: `Could not create sector ${key}: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        }
+      });
+      return;
+    }
+
+    // Re-read the index rather than patching it locally: the server decides
+    // what exists, and a created sector should reach this client by exactly the
+    // route every other sector does.
+    const world = await get().api.loadWorld().catch(() => get().world);
+    set({
+      world: world ?? null,
+      notice: {
+        kind: 'info',
+        message: `Created sector ${key}. Claim it to start editing.`
+      }
+    });
+    get().setActiveSector(coord);
+    get().ensureSector(coord);
   },
 
   ensureSector(coord) {

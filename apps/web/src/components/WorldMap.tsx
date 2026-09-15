@@ -38,6 +38,7 @@ import type { PointerEvent as ReactPointerEvent } from 'react';
 import { MAX_X_SECTORS, MAX_Y_SECTORS, sectorKey } from '@rsc-editor/schema';
 import type { Lock, Presence, SectorCoord } from '@rsc-editor/schema';
 import { useEditor } from '../state/editorStore.js';
+import { PLAYER_SPAWN } from '../data/spawn.js';
 import type { LoadedSector, ViewCentre } from '../state/editorStore.js';
 import type { WorldIndex } from '../data/api.js';
 import { useWorldMap, type DecodedImage } from '../data/useCacheAssets.js';
@@ -69,7 +70,9 @@ const COLOURS = {
   hover: 'rgba(255, 255, 255, 0.75)',
   members: 'rgba(242, 178, 62, 0.85)',
   view: '#7ce0a3',
-  fallbackLock: '#f2b23e'
+  fallbackLock: '#f2b23e',
+  /** where players arrive; see data/spawn.ts */
+  spawn: '#ff5fa2'
 } as const;
 
 const MIN_SCALE = 0.08;
@@ -761,6 +764,33 @@ export function drawWorldMap(ctx: CanvasRenderingContext2D, args: DrawArgs): voi
     ctx.beginPath();
     ctx.arc(px, py, 2, 0, Math.PI * 2);
     ctx.fillStyle = COLOURS.view;
+    ctx.fill();
+  }
+
+  /**
+   * The player spawn.
+   *
+   * Drawn before the nameplates and after everything else, because it must not
+   * hide a lock label and nothing else should hide it. Only on its own plane:
+   * players arrive on the ground floor and a marker floating over the dungeon
+   * map would be a lie.
+   *
+   * A ring rather than a filled dot: the interesting thing is the terrain
+   * underneath it, which is what the author is deciding about.
+   */
+  if (plane === PLAYER_SPAWN.coord.plane) {
+    const at = tileToMap(frame, PLAYER_SPAWN.world.wx, PLAYER_SPAWN.world.wy);
+    const half = frame.tileSize / 2;
+    const [px, py] = toScreen(at.x + half, at.y + half);
+
+    ctx.strokeStyle = COLOURS.spawn;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(px, py, 4.5, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(px, py, 1.25, 0, Math.PI * 2);
+    ctx.fillStyle = COLOURS.spawn;
     ctx.fill();
   }
 

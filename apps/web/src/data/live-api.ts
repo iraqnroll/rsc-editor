@@ -95,7 +95,7 @@ import {
 import { isSceneryModelsAsset, type SceneryModelsAsset } from './models.js';
 import { isWorldMapMeta, type WorldMapAsset } from './world-map.js';
 import { devLogin, fetchMe, logout, type AuthUser } from './auth.js';
-import { apiBinary, apiJson, isApiHttpError, websocketUrl } from './http.js';
+import { apiBinary, apiFetch, apiJson, isApiHttpError, websocketUrl } from './http.js';
 import {
   AuthRequiredError,
   NoProjectError,
@@ -994,6 +994,17 @@ export function createLiveApi(options: LiveApiOptions = {}): EditorApi {
      * route answers 404, which is a real and distinguishable state in a project
      * whose cache has not been imported yet.
      */
+    async createSector(coord: SectorCoord): Promise<void> {
+      const id = requireProject();
+      await apiFetch(
+        `/api/projects/${encodeURIComponent(id)}/sectors/${coord.plane}/${coord.x}/${coord.y}`,
+        { method: 'POST' }
+      );
+      // Nothing is cached here on purpose. The caller reloads the world index
+      // and then asks for the sector the ordinary way, so a created sector
+      // travels exactly the path every other sector does.
+    },
+
     async loadSector(coord: SectorCoord): Promise<SectorFrame> {
       const id = requireProject();
       const key = sectorKey(coord);

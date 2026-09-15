@@ -5,6 +5,7 @@
 import { useState } from 'react';
 import { SECTOR_WIDTH, sectorKey } from '@rsc-editor/schema';
 import { useEditor } from '../state/editorStore.js';
+import { isSpawnTile } from '../data/spawn.js';
 import { readDiagonalLane } from '../ops/builders.js';
 import { DefinitionEditor } from '../defs/DefinitionEditor.js';
 import { HistoryPanel } from './HistoryPanel.js';
@@ -84,6 +85,14 @@ function TileInspector() {
     <Section title="Tile">
       <Readout label="World tile" value={`${hoverTile.wx}, ${hoverTile.wy}`} />
       <Readout label="Sector" value={sectorKey(coord)} />
+      {isSpawnTile(hoverTile.plane, hoverTile.wx, hoverTile.wy) && (
+        <div className="field__label" title="rsc-server teleports arriving and respawning players here">
+          <span>Spawn</span>
+          <span className="meta" style={{ color: '#ff5fa2' }}>
+            players arrive here
+          </span>
+        </div>
+      )}
       <Readout label="Lane index" value={i} />
       <Readout label="Elevation" value={buffers.elevation[i] ?? 0} />
       <div className="field__label">

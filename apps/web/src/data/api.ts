@@ -142,6 +142,16 @@ export interface EditorApi {
   loadConfig(): Promise<RscConfig>;
   loadWorld(): Promise<WorldIndex>;
   loadSector(coord: SectorCoord): Promise<SectorFrame>;
+  /**
+   * Bring a sector into existence, empty.
+   *
+   * Not an edit, and deliberately not an op. A sector that has no row cannot be
+   * locked (`sector_locks.sector_id` references `sectors.id`) and therefore
+   * cannot be edited at all, so this is the only way to start a world that was
+   * not imported from a cache. Rejects with a 409 `ApiHttpError` if the sector
+   * already exists -- it never overwrites.
+   */
+  createSector(coord: SectorCoord): Promise<void>;
 
   /**
    * The cache texture sheet, from the server.

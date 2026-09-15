@@ -529,6 +529,17 @@ export function createMockApi(): EditorApi {
       return delay(world);
     },
 
+    /**
+     * The mock generates a sector for any coordinate asked of it, so "create"
+     * only has to make it show up in the world index -- which is the part the
+     * UI actually reacts to.
+     */
+    async createSector(coord: SectorCoord): Promise<void> {
+      const key = sectorKey(coord);
+      if (!world.present.includes(key)) world.present.push(key);
+      await delay(undefined, 25);
+    },
+
     async loadSector(coord: SectorCoord): Promise<SectorFrame> {
       const key = sectorKey(coord);
       let frame = sectors.get(key);
