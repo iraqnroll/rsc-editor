@@ -33,7 +33,12 @@ import type {
   SectorCoord,
   ServerMessage
 } from '@rsc-editor/schema';
-import { AuthRequiredError, NoProjectError, getApi } from '../data/api.js';
+import {
+  AuthRequiredError,
+  NoProjectError,
+  getApi,
+  pinnedProjectId
+} from '../data/api.js';
 import type { EditorApi, LinkState, WorldIndex } from '../data/api.js';
 import { resetEntitySpriteCache } from '../data/useCacheAssets.js';
 import { applySectorOp, describeOp, opId, opTileCount } from '../ops/apply.js';
@@ -91,6 +96,8 @@ export type ConnectionState =
   | 'connecting'
   | 'ready'
   | 'auth-required'
+  /** signed in, more than one project, none chosen yet */
+  | 'choose-project'
   | 'no-project'
   | 'error';
 
@@ -175,6 +182,8 @@ export interface EditorState {
   signIn(username: string): Promise<void>;
   signOut(): Promise<void>;
   openProject(projectId: string): Promise<void>;
+  /** Return to the project chooser without signing out. */
+  chooseProject(): void;
   ensureSector(coord: SectorCoord): void;
   readSector: (coord: SectorCoord) => SectorBuffers | undefined;
 
@@ -219,6 +228,15 @@ const localOpIds = new Set<string>();
  */
 let subscribed = false;
 let unsubscribers: Array<() => void> = [];
+
+/**
+ * Whether this session has settled which project it is in.
+ *
+ * Module scope, like `subscribed`, because it is about the API client's state
+ * and not about anything the UI renders. Set by `openProject` and by the
+ * one-project shortcut in `connect`; cleared by `signOut` and `chooseProject`.
+ */
+let projectChosen = false;
 
 function applyDefinitionFields(
   config: RscConfig,
@@ -295,6 +313,36 @@ export const useEditor = create<EditorState>()((set, get) => ({
     }
 
     try {
+      /**
+       * Choose the project BEFORE connecting, when there is a choice to make.
+       *
+       * `LiveApi.connect()` will happily resolve one on its own -- pinned, then
+       * last opened, then simply the first you can see -- which is right for a
+       * single-project account and wrong the moment you have two: it drops you
+       * into whichever the server listed first and never mentions the others.
+       *
+       * So: ask once per session. One project opens it (there is nothing to
+       * choose), none is the `no-project` gate, a pin skips the question, and
+       * anything else stops here and lets you pick. `openProject` records the
+       * answer, and `chooseProject` reopens the question on demand.
+       */
+      if (!projectChosen && !pinnedProjectId()) {
+        const projects = await api.listProjects();
+
+        if (projects.length === 0) {
+          set({ connection: 'no-project', error: null });
+          return;
+        }
+
+        if (projects.length > 1) {
+          set({ connection: 'choose-project', error: null });
+          return;
+        }
+
+        api.useProject(projects[0]!.id);
+        projectChosen = true;
+      }
+
       // Sequenced, not Promise.all: `connect()` is what resolves which project
       // we are in, and the world index and definitions are both scoped to it.
       const session = await api.connect();
@@ -374,6 +422,7 @@ export const useEditor = create<EditorState>()((set, get) => ({
     unsubscribers = [];
     subscribed = false;
     resetEntitySpriteCache();
+    projectChosen = false;
     set({
       connection: 'auth-required',
       link: 'offline',
@@ -390,6 +439,7 @@ export const useEditor = create<EditorState>()((set, get) => ({
 
   async openProject(projectId) {
     get().api.useProject(projectId);
+    projectChosen = true;
     // A different project is a different cache: the shared sprite sheet and the
     // map images belong to the old one and must not be shown against the new
     // one's definitions.
@@ -404,6 +454,33 @@ export const useEditor = create<EditorState>()((set, get) => ({
       viewCentre: null
     });
     await get().connect();
+  },
+
+  /**
+   * Put the project question back on screen.
+   *
+   * Switching project is switching worlds: a different cache, different
+   * definitions, different locks. Everything scoped to the old one is dropped
+   * here rather than left to look merely stale, and the socket is closed so the
+   * server stops sending us its ops.
+   */
+  chooseProject() {
+    get().api.disconnect();
+    projectChosen = false;
+    resetEntitySpriteCache();
+    set({
+      connection: 'choose-project',
+      error: null,
+      link: 'offline',
+      world: null,
+      config: null,
+      sectors: {},
+      locks: {},
+      peers: {},
+      activeSector: null,
+      viewCentre: null,
+      notice: null
+    });
   },
 
   ensureSector(coord) {

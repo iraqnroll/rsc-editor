@@ -86,7 +86,18 @@ export function LoginGate() {
   );
 }
 
-export function ProjectGate() {
+/**
+ * The project gate does two jobs, and the difference matters to the reader.
+ *
+ * `none` -- you are a member of nothing. The list is empty and the only way
+ * forward is to create something; the copy says so.
+ *
+ * `choose` -- you have several and have not said which. This is not an error
+ * state at all, and it exists because the client will otherwise pick for you:
+ * pinned, then last opened, then simply the first the server listed. That is
+ * fine with one project and wrong with two.
+ */
+export function ProjectGate({ mode = 'none' }: { mode?: 'none' | 'choose' }) {
   const api = useEditor((s) => s.api);
   const openProject = useEditor((s) => s.openProject);
   const signOut = useEditor((s) => s.signOut);
@@ -125,7 +136,14 @@ export function ProjectGate() {
   }
 
   return (
-    <Shell title="Open a project">
+    <Shell title={mode === 'choose' ? 'Choose a project' : 'Open a project'}>
+      {mode === 'choose' && (
+        <p className="hint">
+          You are a member of more than one. Each is a separate world with its own
+          map data, definitions and locks.
+        </p>
+      )}
+
       {projects === null && <p className="hint">Loading projects…</p>}
 
       {projects !== null && projects.length === 0 && (

@@ -222,3 +222,74 @@ describe('definition ops', () => {
     expect(useEditor.getState().undoStack).toHaveLength(0);
   });
 });
+
+/* ------------------------------------------------------- project choice -- */
+
+/**
+ * The client will resolve a project on its own -- pinned, last opened, or
+ * simply the first the server listed. With one project that is right; with two
+ * it silently decides for you. These pin the decision the store makes instead.
+ */
+describe('choosing a project', () => {
+  function apiWith(projects: Array<{ id: string; name: string }>) {
+    const used: string[] = [];
+    const api = {
+      mode: 'live' as const,
+      link: 'offline' as const,
+      listProjects: async () => projects.map((p) => ({ ...p, slug: p.id, headSeq: 0 })),
+      useProject: (id: string) => used.push(id),
+      connect: async () => {
+        throw new Error('connect must not be reached while a choice is pending');
+      },
+      subscribe: () => () => undefined,
+      subscribeLink: () => () => undefined,
+      disconnect: () => undefined
+    };
+    return { api, used };
+  }
+
+  beforeEach(() => {
+    useEditor.setState({ connection: 'idle', error: null });
+  });
+
+  it('stops and asks when the account has more than one', async () => {
+    const { api, used } = apiWith([
+      { id: 'a', name: 'Gielinor' },
+      { id: 'b', name: 'Blank Canvas' }
+    ]);
+    useEditor.setState({ api: api as never });
+
+    await useEditor.getState().connect();
+
+    expect(useEditor.getState().connection).toBe('choose-project');
+    // Nothing was opened on the user's behalf.
+    expect(used).toEqual([]);
+  });
+
+  it('says "no project" rather than asking, when there is nothing to choose', async () => {
+    const { api } = apiWith([]);
+    useEditor.setState({ api: api as never });
+
+    await useEditor.getState().connect();
+
+    expect(useEditor.getState().connection).toBe('no-project');
+  });
+
+  it('puts the question back on screen without signing out', () => {
+    const { api } = apiWith([{ id: 'a', name: 'One' }]);
+    useEditor.setState({
+      api: api as never,
+      connection: 'ready',
+      world: { present: [], box: null } as never,
+      sectors: { '0/50/50': {} as never }
+    });
+
+    useEditor.getState().chooseProject();
+
+    const state = useEditor.getState();
+    expect(state.connection).toBe('choose-project');
+    // Everything scoped to the old world is gone, not left looking stale.
+    expect(state.world).toBeNull();
+    expect(state.sectors).toEqual({});
+  });
+});

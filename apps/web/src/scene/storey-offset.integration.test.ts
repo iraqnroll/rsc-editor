@@ -41,11 +41,24 @@ beforeAll(async () => {
     body: JSON.stringify({ username: 'lukas' })
   });
   vi.stubGlobal('fetch', (i: RequestInfo | URL, init?: RequestInit) => raw(String(i), init ?? {}));
+  // The project that actually has the tower, not merely the first listed. A
+  // database can hold several -- an imported world and a blank one built by
+  // hand -- and "projects[0]" picked whichever the server happened to return
+  // first, which made this fail for a reason unrelated to the code under test.
   const list = (await (await raw('/api/projects')).json()) as {
     projects?: Array<{ id: string }>;
   };
-  PROJECT = list.projects?.[0]?.id ?? null;
-  if (!PROJECT) return;
+  for (const project of list.projects ?? []) {
+    const probe = await raw(`/api/projects/${project.id}/sectors/0/52/51`);
+    if (probe.ok) {
+      PROJECT = project.id;
+      break;
+    }
+  }
+  if (!PROJECT) {
+    console.warn('[storey-offset] no project has sector 0/52/51; skipping');
+    return;
+  }
 
   api = createLiveApi();
   api.useProject(PROJECT);

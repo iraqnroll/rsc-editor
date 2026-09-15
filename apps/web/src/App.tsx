@@ -57,6 +57,7 @@ export function App() {
   const redoDepth = useEditor((s) => s.redoStack.length);
   const apiMode = useEditor((s) => s.api.mode);
   const signOut = useEditor((s) => s.signOut);
+  const chooseProject = useEditor((s) => s.chooseProject);
   const worldMapOpen = useEditor((s) => s.worldMapOpen);
   const setWorldMapOpen = useEditor((s) => s.setWorldMapOpen);
 
@@ -75,6 +76,7 @@ export function App() {
   // no project are both normal. Only `error` is red.
   if (connection === 'auth-required') return <LoginGate />;
   if (connection === 'no-project') return <ProjectGate />;
+  if (connection === 'choose-project') return <ProjectGate mode="choose" />;
 
   if (connection === 'error') {
     return (
@@ -111,9 +113,19 @@ export function App() {
         <span className="topbar__spacer" />
         <span className="hint">{apiMode === 'mock' ? 'mock backend' : 'live backend'}</span>
         {apiMode === 'live' && (
-          <button type="button" className="btn btn--sm" onClick={() => void signOut()}>
-            Sign out
-          </button>
+          <>
+            <button
+              type="button"
+              className="btn btn--sm"
+              title="Switch to another project"
+              onClick={() => chooseProject()}
+            >
+              Projects
+            </button>
+            <button type="button" className="btn btn--sm" onClick={() => void signOut()}>
+              Sign out
+            </button>
+          </>
         )}
       </header>
 

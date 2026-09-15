@@ -216,6 +216,19 @@ export interface EditorApi {
 
 let singleton: EditorApi | null = null;
 
+/**
+ * A project pinned for this build, or null.
+ *
+ * `VITE_PROJECT_ID` is a dev convenience: it skips the project chooser and
+ * always opens the same world. Defined here rather than read from
+ * `import.meta.env` in two places, so the chooser and the client can never
+ * disagree about whether a choice is being offered.
+ */
+export function pinnedProjectId(): string | null {
+  const pinned = (import.meta.env as Record<string, unknown>).VITE_PROJECT_ID;
+  return typeof pinned === 'string' && pinned ? pinned : null;
+}
+
 /** `live` only when explicitly asked for; mock is the safe default. */
 export function apiMode(): 'mock' | 'live' {
   return (import.meta.env as Record<string, unknown>).VITE_API_MODE === 'live' ? 'live' : 'mock';

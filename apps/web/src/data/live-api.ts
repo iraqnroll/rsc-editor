@@ -99,6 +99,7 @@ import { apiBinary, apiJson, isApiHttpError, websocketUrl } from './http.js';
 import {
   AuthRequiredError,
   NoProjectError,
+  pinnedProjectId,
   type EditorApi,
   type LinkState,
   type LockResult,
@@ -312,8 +313,8 @@ export function createLiveApi(options: LiveApiOptions = {}): EditorApi {
    * error, because a brand-new account genuinely has none.
    */
   async function resolveProject(): Promise<string> {
-    const pinned = (import.meta.env as Record<string, unknown>).VITE_PROJECT_ID;
-    if (typeof pinned === 'string' && pinned) return pinned;
+    const pinned = pinnedProjectId();
+    if (pinned) return pinned;
 
     const stored = readStoredProject();
     if (stored) {
