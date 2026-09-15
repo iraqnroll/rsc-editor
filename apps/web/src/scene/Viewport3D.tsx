@@ -50,6 +50,7 @@ import {
   connectorLinkLines,
   connectorMarkerLines,
   planesFor,
+  planeStorey,
   type ConnectorPlacement,
   type PlaneSetMode
 } from '@rsc-editor/render';
@@ -128,8 +129,22 @@ const MESH_BUDGET = 1;
  * exactly what the viewport drew before -- and it is the only thing the picker
  * raycasts, so a click always lands on the plane you are editing even when the
  * pointer is over a ghost.
+ *
+ * ### On the value
+ *
+ * It was 0.34, and at that value a storey is present in the scene and
+ * effectively invisible. An upper floor is not a slab of surface like the
+ * active plane -- with its deck suppressed it is a thin ring of wall a few
+ * hundred triangles wide -- so a third of the colour of a dark stone wall,
+ * blended over water or over the floor below, reads as nothing at all. Painting
+ * those same meshes opaque in the live scene showed them exactly where they
+ * belonged, stacked on the tower: the bug was legibility, not geometry.
+ *
+ * 0.72 keeps "you can see through it" while leaving a storey legible from a
+ * distance. It is a number to look at rather than reason about, so it is here
+ * on its own.
  */
-const GHOST_OPACITY = 0.34;
+const GHOST_OPACITY = 0.72;
 
 /** Colours for the connector overlay. Amber links, green markers. */
 const LINK_COLOUR = '#ffb020';
@@ -218,12 +233,37 @@ function SceneContents(props: SceneProps) {
    * has always drawn.
    */
   const stacking = props.planeSet.length > 1;
+  /**
+   * ONE height per plane, solved at the sector you are looking at.
+   *
+   * Both halves of that matter, and each was a bug:
+   *
+   *   - Solving it over the whole loaded neighbourhood averages ladders
+   *     standing on unrelated terrain. At Wizards' Tower that put floor 1 at
+   *     438 where the tower's own ladders say 534 -- 96 units low, inside the
+   *     storey beneath -- and the number moved as you panned.
+   *   - Solving it per sector instead scatters one plane across as many heights
+   *     as there are sectors (391, 438, 534, 576 ... measured in the live
+   *     scene), which tears a building apart at its sector seams and leaves a
+   *     few hundred triangles at each height. Coherently wrong beats
+   *     incoherently right.
+   *
+   * So: the active sector decides, and every sector of that plane uses its
+   * answer. The building you are working on is placed correctly and the rest of
+   * the world stays consistent with it.
+   */
   const planeY = useCallback(
-    (plane: number) => (stacking ? cache.planeOffset(plane) : 0),
+    (plane: number) =>
+      stacking
+        ? props.activeSector
+          ? cache.storeyOffset(props.activeSector, plane)
+          : cache.planeOffset(plane)
+        : 0,
     // `version` is what changes when a sector finishes meshing and the offsets
     // are re-solved; the cache object itself is stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [cache, stacking, props.version]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [cache, stacking, props.version, props.activeSector?.x, props.activeSector?.y]
   );
   const activePlaneY = planeY(props.plane);
 
@@ -328,13 +368,16 @@ function SceneContents(props: SceneProps) {
         // `ghost`, because switching the active plane has to remount the layer:
         // `register` is a ref callback and `raycast` a constructor-time prop,
         // and neither re-runs on a prop change alone.
-        const id = `${set.key}:${set.signature}:${ghost ? 'g' : 's'}`;
+        // A storey ABOVE the one being edited draws no deck. See `showDeck`.
+        const above = planeStorey(set.coord.plane) > planeStorey(props.plane);
+        const id = `${set.key}:${set.signature}:${ghost ? 'g' : 's'}${above ? 'n' : 'd'}`;
         return (
           <SectorLayer
             key={id}
             set={set}
             atlas={atlas}
             ghost={ghost}
+            showDeck={!above}
             planeY={planeY(set.coord.plane)}
             register={
               ghost
@@ -590,6 +633,7 @@ function SectorLayer({
   set,
   atlas,
   ghost,
+  showDeck,
   planeY,
   register
 }: {
@@ -597,6 +641,25 @@ function SectorLayer({
   atlas: Texture | null;
   /** true for a plane that is being shown but not edited; see GHOST_OPACITY */
   ghost: boolean;
+  /**
+   * Draw this plane's terrain.
+   *
+   * False for every storey ABOVE the one being edited, which is what the client
+   * does: `World#_loadSection_from4` forces plane 1 and 2 terrain to
+   * `World.colourTransparent`, so an upper floor contributes its walls, roof and
+   * scenery but no visible deck.
+   *
+   * It is also the difference between a stacked view that works and one that
+   * does not. A deck is a solid horizontal slab across the whole building; even
+   * at GHOST_OPACITY, two or three of them stacked over the floor you are
+   * editing wash it out completely, and from a top-down camera all you see is
+   * the topmost floorboards. That is what "I can only see 1 floor" turns out to
+   * mean -- the floors were all there, one was simply laid over the others.
+   *
+   * The active plane always draws its own deck: it is the thing being edited,
+   * and it is the pick target.
+   */
+  showDeck: boolean;
   /** render-space Y this plane is drawn at, solved from its connectors */
   planeY: number;
   /** omitted for a ghost plane, which is not pickable */
@@ -627,7 +690,7 @@ function SectorLayer({
 
   return (
     <group position={[set.originX, planeY, set.originZ]}>
-      {set.terrain && (
+      {showDeck && set.terrain && (
         <mesh
           ref={(mesh) => {
             // The picker reads `userData.sector` to turn a faceIndex into a
@@ -901,15 +964,20 @@ export function Viewport3D(props: ViewportProps) {
   const [plates, setPlates] = useState<Plate[]>([]);
   const [mode, setMode] = useState<CameraMode>('orbit');
   /**
-   * `single` is the default, deliberately.
+   * `all` is the default, deliberately.
    *
-   * It is what the viewport has always done and what an editing session wants
-   * most of the time; stacking is a thing you turn on to answer a question
-   * ("where does this ladder go?") and turn off again. It also means nothing
-   * about the default view changed, so the ground floor still looks exactly as
-   * it did.
+   * It was `single` on the grounds that stacking is a question you ask
+   * occasionally ("where does this ladder go?") and then turn off. That had it
+   * backwards: mudclient itself draws planes 0, 1 and 2 together whenever you
+   * are standing on the ground (`World#_loadSection_from3`), so a stacked view
+   * is the *faithful* one and a lone ground floor is the special case. See
+   * `packages/render/src/planes.ts` and DECISIONS 14.
+   *
+   * `this one` is still a click away, and is what you want while editing a
+   * single storey -- upper planes are ghosted and never raycast, but they are
+   * still geometry on screen.
    */
-  const [planeMode, setPlaneMode] = useState<PlaneSetMode>('single');
+  const [planeMode, setPlaneMode] = useState<PlaneSetMode>('all');
   const [showConnectors, setShowConnectors] = useState(true);
   const [hud, setHud] = useState({
     triangles: 0,
@@ -937,8 +1005,32 @@ export function Viewport3D(props: ViewportProps) {
    * is allowed to edit. Everything below treats these as scenery: they are
    * meshed and drawn and never written.
    */
-  const planeCache = useMemo(() => new PlaneSectorCache(), []);
-  useEffect(() => () => planeCache.dispose(), [planeCache]);
+  /**
+   * Held in state, not `useMemo`, and rebuilt if it was disposed.
+   *
+   * StrictMode mounts, unmounts and remounts every component in development.
+   * The unmount runs effect cleanups -- so the cache gets disposed -- but a
+   * `useMemo` is NOT re-run on the remount, so the old
+   *
+   *     const planeCache = useMemo(() => new PlaneSectorCache(), []);
+   *     useEffect(() => () => planeCache.dispose(), [planeCache]);
+   *
+   * left the component holding a disposed cache for the rest of the session.
+   * A disposed cache drops every request in silence, so the viewport asked for
+   * ghost planes forever and got nothing: no error, no pending, no absent, just
+   * "0 read-only sectors" and a world with no upper floors. It cost an evening.
+   *
+   * State + an identity-keyed effect is the fix: the remount sees a disposed
+   * instance, swaps in a fresh one, and the effect re-runs against that.
+   */
+  const [planeCache, setPlaneCache] = useState(() => new PlaneSectorCache());
+  useEffect(() => {
+    if (planeCache.isDisposed()) {
+      setPlaneCache(new PlaneSectorCache());
+      return;
+    }
+    return () => planeCache.dispose();
+  }, [planeCache]);
   const [ghostVersion, setGhostVersion] = useState(0);
   useEffect(
     () => planeCache.subscribe(() => setGhostVersion((v) => v + 1)),
@@ -1246,7 +1338,7 @@ export function Viewport3D(props: ViewportProps) {
         (l) => drawn.has(l.lower.plane) && drawn.has(l.upper.plane)
       ).length,
       unpaired: graph.unpaired,
-      ghost: planeCache.stats()
+      ghost: planeCache.stats(),
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cache, planeSet, version, ghostVersion, planeCache]);

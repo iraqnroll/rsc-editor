@@ -236,6 +236,8 @@ export class SectorGeometryCache {
   private queue: string[] = [];
   private wanted = new Map<string, { coord: SectorCoord; signature: string }>();
   private sectors: ReadonlyMap<string, SectorSource> = new Map();
+  /** memoised `storeyOffset` answers, keyed "x/y/plane" */
+  private storeyOffsets = new Map<string, number>();
   private config: RscConfig | null = null;
   private layout: AtlasLayout | null = null;
   private models: SceneryModelSource | null = null;
@@ -518,9 +520,57 @@ export class SectorGeometryCache {
     return this.connectorGraph().offsets.get(plane) ?? planeElevation(plane);
   }
 
+  /**
+   * Where a plane's geometry is drawn ABOVE ONE SECTOR.
+   *
+   * `planeOffset` solves one number per plane by averaging
+   * `lower.groundY + STOREY_HEIGHT - upper.groundY` over every linked ladder in
+   * the whole loaded neighbourhood. That number is right for nowhere in
+   * particular: at Wizards' Tower (`52/51`, ground 342) the tower's own ladders
+   * say 534, and a radius-1 neighbourhood averages to **438** -- so the upper
+   * storeys drew 96 units low, sunk into the floor beneath, and the number
+   * moved as you panned.
+   *
+   * This prefers the ladders standing in THIS sector, which are the actual
+   * connection between these two floors, and falls back to the neighbourhood
+   * solve where a sector has none of its own.
+   *
+   * ### Known limit
+   *
+   * `planeOffsets` hardcodes `STOREY_HEIGHT` in its gap formula, so a building
+   * whose walls are not 192 high is still placed as though they were. The tower
+   * is one: 16 of its 20 first-floor wall corners stand at 617 in the client's
+   * accumulated height grid (ground 342 + a 275-high wall), not 534. The grid
+   * has the right answer per corner -- see `buildStoreyHeights` and DECISIONS
+   * 14 -- but using it means positioning upper-plane geometry absolutely rather
+   * than by a group translation, which is the open work described there.
+   */
+  storeyOffset(coord: SectorCoord, plane: number): number {
+    // Ground is the reference the stack is measured from, so it is 0 by
+    // construction -- not because it is the plane being edited.
+    if (plane === 0) return 0;
+
+    const key = `${coord.x}/${coord.y}/${plane}`;
+    const cached = this.storeyOffsets.get(key);
+    if (cached !== undefined) return cached;
+
+    const here = this.connectorGraph().placements.filter(
+      (c) => Math.floor(c.wx / SECTOR_WIDTH) === coord.x && Math.floor(c.wy / SECTOR_WIDTH) === coord.y
+    );
+
+    const local = planeOffsets(here).get(plane);
+    const linked = here.some((c) => c.plane === plane);
+    const answer = linked && local !== undefined ? local : this.planeOffset(plane);
+
+    this.storeyOffsets.set(key, answer);
+    return answer;
+  }
+
   private invalidateDerived(): void {
     this.draws = null;
     this.connectors = null;
+    // Solved from the loaded sectors, so it cannot outlive a change to them.
+    this.storeyOffsets.clear();
   }
 
   /** Model names wanted by loaded sectors that the model source cannot supply. */
