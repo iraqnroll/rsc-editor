@@ -4,19 +4,40 @@ import { MAX_PLANES } from '@rsc-editor/schema';
  * Stacking the four planes into one scene.
  *
  * ============================================================================
- *  THIS IS AN EDITOR AFFORDANCE, NOT A PORT. Nothing here is in the client.
+ *  THIS IS AN EDITOR AFFORDANCE, NOT A PORT. The port is in `storeys.ts`.
  * ============================================================================
  *
- * mudclient draws exactly one plane at a time. `World#getTerrainHeight` takes no
- * plane argument and applies no per-floor offset; the client loads the region
- * for the plane you are standing on and every floor sits at whatever the `.hei`
- * says. Measured on the shipped cache, planes 1 and 2 are elevation 0 across
- * every tile of `1/50/50` and `2/50/50` -- an upper storey has no height of its
- * own at all -- so drawing all four planes without an offset would pile them
- * into one another at y = 0.
+ * ### Correction, and it matters
  *
- * So the separation below is invented, and is therefore kept in one place,
- * named, and derived from real cache data rather than eyeballed:
+ * This header used to open "mudclient draws exactly one plane at a time". That
+ * is **false**. `World#_loadSection_from3` loads planes 1 and 2 alongside plane
+ * 0 whenever you are standing on the ground, and adds all three planes' wall
+ * and roof models to the same scene -- which is why you can see a two-storey
+ * building from outside in the real game. Only the terrain model and the
+ * collision grid are skipped for the upper floors, and their terrain colour is
+ * forced to `World.colourTransparent`, so an upper storey shows its walls and
+ * roof but no visible deck. See `storeys.ts` and DECISIONS 14.
+ *
+ * What is true is the second half: `World#getTerrainHeight` takes no plane
+ * argument, and planes 1 and 2 are elevation 0 across every tile of `1/50/50`
+ * and `2/50/50`. The client's storey separation comes from neither -- it comes
+ * from `terrainHeightLocal`, a scratch grid it does NOT reset between plane
+ * loads, so each floor stands on the accumulated walls and roofs of the floors
+ * below it, per corner. `storeys.ts` ports that.
+ *
+ * ### What is still invented here
+ *
+ * A single scalar offset per plane, which is what the stacked view uses to put
+ * a whole plane's geometry in a group. The client has no such number. Measured
+ * against the real chain at Lumbridge castle, {@link STOREY_HEIGHT} is the
+ * right *typical* value -- 99 of 128 first-floor wall corners are lifted by
+ * exactly 192 -- but 13 sit 64 higher on a roof deck, a handful differ on
+ * sloping ground, and 11 have nothing below them at all and should not rise.
+ * Replacing the scalar with the per-corner grid is the open work; see
+ * DECISIONS 14.
+ *
+ * The constant is therefore kept in one place, named, and derived from real
+ * cache data rather than eyeballed:
  *
  *   - {@link STOREY_HEIGHT} is 192, the height of a standard wall. 200 of the
  *     214 `wallObjects` in `config85.jag` are height 192 (the rest are 275, 70

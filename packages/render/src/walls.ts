@@ -3,8 +3,10 @@ import { wallFills } from './colour.js';
 import {
   DIAGONAL_NW_SE_MAX,
   DIAGONAL_NW_SE_MIN,
+  HEIGHT_FLAG,
   TILE_SIZE
 } from './constants.js';
+import type { HeightField } from './height-field.js';
 import type { LandscapeView } from './landscape-view.js';
 import { RscModel, WALL_LIGHT, type BuildOptions, type GeometryData } from './model.js';
 
@@ -38,6 +40,18 @@ export interface WallOptions extends BuildOptions {
    * debug switch). Off by default, matching normal play.
    */
   showInvisible?: boolean;
+  /**
+   * Stand the walls on this grid instead of the sector's own terrain.
+   *
+   * `World#method422` reads `terrainHeightLocal`, which for the plane you are
+   * standing on IS the terrain -- the wall raises happen after the geometry is
+   * built -- so omitting this is correct for a ground floor and for any
+   * single-plane view. An upper storey passes the grid the floors below left
+   * behind; see `storeys.ts`.
+   *
+   * Values may carry {@link HEIGHT_FLAG}; it is stripped on read.
+   */
+  heights?: HeightField;
 }
 
 export function buildWalls(
@@ -47,6 +61,13 @@ export function buildWalls(
 ): GeometryData {
   const model = new RscModel();
   const show = options.showInvisible ?? false;
+
+  const heights = options.heights;
+  const groundAt = (x: number, y: number): number => {
+    if (!heights) return view.terrainHeight(x, y);
+    const value = heights.get(x, y);
+    return value >= HEIGHT_FLAG ? value - HEIGHT_FLAG : value;
+  };
 
   /** `World#method422`. `id` is zero-based into `config.wallObjects`. */
   const wall = (
@@ -64,8 +85,8 @@ export function buildWalls(
     const { front, back } = wallFills(def);
     const height = def.height;
 
-    const ha = -view.terrainHeight(ax, ay);
-    const hb = -view.terrainHeight(bx, by);
+    const ha = -groundAt(ax, ay);
+    const hb = -groundAt(bx, by);
     const x1 = ax * TILE_SIZE;
     const z1 = ay * TILE_SIZE;
     const x2 = bx * TILE_SIZE;

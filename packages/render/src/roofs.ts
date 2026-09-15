@@ -7,7 +7,7 @@ import {
   ROOF_CORNER_INSET,
   TILE_SIZE
 } from './constants.js';
-import { ROOF_SWEEP, buildRoofHeightField } from './height-field.js';
+import { ROOF_SWEEP, buildRoofHeightField, type HeightField } from './height-field.js';
 import type { LandscapeView } from './landscape-view.js';
 import { RscModel, ROOF_LIGHT, type BuildOptions, type GeometryData } from './model.js';
 
@@ -33,7 +33,18 @@ import { RscModel, ROOF_LIGHT, type BuildOptions, type GeometryData } from './mo
  * as in the client.
  */
 
-export type RoofOptions = BuildOptions;
+export interface RoofOptions extends BuildOptions {
+  /**
+   * The height field to stand this roof on, instead of building one from the
+   * sector's own terrain.
+   *
+   * Supplied by the storey chain (`storeys.ts`) so an upper floor's roof sits
+   * on the accumulated height of the floors below it. It is MUTATED in place,
+   * exactly as the client mutates `terrainHeightLocal`, so the caller gets the
+   * post-roof grid the next storey up needs.
+   */
+  heights?: HeightField;
+}
 
 export function buildRoofs(
   view: LandscapeView,
@@ -45,9 +56,14 @@ export function buildRoofs(
   // The height field sweeps the whole 3x3 neighbourhood, which is wasted on the
   // many sectors that carry no roof at all. Nothing else in this builder can
   // emit a face without a roofed tile, so bailing out early is equivalent.
+  //
+  // Note this early-out is about GEOMETRY only. A caller chaining storeys must
+  // still run passes 1 and 2 for a roofless plane -- its walls raise the grid
+  // for the floor above -- which is why `storeys.ts` drives those itself rather
+  // than relying on this function.
   if (!anyRoof(view)) return model.build(ROOF_LIGHT, options);
 
-  const field = buildRoofHeightField(view, config);
+  const field = options.heights ?? buildRoofHeightField(view, config);
 
   for (let x = ROOF_SWEEP.lo; x <= ROOF_SWEEP.hiX; x++) {
     for (let y = ROOF_SWEEP.lo; y <= ROOF_SWEEP.hiY; y++) {

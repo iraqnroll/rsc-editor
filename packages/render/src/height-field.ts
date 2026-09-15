@@ -72,6 +72,25 @@ export class HeightField {
     const i = this.index(x, y);
     if (i >= 0) this.values[i] = value;
   }
+
+  /**
+   * An independent copy.
+   *
+   * The storey chain needs this: the grid a plane's geometry is built against
+   * is the state *before* that plane's own walls raise it, and the client gets
+   * that for free by building geometry first and mutating after. Snapshotting
+   * is how you get the same thing when the two steps are separate functions.
+   */
+  clone(): HeightField {
+    const copy = new HeightField(
+      this.minX,
+      this.minY,
+      this.minX + this.width - 1,
+      this.minY + this.height - 1
+    );
+    copy.values.set(this.values);
+    return copy;
+  }
 }
 
 /** How far past the centre sector the sweep runs. One sector in each direction. */
@@ -79,14 +98,8 @@ const SWEEP_LO = -SECTOR_WIDTH;
 const SWEEP_HI_X = SECTOR_WIDTH * 2 - 1;
 const SWEEP_HI_Y = SECTOR_HEIGHT * 2 - 1;
 
-/**
- * Run passes 1 and 2. The returned field still carries flags on wall corners;
- * `buildRoofs` consumes and clears them, exactly as the client does.
- */
-export function buildRoofHeightField(
-  view: LandscapeView,
-  config: RscConfig
-): HeightField {
+/** The grid before any pass: a straight copy of the terrain heights. */
+export function terrainHeightField(view: LandscapeView): HeightField {
   const field = new HeightField(
     SWEEP_LO,
     SWEEP_LO,
@@ -99,6 +112,23 @@ export function buildRoofHeightField(
       field.set(x, y, view.terrainHeight(x, y));
     }
   }
+
+  return field;
+}
+
+/**
+ * Run passes 1 and 2. The returned field still carries flags on wall corners;
+ * `buildRoofs` consumes and clears them, exactly as the client does.
+ */
+export function buildRoofHeightField(
+  view: LandscapeView,
+  config: RscConfig,
+  base?: HeightField
+): HeightField {
+  // Seeded from the storey below when `base` is given. The client does not
+  // reset `terrainHeightLocal` between plane loads, so an upper floor's walls
+  // stand on the accumulated height of everything under them; see `storeys.ts`.
+  const field = base?.clone() ?? terrainHeightField(view);
 
   // --- pass 1: `World#method428` -----------------------------------------
   const raise = (id: number, x1: number, y1: number, x2: number, y2: number) => {
@@ -167,6 +197,50 @@ export function buildRoofHeightField(
   }
 
   return field;
+}
+
+/**
+ * Pass 3 -- the roof raise, lifted out of `buildRoofs` so the storey chain can
+ * run it without meshing anything.
+ *
+ * Raises every fully enclosed corner of every roofed tile by that roof's own
+ * height, writing the flag back so a neighbouring roof tile cannot raise the
+ * same corner twice. Sweep order therefore decides which roof definition's
+ * height a shared corner gets, and it is the same x-then-y ascending sweep the
+ * geometry uses -- which is what makes running it here, ahead of the geometry,
+ * indistinguishable from the client's interleaved version.
+ *
+ * Idempotent: a second call changes nothing, because every corner it would
+ * raise already carries the flag.
+ */
+export function applyRoofHeights(
+  view: LandscapeView,
+  config: RscConfig,
+  field: HeightField
+): void {
+  for (let x = SWEEP_LO; x <= SWEEP_HI_X; x++) {
+    for (let y = SWEEP_LO; y <= SWEEP_HI_Y; y++) {
+      const roofId = view.wallRoof(x, y);
+      if (roofId <= 0) continue;
+
+      const def = config.roofs[roofId - 1];
+      if (!def) continue;
+
+      const corners: Array<[number, number]> = [
+        [x, y],
+        [x + 1, y],
+        [x + 1, y + 1],
+        [x, y + 1]
+      ];
+
+      for (const [cx, cy] of corners) {
+        const value = field.get(cx, cy);
+        if (view.hasRoof(cx, cy) && value < HEIGHT_FLAG) {
+          field.set(cx, cy, value + def.height + HEIGHT_FLAG);
+        }
+      }
+    }
+  }
 }
 
 export const ROOF_SWEEP = {

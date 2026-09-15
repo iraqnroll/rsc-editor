@@ -167,7 +167,20 @@ export {
   type BuildOptions
 } from './model.js';
 
-export { HeightField, buildRoofHeightField, ROOF_SWEEP } from './height-field.js';
+export {
+  HeightField,
+  buildRoofHeightField,
+  terrainHeightField,
+  applyRoofHeights,
+  ROOF_SWEEP
+} from './height-field.js';
+
+export {
+  buildStoreyHeights,
+  storeyLiftAt,
+  strippedHeight,
+  CLIENT_STOREY_CHAIN
+} from './storeys.js';
 
 export {
   PLANE_STACK,
