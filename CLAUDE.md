@@ -100,9 +100,13 @@ change there, say so in your report rather than making it.
 - Phase 1 (cache fidelity gate) — **passed**, 596/596 byte-exact
 - Phase 2 — done: models/textures, client-accurate geometry (visually verified),
   db + API + Discord auth (verified against real Postgres), editor shell
-- Phase 3 (editing + realtime: locks, presence, op broadcast) — next
+- Phase 3 (editing + realtime) — **built, not yet verified end to end**: op
+  log, locks, presence, broadcast, catch-up, all seven tools, undo/redo,
+  history. Stacked floors are drawn per corner off the client's storey grid
+  (DECISIONS §14).
+- Next: verify Phase 3 in the browser with two users, then Phase 5 export
+  (before Phase 4 definitions — edits are only useful once they can leave).
 - Phases 4-5 — see `PLAN.md`
 
 Not yet verified anywhere: the Discord OAuth **callback** (needs a real Discord
-app), texture mapping in the renderer (UVs are placeholders pending the atlas),
-and any browser interaction in `apps/web`.
+app), and browser interaction with the editing tools and the definition forms.
