@@ -24,8 +24,9 @@ Per-package: `pnpm --filter @rsc-editor/cache test`
 Browser, two users: `pnpm --filter @rsc-editor/web e2e` (needs `db:up`, the
 server's `RSC_DEV_LOGIN=1`, and Chrome; it starts the servers if they are not
 running). Not part of `pnpm test`. The Vite proxy defaults to API port 8080;
-set `RSC_API_PORT` if your server runs elsewhere. The e2e config reads it from
-`apps/server/.env`, `pnpm dev` does not.
+if the server runs elsewhere, set `RSC_API_PORT` for `vite dev` or
+`VITE_API_BASE` in `apps/web/.env.development`. The e2e config reads the port
+from `apps/server/.env`.
 
 The integration suites skip themselves when no Postgres is reachable, so the
 tests pass without Docker — but they then prove much less. Run `db:up` first.
@@ -110,10 +111,14 @@ change there, say so in your report rather than making it.
   locks, presence, live ops, undo/redo, reload, lock release on disconnect,
   and every tool writing an op a peer receives (`apps/web/e2e`). Stacked
   floors are drawn per corner off the client's storey grid (DECISIONS §14).
-- Next: Phase 5 export (before Phase 4 definitions — edits are only useful
-  once they can leave).
+- Phase 5 — **export done**: validated zip from the API and an Export
+  button (DECISIONS §15). Still to do: snapshots / history browser,
+  performance pass, deployment. Phase 4 (definition editors) after that.
 - Phases 4-5 — see `PLAN.md`
 
 Not yet verified anywhere: the Discord OAuth **callback** (needs a real Discord
-app), the definition forms in a browser, and a real-cache project in the e2e
-suite (it builds an empty one).
+app), the definition forms in a browser, a real-cache project in the e2e
+suite (it builds an empty one), and an exported cache loaded in a real client.
+
+**The `.hei` format only holds even elevation and colour values** (DECISIONS
+§15). Anything that writes those lanes must go through `clampLane`.

@@ -290,7 +290,7 @@ asserted as that pairing rather than tolerated by a threshold.
 
 ### Export hazard: `.loc` cannot represent most scenery ids
 
-**Nothing writes a `.loc` yet, and nothing may until this is handled.**
+**Resolved by the exporter -- see section 15.** The original warning follows.
 
 A `.loc` byte is `objectId + 1`, and any byte `>= 128` decodes as a *run of that
 many blank tiles*. The format therefore tops out at **object id 126**. The real
@@ -627,3 +627,61 @@ rebuilt when the ground arrives.
   96x96 region (see `height-field.ts`), and the outer ring of the loaded area
   has no ground loaded beyond it. A building that crosses either edge can be
   levelled differently from the client.
+
+## 15. Export: what goes where, and the gate that decides
+
+`exportWorld` in `packages/cache/src/export.ts`; served as a zip by
+`GET /api/projects/:id/export` and the editor's Export button.
+
+### Scenery goes to the server's list, not to `.loc`
+
+Section 12 left the choice open. The export writes every scenery object to
+`object-locs.json`, the game server's own format (the one
+`parseSceneryPlacements` reads), and writes a `.loc` only for the sectors that
+had one when imported -- the two login-screen sectors -- holding whatever of
+their scenery fits in a `.loc` byte. Nothing else grows a `.loc`.
+
+Turning lanes back into placements is exact, not a guess: import and the
+scenery tool never write a footprint past its sector and never overlap two, so
+an x-then-y scan meets each object's origin before any other tile of it.
+
+### Nothing is handed over unread
+
+The produced archives are re-imported with `loadLandscape`, the produced list is
+re-applied with `applyScenery`, and every lane of every sector is compared with
+the project; the config is reloaded and compared definition by definition. Any
+difference is a 422 listing sector, lane, tile and both values. Refused on the
+shipped world: nothing (350 sectors, 26,683 objects, 2.5 s through the API).
+Accepted loss: an all-zero sector, which the loader skips exactly as the client
+does; it is counted in `export-report.json`.
+
+Archive names keep the imported version numbers, and every other imported
+archive is passed through unchanged, so the zip is a whole cache directory. A
+project with no imported config archive is refused: `exportConfig` overlays
+definitions onto the original, and there is no original to overlay onto.
+
+### `.hei` only stores even heights and colours
+
+`decodeHei` writes `(lastVal * 2) & 0xff`, so a cache holds even values only,
+and `encodeDelta`'s fractional carry turns one odd value into damage across
+the rest of its sector: a hand-built sector with 463 odd heights came back
+with 1,897 changed tiles. The editor wrote odd values freely (brush strength,
+falloff and the colour picker all could), so almost any terrain edit made a
+world unexportable.
+
+Fixed at the source: `clampLane` in `apps/web/src/ops/apply.ts` rounds
+elevation and colour to even and caps them at 254, and the colour picker only
+offers even indices. The export checks for odd values first and names them
+plainly instead of listing the knock-on damage. A project that already holds
+odd values needs them repaired before it will export.
+
+### Two things found on the way
+
+- **Undo never reached the server.** `invert` keeps the op id, and
+  `appendOpsInTx` drops ids it has already logged, so undo and redo applied
+  locally and nowhere else. They now use fresh ids. The two-user Playwright
+  suite (`apps/web/e2e`) fails without that fix.
+- **The export file name was invisible to the page.** With `VITE_API_BASE`
+  set, the editor calls the API cross-origin, and a script only sees
+  CORS-safelisted headers. The server now exposes `content-disposition`.
+
