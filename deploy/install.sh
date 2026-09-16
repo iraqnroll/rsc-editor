@@ -83,7 +83,7 @@ systemctl enable rsc-editor.service
 # --now: an enabled timer does not run until the next boot otherwise.
 systemctl enable --now rsc-editor-backup.timer caddy.service
 
-"$SRC_DIR/deploy/update.sh"
+bash "$SRC_DIR/deploy/update.sh"
 
 echo
 echo "Done. Next:"
