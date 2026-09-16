@@ -40,6 +40,8 @@ install -d -m 0750 -o root -g rsc /etc/rsc-editor
 install -d -m 0750 -o postgres -g postgres /var/backups/rsc-editor
 
 echo "== database"
+# su keeps the caller's cwd; postgres cannot read /root and warns on every call.
+cd /
 # Not every template starts services on install.
 systemctl enable --now postgresql
 if [[ ! -f "$ENV_FILE" ]]; then
@@ -54,8 +56,10 @@ DO \$\$ BEGIN
   END IF;
 END \$\$;
 SQL
+  # template0: a container with no locale gets an SQL_ASCII template1, which
+  # cannot be copied into a UTF8 database.
   su postgres -c "psql -tAc \"SELECT 1 FROM pg_database WHERE datname = 'rsc_editor'\"" | grep -q 1 \
-    || su postgres -c "createdb -O rsc -E UTF8 rsc_editor"
+    || su postgres -c "createdb -O rsc -E UTF8 -T template0 rsc_editor"
 
   sed -e "s|^DATABASE_URL=.*|DATABASE_URL=postgres://rsc:${DB_PASSWORD}@127.0.0.1:5432/rsc_editor|" \
       -e "s|^SESSION_SECRET=.*|SESSION_SECRET=${SESSION_SECRET}|" \
