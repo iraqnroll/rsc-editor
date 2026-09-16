@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { loadConfig } from '@rsc-editor/cache';
 import { buildTextureAtlas } from './atlas.js';
+import { decodePng } from './png.js';
 
 /**
  * The atlas this tool stores in the database must be the same sheet the
@@ -11,8 +12,8 @@ import { buildTextureAtlas } from './atlas.js';
  * If they ever differ, every textured polygon in the editor samples the wrong
  * cell -- and it fails *plausibly*, as a world drawn with the right shapes and
  * the wrong materials, which is exactly the kind of bug that survives a
- * screenshot review. So this compares the produced PNG byte-for-byte against
- * the committed one, and the produced layout against the committed layout
+ * screenshot review. So this compares the produced sheet pixel-for-pixel
+ * against the committed one (not byte-for-byte: see `png.ts`), and the produced layout against the committed layout
  * module, rather than asserting some weaker property about both.
  *
  * Neither file here is edited by this test, and neither is a fixture: they are
@@ -54,11 +55,13 @@ function committedCells(): Array<{
 }
 
 describe('texture atlas', () => {
-  it('produces the same PNG the render package committed', () => {
-    const committed = read(join(SCENE, 'texture-atlas.png'));
-    // Buffer comparison rather than a length/hash check, so a failure prints the
-    // first differing byte instead of "expected 159218 to be 159218".
-    expect(Buffer.from(atlas.png)).toEqual(Buffer.from(committed));
+  it('produces the same image the render package committed', () => {
+    const committed = decodePng(read(join(SCENE, 'texture-atlas.png')));
+    const produced = decodePng(atlas.png);
+    expect([produced.width, produced.height]).toEqual([committed.width, committed.height]);
+    // Buffer.equals, not toEqual: a 1024x1024 sheet diffed element by element
+    // is minutes of work for a one-word answer.
+    expect(Buffer.from(produced.rgba).equals(Buffer.from(committed.rgba))).toBe(true);
   });
 
   it('places every cell where the committed layout says', () => {

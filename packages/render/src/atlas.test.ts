@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { inflateSync } from 'node:zlib';
 import { describe, expect, it } from 'vitest';
 import { atlasUvRect, atlasUvs, gridAtlasLayout, texturesUsed } from './atlas.js';
 import { faceUvs, RscModel, TERRAIN_LIGHT } from './model.js';
@@ -211,7 +212,63 @@ describe('the committed browser atlas', () => {
     }
 
     expect(existsSync(PNG), `${PNG} is missing; run with UPDATE_TEXTURE_ATLAS=1`).toBe(true);
-    expect(new Uint8Array(readFileSync(PNG))).toEqual(built.png);
+    // Pixels, not bytes. The PNG's compressed stream depends on the zlib build
+    // Node ships with, so a sheet written on one machine never byte-matched
+    // one built on another, although every pixel agreed.
+    const committed = decodeRgbaPng(new Uint8Array(readFileSync(PNG)));
+    expect([committed.width, committed.height]).toEqual([
+      built.layout.width,
+      built.layout.height
+    ]);
+    expect(Buffer.from(committed.rgba).equals(Buffer.from(built.rgba))).toBe(true);
     expect(readFileSync(LAYOUT, 'utf8').replace(/\r\n/g, '\n')).toBe(built.layoutModule);
   });
 });
+
+/** 8-bit RGBA, non-interlaced: all `encodePng` writes. Every filter type. */
+function decodeRgbaPng(png: Uint8Array): { width: number; height: number; rgba: Uint8Array } {
+  const view = new DataView(png.buffer, png.byteOffset, png.byteLength);
+  let width = 0;
+  let height = 0;
+  const idat: Uint8Array[] = [];
+  for (let at = 8; at < png.length; ) {
+    const length = view.getUint32(at);
+    const type = String.fromCharCode(...png.subarray(at + 4, at + 8));
+    const data = png.subarray(at + 8, at + 8 + length);
+    if (type === 'IHDR') {
+      width = view.getUint32(at + 8);
+      height = view.getUint32(at + 12);
+      expect([data[8], data[9], data[12]], 'expected 8-bit RGBA, not interlaced').toEqual([8, 6, 0]);
+    } else if (type === 'IDAT') {
+      idat.push(data);
+    }
+    at += length + 12;
+  }
+
+  const raw = inflateSync(Buffer.concat(idat));
+  const stride = width * 4;
+  const rgba = new Uint8Array(width * height * 4);
+  for (let y = 0; y < height; y++) {
+    const filter = raw[y * (stride + 1)]!;
+    const line = raw.subarray(y * (stride + 1) + 1, (y + 1) * (stride + 1));
+    const row = y * stride;
+    for (let i = 0; i < stride; i++) {
+      const a = i >= 4 ? rgba[row + i - 4]! : 0;
+      const b = y > 0 ? rgba[row - stride + i]! : 0;
+      const c = i >= 4 && y > 0 ? rgba[row - stride + i - 4]! : 0;
+      let predicted = 0;
+      if (filter === 1) predicted = a;
+      else if (filter === 2) predicted = b;
+      else if (filter === 3) predicted = (a + b) >> 1;
+      else if (filter === 4) {
+        const p = a + b - c;
+        const pa = Math.abs(p - a);
+        const pb = Math.abs(p - b);
+        const pc = Math.abs(p - c);
+        predicted = pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
+      }
+      rgba[row + i] = (line[i]! + predicted) & 0xff;
+    }
+  }
+  return { width, height, rgba };
+}
