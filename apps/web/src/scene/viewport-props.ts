@@ -53,7 +53,11 @@ export interface ViewportProps {
   painting: boolean;
   /** true for the region tool: a left-drag draws a rectangle instead of painting. */
   regionDrag: boolean;
-  onPick: (tile: WorldTile, mods: { alt: boolean; shift: boolean }) => void;
+  /**
+   * `continued` is true for every pick after the first in one drag, so the
+   * whole drag can be one undo step.
+   */
+  onPick: (tile: WorldTile, mods: { alt: boolean; shift: boolean; continued: boolean }) => void;
   onHover: (tile: WorldTile | null) => void;
   onDragRegion: (rect: RegionRect | null) => void;
 

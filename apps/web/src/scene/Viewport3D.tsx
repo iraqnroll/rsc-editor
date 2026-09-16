@@ -1279,7 +1279,7 @@ export function Viewport3D(props: ViewportProps) {
       return;
     }
     dragRef.current = { mode: 'paint', from: tile };
-    onPick(tile, { alt: e.altKey, shift: e.shiftKey });
+    onPick(tile, { alt: e.altKey, shift: e.shiftKey, continued: false });
   };
 
   const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -1310,7 +1310,7 @@ export function Viewport3D(props: ViewportProps) {
     if (drag.mode === 'region' && drag.from) {
       onDragRegion({ plane, x0: drag.from.wx, y0: drag.from.wy, x1: tile.wx, y1: tile.wy });
     } else if (drag.mode === 'paint') {
-      onPick(tile, { alt: e.altKey, shift: e.shiftKey });
+      onPick(tile, { alt: e.altKey, shift: e.shiftKey, continued: true });
     }
   };
 

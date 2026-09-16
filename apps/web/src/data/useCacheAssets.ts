@@ -13,7 +13,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { getApi } from './api.js';
+import { getApi, isProjectNotOpen } from './api.js';
 import type { EntitySpriteSheet } from './entity-sprites.js';
 import type { WorldMapMeta } from './world-map.js';
 
@@ -72,6 +72,30 @@ export interface WorldMapState {
 const LOADING: WorldMapState = { status: 'loading', meta: null, image: null, error: null };
 
 /**
+ * How long to wait before asking again when the project is not open yet.
+ *
+ * The panels mount before `connect()` opens the project, so on a cold load the
+ * first request fails with `NoProjectError` within milliseconds. That is "asked
+ * too early", not an answer (see `isProjectNotOpen`), and showing it as
+ * "map failed" -- which is what happened -- is wrong on a working project.
+ */
+const NOT_OPEN_RETRY_MS = 250;
+/** Two minutes. A project that has not opened by then is a real failure. */
+const NOT_OPEN_MAX_WAITS = 480;
+const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+async function whenProjectOpen<T>(load: () => Promise<T>, cancelled: () => boolean): Promise<T> {
+  for (let waited = 0; ; waited++) {
+    try {
+      return await load();
+    } catch (err) {
+      if (!isProjectNotOpen(err) || cancelled() || waited >= NOT_OPEN_MAX_WAITS) throw err;
+      await wait(NOT_OPEN_RETRY_MS);
+    }
+  }
+}
+
+/**
  * The coloured map for one plane.
  *
  * Re-fetches on every plane change; the transport caches the bytes per plane
@@ -96,8 +120,7 @@ export function useWorldMap(plane: number): WorldMapState {
     let cancelled = false;
     setState(LOADING);
 
-    void getApi()
-      .loadWorldMap(plane)
+    void whenProjectOpen(() => getApi().loadWorldMap(plane), () => cancelled)
       .then(async (asset) => {
         if (cancelled) return;
         if (!asset) {
@@ -163,8 +186,9 @@ export interface EntitySpriteState {
 let spritePromise: Promise<EntitySpriteState> | null = null;
 
 function loadSpriteSheet(): Promise<EntitySpriteState> {
-  spritePromise ??= getApi()
-    .loadEntitySprites()
+  // No cancellation: the promise is shared, and a later mount would only
+  // start the same wait again.
+  spritePromise ??= whenProjectOpen(() => getApi().loadEntitySprites(), () => false)
     .then((sheet): EntitySpriteState => {
       if (!sheet) return { status: 'absent', sheet: null, url: null, error: null };
       const url =

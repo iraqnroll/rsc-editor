@@ -29,9 +29,12 @@ export interface GestureModifiers {
   /** Alt inverts a tool: raise<->lower, place<->erase. */
   alt: boolean;
   shift: boolean;
+  /** Not the first pick of this drag: its edit joins the drag's undo step. */
+  continued: boolean;
 }
 
 export function applyGesture(tile: WorldTile, mods: GestureModifiers): void {
+  if (!mods.continued) useEditor.getState().startStroke();
   const state = useEditor.getState();
   const read = state.readSector;
   const s = state.toolSettings;

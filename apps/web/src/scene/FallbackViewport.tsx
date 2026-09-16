@@ -392,7 +392,7 @@ export function FallbackViewport(props: ViewportProps) {
             return;
           }
           dragRef.current = { mode: 'paint', from: tile };
-          onPick(tile, { alt: e.altKey, shift: e.shiftKey });
+          onPick(tile, { alt: e.altKey, shift: e.shiftKey, continued: false });
         }}
         onPointerMove={(e) => {
           const p = localPoint(e);
@@ -413,7 +413,7 @@ export function FallbackViewport(props: ViewportProps) {
               y1: tile.wy
             });
           } else if (drag.mode === 'paint') {
-            onPick(tile, { alt: e.altKey, shift: e.shiftKey });
+            onPick(tile, { alt: e.altKey, shift: e.shiftKey, continued: true });
           }
         }}
         onPointerUp={() => {

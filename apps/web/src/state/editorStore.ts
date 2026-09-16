@@ -68,6 +68,8 @@ export interface Transaction {
   ops: Op[];
   at: number;
   tiles: number;
+  /** The drag this was made in; later edits in the same drag merge into it. */
+  stroke?: string;
 }
 
 export type Notice =
@@ -205,6 +207,13 @@ export interface EditorState {
   setTool(id: ToolId): void;
   updateToolSettings<K extends keyof ToolSettings>(tool: K, patch: Partial<ToolSettings[K]>): void;
 
+  /**
+   * Open a new drag. Every `commit` until the next call joins one undo step.
+   * The ops themselves are still sent as they are made.
+   */
+  startStroke(): void;
+  /** the open drag, or null outside one */
+  stroke: string | null;
   commit(result: BuildResult, label?: string): void;
   commitDefinitionEdit(
     kind: DefinitionKind,
@@ -294,6 +303,7 @@ export const useEditor = create<EditorState>()((set, get) => ({
   activeTool: 'select',
   toolSettings: DEFAULT_TOOL_SETTINGS,
 
+  stroke: null,
   undoStack: [],
   redoStack: [],
   history: [],
@@ -638,6 +648,10 @@ export const useEditor = create<EditorState>()((set, get) => ({
 
   /* ----------------------------------------------------------- committing -- */
 
+  startStroke() {
+    set({ stroke: opId() });
+  },
+
   commit(result, label) {
     if (result.conflicts.length > 0) {
       set({ notice: { kind: 'conflict', messages: result.conflicts } });
@@ -679,7 +693,7 @@ export const useEditor = create<EditorState>()((set, get) => ({
       return;
     }
 
-    commitOps(set, get, result.ops, label);
+    commitOps(set, get, result.ops, label, state.stroke ?? undefined);
   },
 
   commitDefinitionEdit(kind, index, from, to) {
@@ -718,9 +732,13 @@ export const useEditor = create<EditorState>()((set, get) => ({
     }
 
     // Reverse order: later ops in a transaction may depend on earlier ones.
-    const inverted = [...tx.ops].reverse().map(invert);
+    // Fresh ids, always: the server drops any op id it has already logged
+    // (resubmit protection in `appendOpsInTx`), and `invert` keeps the id of
+    // the op it inverts. Reusing it made undo apply locally and nowhere else --
+    // peers never saw it and a reload brought the edit back.
+    const inverted = [...tx.ops].reverse().map((op) => ({ ...invert(op), id: opId() }));
     applyLocally(set, get, inverted);
-    void state.api.submitOps(inverted);
+    submitChunked(get, inverted);
 
     set((s) => ({
       undoStack: s.undoStack.slice(0, -1),
@@ -748,8 +766,10 @@ export const useEditor = create<EditorState>()((set, get) => ({
       return;
     }
 
-    applyLocally(set, get, tx.ops);
-    void state.api.submitOps(tx.ops);
+    // Fresh ids for the same reason as `undo`: these ids are already logged.
+    const again = tx.ops.map((op) => ({ ...op, id: opId() }));
+    applyLocally(set, get, again);
+    submitChunked(get, again);
 
     set((s) => ({
       redoStack: s.redoStack.slice(0, -1),
@@ -854,15 +874,34 @@ function lockBlocked(state: EditorState, tx: Transaction): SectorCoord[] {
 }
 
 /** Apply + record + send. The single write path. */
-function commitOps(set: Setter, get: Getter, ops: Op[], label?: string): void {
+function commitOps(set: Setter, get: Getter, ops: Op[], label?: string, stroke?: string): void {
   applyLocally(set, get, ops);
+
+  // Same drag as the newest undo step: grow that step instead of adding one.
+  // A drag used to leave one step per tile it crossed.
+  const last = get().undoStack.at(-1);
+  if (stroke !== undefined && last?.stroke === stroke) {
+    const merged: Transaction = {
+      ...last,
+      ops: [...last.ops, ...ops],
+      tiles: last.tiles + ops.reduce((n, op) => n + opTileCount(op), 0)
+    };
+    set((s) => ({
+      undoStack: [...s.undoStack.slice(0, -1), merged],
+      history: s.history.map((h) => (h.tx.id === last.id ? { ...h, tx: merged } : h)),
+      notice: null
+    }));
+    submitChunked(get, ops);
+    return;
+  }
 
   const tx: Transaction = {
     id: opId(),
     label: label ?? describeOp(ops[0] as Op),
     ops,
     at: Date.now(),
-    tiles: ops.reduce((n, op) => n + opTileCount(op), 0)
+    tiles: ops.reduce((n, op) => n + opTileCount(op), 0),
+    ...(stroke !== undefined ? { stroke } : {})
   };
 
   set((s) => ({
@@ -872,7 +911,14 @@ function commitOps(set: Setter, get: Getter, ops: Op[], label?: string): void {
     notice: null
   }));
 
-  // sectorOpSchema allows 64 ops per op.submit frame.
+  submitChunked(get, ops);
+}
+
+/**
+ * `sectorOpSchema` allows 64 ops per op.submit frame. Undo and redo go through
+ * here too: a region fill undone in one frame would be rejected whole.
+ */
+function submitChunked(get: Getter, ops: Op[]): void {
   for (let i = 0; i < ops.length; i += 64) {
     void get().api.submitOps(ops.slice(i, i + 64));
   }
