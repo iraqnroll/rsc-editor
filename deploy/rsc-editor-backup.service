@@ -1,0 +1,13 @@
+# Nightly database dump. Installed by deploy/install.sh.
+[Unit]
+Description=RSC Editor database backup
+Requires=postgresql.service
+After=postgresql.service
+
+[Service]
+Type=oneshot
+User=postgres
+# Custom format: compressed, and restorable table by table with pg_restore.
+ExecStart=/bin/sh -c 'pg_dump -Fc rsc_editor > /var/backups/rsc-editor/rsc_editor-$(date +%%Y%%m%%d-%%H%%M).dump'
+# Keep two weeks.
+ExecStartPost=/usr/bin/find /var/backups/rsc-editor -name 'rsc_editor-*.dump' -mtime +14 -delete

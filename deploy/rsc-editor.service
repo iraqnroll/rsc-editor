@@ -1,0 +1,31 @@
+# The API + realtime server. Installed by deploy/install.sh.
+[Unit]
+Description=RSC Editor API server
+After=network-online.target postgresql.service
+Wants=network-online.target
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=rsc
+Group=rsc
+WorkingDirectory=/opt/rsc-editor/apps/server
+# tsx runs the TypeScript workspace sources directly; there is no separate
+# server build. --env-file is read by node, not by systemd, so the file keeps
+# the same syntax as apps/server/.env.
+ExecStart=/usr/bin/node --env-file=/etc/rsc-editor/server.env --import tsx src/index.ts
+Restart=on-failure
+RestartSec=3
+
+# Hardening. The server only needs its checkout and the network.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadOnlyPaths=/opt/rsc-editor
+# tsx caches compiled modules under the user's cache dir.
+Environment=XDG_CACHE_HOME=/var/cache/rsc-editor
+CacheDirectory=rsc-editor
+
+[Install]
+WantedBy=multi-user.target

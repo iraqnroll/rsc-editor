@@ -88,6 +88,7 @@ change there, say so in your report rather than making it.
 | `apps/server` | `api-db` / `realtime` | Fastify routes + auth / WS, locks, op log |
 | `apps/web` | `editor-ux` | React UI, tools, panels, definition forms |
 | `tools/*` | `cache-formats` | CLIs (cache import, audits) |
+| `deploy/` | `api-db` | Proxmox LXC install/update/backup, see `deploy/README.md` |
 | `fixtures/` | nobody | read-only, see `fixtures/SOURCE.md` |
 
 ## Conventions
@@ -114,7 +115,8 @@ change there, say so in your report rather than making it.
 - Phase 5 — **export done**: validated zip from the API and an Export
   button (DECISIONS §15); **snapshots and the project log** in the History
   tab, with export as of a snapshot (§16); sector meshing on a Web Worker
-  pool (`apps/web/src/scene/mesher.ts`). Still to do: deployment. Phase 4 (definition editors) after that.
+  pool (`apps/web/src/scene/mesher.ts`); **deployment** to a Proxmox LXC
+  (`deploy/`, tested in a systemd Debian 12 container). Next: Phase 4. Phase 4 (definition editors) after that.
 - Phases 4-5 — see `PLAN.md`
 
 Not yet verified anywhere: the Discord OAuth **callback** (needs a real Discord

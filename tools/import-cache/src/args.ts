@@ -53,8 +53,8 @@ Options
                        scenery is NOT in the cache -- the server sends it, and
                        the archives carry .loc for two sectors only. Without
                        this flag an import is byte-exact against the source
-                       archives; with it, an export gains .loc entries the
-                       original cache did not have.
+                       archives. Export writes the placed scenery back out
+                       as object-locs.json (docs/DECISIONS.md section 15).
   --database-url <url> Postgres URL. Defaults to $DATABASE_URL.
   --replace            re-import into the existing project with this slug.
                        Without it, an existing slug is an error. Re-import is

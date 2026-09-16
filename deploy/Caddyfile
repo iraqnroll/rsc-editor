@@ -1,0 +1,31 @@
+# Installed to /etc/caddy/Caddyfile by deploy/install.sh.
+#
+# RSC_SITE_ADDRESS is set in /etc/default/caddy:
+#   - a domain (editor.example.com) when this container is reachable from the
+#     internet on 80/443: Caddy gets and renews the certificate itself;
+#   - ":80" when another proxy in front of it (Nginx Proxy Manager, Traefik,
+#     the Proxmox host) terminates TLS. That proxy must pass WebSockets and the
+#     X-Forwarded-* headers.
+{$RSC_SITE_ADDRESS::80} {
+	encode zstd gzip
+
+	# One origin for the app, the API and the socket, so the session cookie
+	# travels without CORS.
+	handle /api/* {
+		reverse_proxy 127.0.0.1:8080
+	}
+	handle /ws* {
+		reverse_proxy 127.0.0.1:8080
+	}
+
+	handle {
+		root * /opt/rsc-editor/apps/web/dist
+		# Hashed file names never change content: cache them for a year.
+		@assets path /assets/*
+		header @assets Cache-Control "public, max-age=31536000, immutable"
+		# index.html must always be revalidated or an update never arrives.
+		header /index.html Cache-Control "no-cache"
+		try_files {path} /index.html
+		file_server
+	}
+}

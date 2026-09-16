@@ -30,6 +30,15 @@ function Shell({ title, children }: { title: string; children: React.ReactNode }
   );
 }
 
+/**
+ * The dev sign-in is refused by a production server anyway (`devLoginAllowed`),
+ * so a production build does not offer it. `VITE_DEV_LOGIN=1` brings it back
+ * for a staging build that talks to a local server.
+ */
+const SHOW_DEV_LOGIN =
+  !import.meta.env.PROD ||
+  (import.meta.env as Record<string, unknown>).VITE_DEV_LOGIN === '1';
+
 export function LoginGate() {
   const signIn = useEditor((s) => s.signIn);
   const error = useEditor((s) => s.error);
@@ -59,23 +68,27 @@ export function LoginGate() {
         Sign in with Discord
       </a>
 
-      <div className="gate__or">or, on a local server</div>
+      {SHOW_DEV_LOGIN && (
+        <>
+          <div className="gate__or">or, on a local server</div>
 
-      <form onSubmit={(e) => void submit(e)} className="gate__form">
-        <label className="field">
-          <span className="field__label">Dev username</span>
-          <input
-            type="text"
-            value={username}
-            autoComplete="username"
-            placeholder="lukas"
-            onChange={(e) => setUsername(e.target.value)}
-          />
-        </label>
-        <button type="submit" className="btn" disabled={busy || username.trim().length === 0}>
-          {busy ? 'Signing in…' : 'Dev sign in'}
-        </button>
-      </form>
+          <form onSubmit={(e) => void submit(e)} className="gate__form">
+            <label className="field">
+              <span className="field__label">Dev username</span>
+              <input
+                type="text"
+                value={username}
+                autoComplete="username"
+                placeholder="lukas"
+                onChange={(e) => setUsername(e.target.value)}
+              />
+            </label>
+            <button type="submit" className="btn" disabled={busy || username.trim().length === 0}>
+              {busy ? 'Signing in…' : 'Dev sign in'}
+            </button>
+          </form>
+        </>
+      )}
 
       {error && (
         <p className="gate__error" role="alert">
