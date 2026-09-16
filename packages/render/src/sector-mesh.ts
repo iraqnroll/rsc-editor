@@ -1,7 +1,7 @@
 import type { RscConfig, SectorBuffers, SectorCoord } from '@rsc-editor/schema';
 import { LandscapeView, neighboursFrom } from './landscape-view.js';
 import type { BuildOptions, GeometryData } from './model.js';
-import { buildRoofs } from './roofs.js';
+import { buildRoofs, type RoofOptions } from './roofs.js';
 import {
   buildScenery,
   emptySceneryMesh,
@@ -35,6 +35,8 @@ export interface SectorMesh {
 export interface SectorMeshOptions extends BuildOptions {
   terrain?: TerrainOptions;
   walls?: WallOptions;
+  /** `heights` here is mutated, like the client's grid; see `RoofOptions`. */
+  roofs?: RoofOptions;
   /** Decoded `.ob3` models by NAME. Omit to skip scenery entirely. */
   models?: SceneryModelSource;
   /** Shared across sectors so identical (model, direction) geometry is built once. */
@@ -56,7 +58,7 @@ export function buildSectorMesh(
   return {
     terrain: buildTerrain(view, config, { ...options, ...options.terrain }),
     walls: buildWalls(view, config, { ...options, ...options.walls }),
-    roofs: buildRoofs(view, config, options),
+    roofs: buildRoofs(view, config, { ...options, ...options.roofs }),
     scenery: options.models
       ? buildScenery(view, config, {
           ...options,

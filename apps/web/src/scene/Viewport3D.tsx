@@ -267,6 +267,27 @@ function SceneContents(props: SceneProps) {
   );
   const activePlaneY = planeY(props.plane);
 
+  /**
+   * Where a plane's per-corner walls and roofs are drawn, as opposed to its
+   * deck.
+   *
+   * Those are meshed at their absolute storey heights (`absoluteWalls`), so
+   * stacked they need no lift at all. Drawn alone, the deck sits at 0 rather
+   * than at its stacked height, and the walls move down by the same amount so
+   * they stay where they were relative to it. Either way this is
+   * `planeY - stackedY`.
+   */
+  const absoluteWallY = useCallback(
+    (plane: number) => {
+      const stackedY = props.activeSector
+        ? cache.storeyOffset(props.activeSector, plane)
+        : cache.planeOffset(plane);
+      return planeY(plane) - stackedY;
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [cache, planeY, props.version, props.activeSector?.x, props.activeSector?.y]
+  );
+
   const pick = useCallback(
     (ndcX: number, ndcY: number): PickResult => {
       raycaster.setFromCamera(new Vector2(ndcX, ndcY), camera);
@@ -379,6 +400,7 @@ function SceneContents(props: SceneProps) {
             ghost={ghost}
             showDeck={!above}
             planeY={planeY(set.coord.plane)}
+            wallY={set.absoluteWalls ? absoluteWallY(set.coord.plane) : planeY(set.coord.plane)}
             register={
               ghost
                 ? undefined
@@ -635,6 +657,7 @@ function SectorLayer({
   ghost,
   showDeck,
   planeY,
+  wallY,
   register
 }: {
   set: SectorGeometrySet;
@@ -660,8 +683,13 @@ function SectorLayer({
    * and it is the pick target.
    */
   showDeck: boolean;
-  /** render-space Y this plane is drawn at, solved from its connectors */
+  /** render-space Y this plane's deck is drawn at */
   planeY: number;
+  /**
+   * render-space Y for the walls and roofs. Differs from `planeY` when they
+   * were meshed at absolute per-corner heights; see `absoluteWalls`.
+   */
+  wallY: number;
   /** omitted for a ghost plane, which is not pickable */
   register?: (mesh: Mesh | null) => void;
 }) {
@@ -689,25 +717,29 @@ function SectorLayer({
   );
 
   return (
-    <group position={[set.originX, planeY, set.originZ]}>
-      {showDeck && set.terrain && (
-        <mesh
-          ref={(mesh) => {
-            // The picker reads `userData.sector` to turn a faceIndex into a
-            // tile; see picking.ts.
-            if (mesh) mesh.userData.sector = set;
-            register?.(mesh);
-          }}
-          geometry={set.terrain}
-          // A ghost storey is there to be looked through. Raycasting it would
-          // let a click land on a floor the user is not editing.
-          raycast={ghost ? () => null : undefined}
-        >
-          {material}
-        </mesh>
-      )}
-      {set.walls && <mesh geometry={set.walls}>{material}</mesh>}
-      {set.roofs && <mesh geometry={set.roofs}>{material}</mesh>}
+    <group position={[set.originX, 0, set.originZ]}>
+      <group position={[0, planeY, 0]}>
+        {showDeck && set.terrain && (
+          <mesh
+            ref={(mesh) => {
+              // The picker reads `userData.sector` to turn a faceIndex into a
+              // tile; see picking.ts.
+              if (mesh) mesh.userData.sector = set;
+              register?.(mesh);
+            }}
+            geometry={set.terrain}
+            // A ghost storey is there to be looked through. Raycasting it would
+            // let a click land on a floor the user is not editing.
+            raycast={ghost ? () => null : undefined}
+          >
+            {material}
+          </mesh>
+        )}
+      </group>
+      <group position={[0, wallY, 0]}>
+        {set.walls && <mesh geometry={set.walls}>{material}</mesh>}
+        {set.roofs && <mesh geometry={set.roofs}>{material}</mesh>}
+      </group>
     </group>
   );
 }

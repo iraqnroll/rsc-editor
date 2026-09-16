@@ -101,5 +101,17 @@ describe.skipIf(!reachable)('storeyOffset at Wizards Tower', () => {
     // are 275 high, and the floor above those stands 256 higher again.
     expect(result.sectorPlane1).toBe(617);
     expect(result.sectorPlane2).toBe(873);
+
+    // Per corner, the walls themselves: plane 1 is meshed on the storey grid,
+    // so its wall feet are at the tower's 617 where the tower holds them up and
+    // at the bare ground (342) where nothing does -- not all at one height.
+    const upper = cache.get('1/52/51')!;
+    expect(upper.absoluteWalls).toBe(true);
+    const ys = new Set<number>();
+    const array = upper.walls!.getAttribute('position').array;
+    for (let i = 1; i < array.length; i += 3) ys.add(Math.round(array[i]!));
+    console.log('PLANE1 WALL YS', JSON.stringify([...ys].sort((a, b) => a - b)));
+    expect(ys.has(617)).toBe(true);
+    expect(ys.has(342)).toBe(true);
   }, 60_000);
 });

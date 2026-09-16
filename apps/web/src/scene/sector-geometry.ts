@@ -62,6 +62,8 @@ import {
   listConnectors,
   neighboursFrom,
   planeElevation,
+  buildRoofHeightField,
+  buildStoreyHeights,
   planeOffsets,
   renderX,
   storeyFloorHeights,
@@ -70,6 +72,7 @@ import {
   type ConnectorLink,
   type ConnectorPlacement,
   type GeometryData,
+  type HeightField,
   type SceneryModelSource
 } from '@rsc-editor/render';
 
@@ -118,6 +121,14 @@ export interface SectorGeometrySet {
    * into a tile without inverting any coordinates by hand.
    */
   terrainTiles: Int32Array;
+  /**
+   * True when `walls` and `roofs` were built on the client's storey grid, so
+   * every corner already sits at its absolute height and the plane offset must
+   * NOT be applied to them again. The terrain, scenery and connectors are
+   * still meshed flat and placed by the plane offset either way. See
+   * `storeyGrids`.
+   */
+  absoluteWalls: boolean;
   /** this sector's placements, by batch key. Geometry lives on the cache. */
   scenery: SceneryPlacements[];
   /**
@@ -190,15 +201,29 @@ function signatureOf(
   sectors: ReadonlyMap<string, SectorSource>
 ): string {
   const parts: string[] = [];
-  for (let dx = -1; dx <= 1; dx++) {
-    for (let dy = -1; dy <= 1; dy++) {
-      const found = sectors.get(
-        sectorKey({ plane: coord.plane, x: coord.x + dx, y: coord.y + dy })
-      );
-      parts.push(found ? String(found.rev) : '-');
+  // An upper storey's walls stand on the grid the planes under it leave
+  // behind, so those planes' neighbourhoods are part of its signature too:
+  // plane 0 arriving after plane 1 was meshed must re-mesh plane 1.
+  for (const plane of storeyPlanesUnder(coord.plane)) {
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        const found = sectors.get(sectorKey({ plane, x: coord.x + dx, y: coord.y + dy }));
+        parts.push(found ? String(found.rev) : '-');
+      }
     }
   }
   return parts.join(',');
+}
+
+/**
+ * The planes whose lanes decide how `plane` is meshed, itself last.
+ *
+ * Planes 1 and 2 are in the client's storey chain (`CLIENT_STOREY_CHAIN`), so
+ * everything under them counts. The ground and the dungeon stand on their own
+ * terrain.
+ */
+function storeyPlanesUnder(plane: number): number[] {
+  return plane === 1 || plane === 2 ? [0, 1, 2].slice(0, plane + 1) : [plane];
 }
 
 /**
@@ -351,9 +376,11 @@ export class SectorGeometryCache {
     const originX = renderX(sector.coord.x * SECTOR_SPAN);
     const originZ = sector.coord.y * SECTOR_SPAN;
 
+    const grids = this.storeyGrids(sector.coord, view);
     const mesh = buildSectorMesh(view, this.config!, {
       ...(this.models ? { models: this.models } : {}),
-      sceneryGeometryCache: this.sceneryData
+      sceneryGeometryCache: this.sceneryData,
+      ...(grids ? { walls: { heights: grids.walls }, roofs: { heights: grids.roofs } } : {})
     });
 
     const terrain = toBufferGeometry(mesh.terrain, this.layout);
@@ -395,6 +422,7 @@ export class SectorGeometryCache {
       walls,
       roofs,
       terrainTiles: mesh.terrain.triangleTiles,
+      absoluteWalls: grids !== null,
       scenery,
       // Cheap -- it walks the same placement list the scenery pass already
       // walked -- so it rides along with the mesh rather than being a second
@@ -561,9 +589,13 @@ export class SectorGeometryCache {
 
   private gridStoreyHeights(coord: SectorCoord): Map<number, number> {
     if (!this.config) return new Map();
+    return storeyFloorHeights(this.storeyViews(coord, 2), this.config);
+  }
 
+  /** Views of planes 0..`top` at one sector, for whichever of them are loaded. */
+  private storeyViews(coord: SectorCoord, top: number): Map<number, LandscapeView> {
     const views = new Map<number, LandscapeView>();
-    for (const plane of [0, 1, 2]) {
+    for (const plane of storeyPlanesUnder(top)) {
       const at = { plane, x: coord.x, y: coord.y };
       const sector = this.sectors.get(sectorKey(at));
       if (!sector) continue;
@@ -576,7 +608,41 @@ export class SectorGeometryCache {
         })
       );
     }
-    return storeyFloorHeights(views, this.config);
+    return views;
+  }
+
+  /**
+   * The grids an upper storey's walls and roofs are built on, per corner.
+   *
+   * This is the client's own placement (DECISIONS 14): the plane 1 and 2 loads
+   * inherit `terrainHeightLocal` from the planes under them, so every wall
+   * corner stands on whatever is actually beneath it -- a 275-high tower wall,
+   * a roof deck, or bare ground where nothing is below. One offset per plane
+   * cannot say that; the castle's first floor alone spans 480..634.
+   *
+   * Null -- mesh flat, place by the plane offset, as before -- for the ground,
+   * the dungeon, and whenever plane 0 is not loaded under this sector. The last
+   * is the single-plane view, which only ever loads the plane being edited, and
+   * must stay exactly the view it has always been.
+   *
+   * `view` is the one being meshed, reused so the grid and the geometry read
+   * the same lanes.
+   */
+  private storeyGrids(
+    coord: SectorCoord,
+    view: LandscapeView
+  ): { walls: HeightField; roofs: HeightField } | null {
+    if (coord.plane !== 1 && coord.plane !== 2) return null;
+
+    const views = this.storeyViews(coord, coord.plane);
+    if (!views.has(0)) return null;
+    views.set(coord.plane, view);
+
+    const walls = buildStoreyHeights(views, this.config!).get(coord.plane);
+    if (!walls) return null;
+    // Passes 1 and 2 of this plane's own walls, which the roof builder expects
+    // to have run; it adds pass 3 as it meshes.
+    return { walls, roofs: buildRoofHeightField(view, this.config!, walls) };
   }
 
   private ladderStoreyOffset(coord: SectorCoord, plane: number): number {

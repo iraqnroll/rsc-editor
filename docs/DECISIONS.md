@@ -598,12 +598,32 @@ it, and plane 2 inherited only plane 1's roof height. With the clear, plane 2
 stands at 720 at the castle and 873 at the tower. Both are pinned in
 `storeys.test.ts` and, against a live server, `storey-offset.integration.test.ts`.
 
+### Walls and roofs per corner
+
+Upper-plane walls and roofs are now built on the storey grid itself, so each
+corner stands where the client puts it: on the tower's 275-high wall (617), on
+a standard wall (534), or on bare ground (342) where nothing holds it up. The
+castle's first floor keeps its 480..634 spread instead of one number.
+
+What did not move, on purpose: the deck, the scenery, the ladders, picking,
+the overlays and the camera still use the one per-plane offset above. The deck
+is an editor affordance (the client draws it transparent) and it has to stay a
+flat, pickable surface. So `SectorLayer` draws two groups: the deck at
+`planeY`, and the walls and roofs at `planeY - stackedY`, which is 0 when
+stacked (they are already absolute) and keeps them in place relative to the
+deck when a plane is drawn alone.
+
+A sector is only built this way when plane 0 is loaded under it
+(`absoluteWalls`). The single-plane view never loads other planes, so it is
+unchanged. An upper sector's signature includes the planes under it, so it is
+rebuilt when the ground arrives.
+
 ### Still open
 
-It is still one number per plane, applied to every sector of that plane. The
-castle's first floor spreads over 480..634 and the mode (528) holds only 57 of
-128 corners. Placing each corner at its grid height is what the client does,
-and `buildWalls` / `buildRoofs` already accept the grid, but it means drawing
-upper planes at absolute heights instead of by a group translation. That moves
-the connector layer, picking, the overlays and the camera presets, and the
-editor still has to keep the deck you are editing pickable.
+- Scenery on an upper floor still sits on the flat deck, not per corner. The
+  client places it with `getElevation`, which takes no plane, so the right
+  answer needs checking before it is changed.
+- Each sector's grid is swept over its own 3x3 neighbourhood, not the client's
+  96x96 region (see `height-field.ts`), and the outer ring of the loaded area
+  has no ground loaded beyond it. A building that crosses either edge can be
+  levelled differently from the client.

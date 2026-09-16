@@ -29,6 +29,8 @@ import {
   TILE_SIZE,
   buildScenery,
   buildSectorMesh,
+  buildStoreyHeights,
+  buildWalls,
   gridAtlasLayout,
   neighboursFrom,
   planesFor,
@@ -245,6 +247,119 @@ function twoStoreySectors(coord: SectorCoord): Map<string, SectorSource> {
 
   return out;
 }
+
+/**
+ * A ground floor on a hill with one wall, and a first floor with a wall on the
+ * same edge. Plane 1 is elevation 0, as every real upper storey is, so the only
+ * way its wall can stand on anything is the storey grid.
+ */
+function wallOnWall(config: RscConfig): { sectors: Map<string, SectorSource>; wallId: number } {
+  const lane = tileIndex(10, 10);
+  const probe = (id: number) => {
+    const buffers = emptySectorBuffers();
+    buffers.wallsHorizontal[lane] = id + 1;
+    const view = new LandscapeView({ plane: 0, centre: buffers, neighbours: new Map() });
+    return buildWalls(view, config).triangleCount > 0 && (config.wallObjects[id]?.height ?? 0) > 0;
+  };
+  const wallId = config.wallObjects.findIndex((_, id) => probe(id));
+  expect(wallId).toBeGreaterThanOrEqual(0);
+
+  const sectors = new Map<string, SectorSource>();
+  for (const plane of [0, 1]) {
+    const buffers = emptySectorBuffers();
+    if (plane === 0) buffers.elevation.fill(100);
+    buffers.wallsHorizontal[lane] = wallId + 1;
+    const coord = { plane, x: 50, y: 50 };
+    sectors.set(sectorKey(coord), { coord, buffers, rev: 0 });
+  }
+  return { sectors, wallId };
+}
+
+function minY(geometry: { getAttribute(name: string): { array: ArrayLike<number> } } | null): number {
+  const array = geometry!.getAttribute('position').array;
+  let min = Infinity;
+  for (let i = 1; i < array.length; i += 3) min = Math.min(min, array[i]!);
+  return min;
+}
+
+describe('per-corner storeys', () => {
+  it('stands an upper wall on the wall below it when the ground is loaded', async () => {
+    const { config } = await loadNeighbourhood();
+    const { sectors, wallId } = wallOnWall(config);
+
+    const cache = new SectorGeometryCache();
+    cache.request(sectors, config, null);
+    drainAll(cache);
+
+    const ground = cache.get(sectorKey({ plane: 0, x: 50, y: 50 }))!;
+    const upper = cache.get(sectorKey({ plane: 1, x: 50, y: 50 }))!;
+    expect(ground.absoluteWalls).toBe(false);
+    expect(upper.absoluteWalls).toBe(true);
+
+    // The foot of the upper wall is the top of the lower one: the ground's
+    // terrain plus that wall's own height, straight off the grid.
+    const lift = config.wallObjects[wallId]!.height;
+    expect(minY(upper.walls)).toBe(minY(ground.walls) + lift);
+
+    // And it is exactly what the render package builds on the storey grid.
+    const views = new Map(
+      [0, 1].map((plane) => {
+        const coord = { plane, x: 50, y: 50 };
+        return [
+          plane,
+          new LandscapeView({
+            plane,
+            centre: sectors.get(sectorKey(coord))!.buffers,
+            neighbours: neighboursFrom(coord, sectors)
+          })
+        ] as const;
+      })
+    );
+    const expected = buildWalls(views.get(1)!, config, {
+      heights: buildStoreyHeights(views, config).get(1)
+    });
+    expect(Array.from(upper.walls!.getAttribute('position').array)).toEqual(
+      Array.from(expected.positions)
+    );
+
+    cache.clear();
+  });
+
+  it('meshes an upper plane flat when it is drawn alone', async () => {
+    const { config } = await loadNeighbourhood();
+    const { sectors } = wallOnWall(config);
+    const alone = new Map(
+      [...sectors].filter(([, sector]) => sector.coord.plane === 1)
+    );
+
+    const cache = new SectorGeometryCache();
+    cache.request(alone, config, null);
+    drainAll(cache);
+
+    const upper = cache.get(sectorKey({ plane: 1, x: 50, y: 50 }))!;
+    expect(upper.absoluteWalls).toBe(false);
+    expect(minY(upper.walls)).toBe(0);
+
+    cache.clear();
+  });
+
+  it('re-meshes an upper plane when the ground under it arrives', async () => {
+    const { config } = await loadNeighbourhood();
+    const { sectors } = wallOnWall(config);
+    const upperKey = sectorKey({ plane: 1, x: 50, y: 50 });
+
+    const cache = new SectorGeometryCache();
+    cache.request(new Map([[upperKey, sectors.get(upperKey)!]]), config, null);
+    drainAll(cache);
+    expect(cache.get(upperKey)!.absoluteWalls).toBe(false);
+
+    expect(cache.request(sectors, config, null)).toBe(true);
+    drainAll(cache);
+    expect(cache.get(upperKey)!.absoluteWalls).toBe(true);
+
+    cache.clear();
+  });
+});
 
 describe('stacking planes', () => {
   it('meshes every plane in the set, keyed by plane', async () => {
