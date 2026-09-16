@@ -107,6 +107,8 @@ describe('cors', () => {
       'http://localhost:5173'
     );
     expect(res.headers['access-control-allow-credentials']).toBe('true');
+    // The export's file name travels in content-disposition.
+    expect(res.headers['access-control-expose-headers']).toBe('content-disposition');
   });
 
   it('does not echo an unknown origin', async () => {

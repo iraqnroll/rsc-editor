@@ -20,6 +20,7 @@ import { registerDiscordAuth } from './auth/discord.js';
 import { registerSessionAuth } from './auth/session.js';
 import { registerCacheAssetRoutes } from './routes/cache-assets.js';
 import { registerDefinitionRoutes } from './routes/definitions.js';
+import { registerExportRoutes } from './routes/export.js';
 import { registerMeRoutes } from './routes/me.js';
 import { registerMemberRoutes } from './routes/members.js';
 import { registerOpRoutes } from './routes/ops.js';
@@ -88,6 +89,7 @@ export async function buildApp(
   await registerOpRoutes(app, ctx);
   await registerDefinitionRoutes(app, ctx);
   await registerCacheAssetRoutes(app, ctx);
+  await registerExportRoutes(app, ctx);
 
   app.get('/api/health', async () => ({ ok: true }));
 
@@ -115,6 +117,10 @@ function registerCors(app: FastifyInstance, config: ServerConfig): void {
     if (origin && origin === config.webOrigin) {
       reply.header('access-control-allow-origin', origin);
       reply.header('access-control-allow-credentials', 'true');
+      // Cross-origin, a script only sees the CORS-safelisted headers. The
+      // export's file name is in content-disposition, and without this the
+      // editor saved every project as "cache.zip".
+      reply.header('access-control-expose-headers', 'content-disposition');
       reply.header('vary', 'origin');
     }
 
