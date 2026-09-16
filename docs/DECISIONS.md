@@ -702,3 +702,38 @@ There is no "restore" yet: rolling the live project back would need every
 touched sector locked at once, and an op per sector (CLAUDE.md rule 6).
 Exporting the old state covers the need to get it back out.
 
+## 17. Sign-in is an allowlist, and an invite is a user row
+
+Anyone with a Discord account used to be able to sign in (and create
+projects). Now `signInFromDiscord` (`packages/db/src/users.ts`) decides:
+
+1. a known Discord id signs in if `users.allowed`;
+2. else an invite for the username is claimed -- the row takes the real
+   Discord id, so a later rename does not lock the person out;
+3. else a username in `ADMIN_DISCORD_USERNAMES` gets an admin account (how the
+   first admin of an install gets in);
+4. else nothing is written and the callback redirects to
+   `/?login_error=not-invited`.
+
+An invite is an ordinary `users` row with `discord_id = 'invite:<username>'`,
+not a separate table. That is what lets an admin grant project roles before
+the person has ever signed in: the role is a normal `project_members` row from
+the start and needs no conversion when the invite is claimed.
+
+`allowed` defaults to true because rows only exist for people who were let in;
+the migration therefore keeps every existing account working. Revoking sets it
+false, and `resolveSession` requires it, so a revoked user's sessions stop
+resolving on the very next request. Revoking or changing a role also fires
+`ctx.accessChanged`, and the realtime hub closes that user's sockets -- a
+socket authenticated before the change would otherwise keep its old rights.
+
+Dev login is not subject to the allowlist; it only exists off production on
+loopback, and it accepts `admin: true` so the Access screen can be tested.
+
+### Found while testing it
+
+The editor asked for the project list before `connect()` checked the session,
+and a 401 from that call was shown as an error page ("not signed in", Retry).
+That was every anonymous first visit: in production nobody would ever have
+seen the Discord button. Any 401 during connect is now the sign-in state.
+

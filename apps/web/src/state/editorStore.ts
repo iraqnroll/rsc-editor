@@ -43,6 +43,7 @@ import type { EditorApi, LinkState, WorldIndex } from '../data/api.js';
 import { resetEntitySpriteCache } from '../data/useCacheAssets.js';
 import { resetLiveMapCache } from '../data/live-map.js';
 import { applySectorOp, describeOp, opId, opTileCount } from '../ops/apply.js';
+import { isApiHttpError } from '../data/http.js';
 import type { BuildResult, RegionClipboard, RegionRect } from '../ops/builders.js';
 import type { WorldTile } from '../ops/coords.js';
 import {
@@ -409,7 +410,11 @@ export const useEditor = create<EditorState>()((set, get) => ({
       // "Sign in to continue" box on a first, anonymous load reads as a fault
       // when nothing has gone wrong. The error slot is reserved for a failed
       // attempt, which `signIn` does set.
-      if (err instanceof AuthRequiredError) {
+      // A 401 from any call is the same state. The project list is asked for
+      // before `connect()` checks the session, so an anonymous first visit, an
+      // expired session and a revoked account all arrive here as a 401 -- and
+      // used to be shown as an error page with no way to sign in.
+      if (err instanceof AuthRequiredError || (isApiHttpError(err) && err.status === 401)) {
         set({ connection: 'auth-required', error: null });
         return;
       }

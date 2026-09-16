@@ -53,6 +53,7 @@ import type { AuthUser } from './auth.js';
 import { ApiHttpError } from './http.js';
 import type {
   EditorApi,
+  AccessOverview,
   EntitySpriteSheet,
   ExportOutcome,
   HistoryEntry,
@@ -540,6 +541,17 @@ export function createMockApi(): EditorApi {
      * only has to make it show up in the world index -- which is the part the
      * UI actually reacts to.
      */
+    // The mock is one person with no server: there is nobody to let in.
+    async loadAccess(): Promise<AccessOverview> {
+      return { users: [], projects: [] };
+    },
+    async inviteUser(): Promise<void> {
+      throw new ApiHttpError(501, 'access control needs the live backend', 'mock', '/mock');
+    },
+    async setUserAccess(): Promise<void> {},
+    async setProjectRole(): Promise<void> {},
+    async deleteInvite(): Promise<void> {},
+
     async loadHistory() {
       // The mock keeps no server log; the session panel above is the history.
       return { entries: [] as HistoryEntry[], next: null };

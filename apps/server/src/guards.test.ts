@@ -27,7 +27,7 @@ const config = loadConfig({
   DISCORD_CLIENT_SECRET: 'secret'
 });
 
-const ctx = { config, db: {} as Database };
+const ctx = { config, db: {} as Database, accessChanged: new Set<(userId: string) => void>() };
 
 const PROJECT_ID = '11111111-1111-1111-1111-111111111111';
 const USER_ID = '22222222-2222-2222-2222-222222222222';
@@ -38,6 +38,7 @@ function user(globalRole: User['globalRole'] = 'user'): User {
     discordId: '1',
     username: 'lukas',
     globalName: null,
+    allowed: true,
     avatar: null,
     email: null,
     globalRole,

@@ -103,6 +103,11 @@ export function createRealtime(
     });
 
     const hub = new Hub(ctx, app.log, config, options.sql ?? rawClientOf(ctx.db));
+    const onAccessChanged = (userId: string) => hub.disconnectUser(userId);
+    ctx.accessChanged.add(onAccessChanged);
+    app.addHook('onClose', async () => {
+      ctx.accessChanged.delete(onAccessChanged);
+    });
 
     app.get(
       '/ws',

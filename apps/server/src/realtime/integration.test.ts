@@ -825,4 +825,21 @@ describe.skipIf(!available)('realtime collaboration', () => {
     expect((await a.waitFor('error')).message).toMatch(/join a project/i);
     expect(await headSeq(db, world.projectId)).toBe(0);
   });
+
+  it('drops a user whose access changed, and frees their locks', async () => {
+    const world = await makeWorld();
+    const a = await joined(world.alice, world.projectId);
+    const b = await joined(world.bob, world.projectId);
+    open.push(a, b);
+
+    b.send({ t: 'lock.claim', sector: world.left });
+    await a.waitFor('lock.granted', (m) => m.lock.userId === world.bob.userId);
+
+    // What the Access screen fires on a revoke or a role change.
+    for (const hook of app.appContext.accessChanged) hook(world.bob.userId);
+
+    await a.waitFor('lock.released', (m) => m.sector.x === world.left.x);
+    a.send({ t: 'lock.claim', sector: world.left });
+    await a.waitFor('lock.granted', (m) => m.lock.userId === world.alice.userId);
+  });
 });

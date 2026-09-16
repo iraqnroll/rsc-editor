@@ -21,6 +21,7 @@ function fakeUser(): User {
     avatar: 'a1b2c3',
     email: SECRET,
     globalRole: 'user',
+    allowed: true,
     createdAt: new Date(0),
     updatedAt: new Date(0),
     lastSeenAt: null
@@ -65,7 +66,9 @@ describe('toPublicUser', () => {
       'email',
       'createdAt',
       'updatedAt',
-      'lastSeenAt'
+      'lastSeenAt',
+      // only the admin Access API reads it (`listAccess`)
+      'allowed'
     ]);
 
     for (const column of Object.keys(getTableColumns(users))) {

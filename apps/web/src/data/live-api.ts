@@ -108,12 +108,14 @@ import {
   AuthRequiredError,
   NoProjectError,
   pinnedProjectId,
+  type AccessOverview,
   type EditorApi,
   type ExportOutcome,
   type HistoryEntry,
   type LinkState,
   type LockResult,
   type OpSubmitResult,
+  type ProjectRoleName,
   type ProjectSummary,
   type SessionSnapshot,
   type SnapshotSummary,
@@ -1005,6 +1007,34 @@ export function createLiveApi(options: LiveApiOptions = {}): EditorApi {
      * route answers 404, which is a real and distinguishable state in a project
      * whose cache has not been imported yet.
      */
+    async loadAccess(): Promise<AccessOverview> {
+      return apiJson<AccessOverview>('/api/admin/access');
+    },
+
+    async inviteUser(discordUsername: string): Promise<void> {
+      await apiJson('/api/admin/access/users', {
+        method: 'POST',
+        body: JSON.stringify({ username: discordUsername })
+      });
+    },
+
+    async setUserAccess(userId: string, patch: { allowed?: boolean; admin?: boolean }): Promise<void> {
+      await apiJson(`/api/admin/access/users/${encodeURIComponent(userId)}`, {
+        method: 'PATCH',
+        body: JSON.stringify(patch)
+      });
+    },
+
+    async setProjectRole(userId: string, projectId: string, role: ProjectRoleName | null): Promise<void> {
+      const path = `/api/admin/access/users/${encodeURIComponent(userId)}/projects/${encodeURIComponent(projectId)}`;
+      if (role === null) await apiFetch(path, { method: 'DELETE' });
+      else await apiJson(path, { method: 'PUT', body: JSON.stringify({ role }) });
+    },
+
+    async deleteInvite(userId: string): Promise<void> {
+      await apiFetch(`/api/admin/access/users/${encodeURIComponent(userId)}`, { method: 'DELETE' });
+    },
+
     async loadHistory(before?: number) {
       const id = requireProject();
       const query = before === undefined ? '' : `?before=${before}`;

@@ -115,7 +115,14 @@ export async function resolveSession(
     })
     .from(sessions)
     .innerJoin(users, eq(users.id, sessions.userId))
-    .where(and(eq(sessions.id, id), gt(sessions.expiresAt, new Date())))
+    .where(
+      and(
+        eq(sessions.id, id),
+        gt(sessions.expiresAt, new Date()),
+        // Revoking access ends every session at once, not at expiry.
+        eq(users.allowed, true)
+      )
+    )
     .limit(1);
 
   return rows[0];

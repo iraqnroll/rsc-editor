@@ -50,6 +50,7 @@ and copy the client id and secret.
 | `PUBLIC_URL` | `https://<your domain>` |
 | `WEB_ORIGIN` | `https://<your domain>` (the same) |
 | `DISCORD_CLIENT_ID` / `DISCORD_CLIENT_SECRET` | from Discord |
+| `ADMIN_DISCORD_USERNAMES` | **your** Discord username (comma separated for several). Everyone else needs an invite, so without this nobody can get in. |
 | `DISCORD_GUILD_ID` | optional: only members of that server can sign in (add `guilds` to `DISCORD_SCOPES`) |
 
 Leave `HOST=127.0.0.1`: the server trusts `X-Forwarded-*`, so only Caddy may
@@ -69,24 +70,37 @@ Pick one, in `/etc/default/caddy`, then `systemctl restart caddy`:
 
 ## 4. Import a cache
 
-Sign in with Discord once, so your account exists, then find its id:
-
-```sh
-su postgres -c "psql rsc_editor -c 'select id, username from users'"
-```
-
-Copy a cache directory (the `*.jag` / `*.mem` files) into the container, and
-import it as your project:
+Copy a cache directory (the `*.jag` / `*.mem` files) into the container and
+import it:
 
 ```sh
 bash /opt/rsc-editor/deploy/import.sh \
-  --cache /srv/rsc-cache --project "Gielinor" --owner <your id> \
+  --cache /srv/rsc-cache --project "Gielinor" \
   --scenery /root/rsc-editor/fixtures/scenery/object-locs.json
 ```
 
 `--scenery` is optional (the placement list is not part of the cache; see
 `docs/DECISIONS.md` §12). `bash deploy/import.sh --help` lists the rest.
-Other people join a project through its members list.
+Admins see every project, so no `--owner` is needed.
+
+## 5. Let people in
+
+Sign in with Discord as the admin, then open **Access** (top bar, or under the
+project list):
+
+- **Add** someone by Discord username. Only people on the list can sign in;
+  anyone else is sent back with "not on this editor's access list".
+- Pick their role in each project: viewer, editor or owner. It applies as soon
+  as they sign in for the first time, and keeps working if they later change
+  their Discord username.
+- **Revoke** signs them out everywhere at once and stops them signing in;
+  **restore** undoes it. Changing someone's project role drops their open
+  connection so the new role applies immediately.
+- Tick **Admin** to make someone an admin: they can open every project and
+  manage this list.
+
+`DISCORD_GUILD_ID` still works on top of this if you also want to require
+membership of your Discord server.
 
 ## Updating
 

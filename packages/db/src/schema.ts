@@ -121,6 +121,12 @@ export const users = pgTable(
     avatar: text('avatar'),
     email: text('email'),
     globalRole: globalRoleEnum('global_role').notNull().default('user'),
+    /**
+     * May sign in. Rows only exist for people who were let in -- an invite, an
+     * admin, a dev login -- so the default is true and revoking sets false.
+     * A revoked user's sessions stop resolving at once (`resolveSession`).
+     */
+    allowed: boolean('allowed').notNull().default(true),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
     lastSeenAt: timestamp('last_seen_at', { withTimezone: true, mode: 'date' })

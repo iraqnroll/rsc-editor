@@ -116,7 +116,8 @@ change there, say so in your report rather than making it.
   button (DECISIONS §15); **snapshots and the project log** in the History
   tab, with export as of a snapshot (§16); sector meshing on a Web Worker
   pool (`apps/web/src/scene/mesher.ts`); **deployment** to a Proxmox LXC
-  (`deploy/`, tested in a systemd Debian 12 container). Next: Phase 4. Phase 4 (definition editors) after that.
+  (`deploy/`, tested in a systemd Debian 12 container); a **sign-in
+  allowlist and Access screen** for admins (DECISIONS §17). Next: Phase 4. Phase 4 (definition editors) after that.
 - Phases 4-5 — see `PLAN.md`
 
 Not yet verified anywhere: the Discord OAuth **callback** (needs a real Discord

@@ -147,6 +147,26 @@ export interface HistoryEntry {
   op: Op;
 }
 
+export type ProjectRoleName = 'viewer' | 'editor' | 'owner';
+
+/** One person on the sign-in allowlist, as the Access screen shows them. */
+export interface AccessUser {
+  id: string;
+  username: string;
+  globalName: string | null;
+  /** invited, has not signed in yet */
+  pending: boolean;
+  allowed: boolean;
+  globalRole: string;
+  lastSeenAt: string | null;
+  projects: Array<{ projectId: string; role: ProjectRoleName }>;
+}
+
+export interface AccessOverview {
+  users: AccessUser[];
+  projects: Array<{ id: string; name: string; slug: string }>;
+}
+
 export type ExportOutcome =
   | { ok: true; zip: Blob; filename: string }
   | { ok: false; problems: string[] };
@@ -234,6 +254,15 @@ export interface EditorApi {
   /** Tag the log's head. Rejects with a 409 `ApiHttpError` on a taken name. */
   createSnapshot(name: string): Promise<SnapshotSummary>;
   deleteSnapshot(id: string): Promise<void>;
+
+  /* Instance admin only: who may sign in, and what each person can open. */
+  loadAccess(): Promise<AccessOverview>;
+  /** Rejects with a 409 `ApiHttpError` when the name is already listed. */
+  inviteUser(discordUsername: string): Promise<void>;
+  setUserAccess(userId: string, patch: { allowed?: boolean; admin?: boolean }): Promise<void>;
+  /** `null` removes the user from the project. */
+  setProjectRole(userId: string, projectId: string, role: ProjectRoleName | null): Promise<void>;
+  deleteInvite(userId: string): Promise<void>;
 
   submitOps(ops: Op[]): Promise<OpSubmitResult>;
 

@@ -25,6 +25,12 @@ export interface DiscordConfig {
   scopes: string[];
   /** when set, membership of this guild is required to sign in. */
   requiredGuildId: string | null;
+  /**
+   * Discord usernames that are admins. They can always sign in and are made
+   * admin when they do -- which is how the first admin of an install gets in,
+   * since everyone else needs an invite (see `signInFromDiscord`).
+   */
+  adminUsernames: string[];
 }
 
 export interface ServerConfig {
@@ -159,6 +165,11 @@ export function loadConfig(env: Env = process.env): ServerConfig {
     );
   }
 
+  const adminUsernames = (env.ADMIN_DISCORD_USERNAMES ?? '')
+    .split(/[\s,]+/)
+    .map((name) => name.trim().replace(/^@/, '').toLowerCase())
+    .filter(Boolean);
+
   if (problems.length > 0) throw new ConfigError(problems);
 
   return {
@@ -173,7 +184,7 @@ export function loadConfig(env: Env = process.env): ServerConfig {
     cookieSecure,
     publicUrl: stripTrailingSlash(publicUrl),
     webOrigin: stripTrailingSlash(webOrigin),
-    discord: { clientId, clientSecret, scopes, requiredGuildId }
+    discord: { clientId, clientSecret, scopes, requiredGuildId, adminUsernames }
   };
 }
 

@@ -15,6 +15,13 @@
       "when": 1789300076861,
       "tag": "0001_ops_append_only",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1789557957673,
+      "tag": "0002_access_allowlist",
+      "breakpoints": true
     }
   ]
 }

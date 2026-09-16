@@ -10,6 +10,13 @@ import type { ServerConfig } from './config.js';
 export interface AppContext {
   config: ServerConfig;
   db: Database;
+  /**
+   * Called when a user's access changed (revoked, or a project role removed
+   * or changed). The realtime layer closes that user's sockets so nothing
+   * keeps running on permissions they no longer have; the client reconnects
+   * and is re-checked from scratch.
+   */
+  accessChanged: Set<(userId: string) => void>;
 }
 
 /**

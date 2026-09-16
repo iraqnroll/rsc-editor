@@ -15,6 +15,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { DISCORD_LOGIN_PATH } from '../data/auth.js';
 import type { ProjectSummary } from '../data/api.js';
 import { useEditor } from '../state/editorStore.js';
+import { AccessButton } from './AccessScreen.js';
 
 function Shell({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -35,6 +36,19 @@ function Shell({ title, children }: { title: string; children: React.ReactNode }
  * so a production build does not offer it. `VITE_DEV_LOGIN=1` brings it back
  * for a staging build that talks to a local server.
  */
+/** Why the Discord callback sent us back instead of signing in. */
+const LOGIN_ERRORS: Record<string, string> = {
+  'not-invited': 'That Discord account is not on this editor’s access list. Ask an admin to add your username.',
+  revoked: 'Access for that Discord account has been revoked.',
+  'not-in-guild': 'This editor is limited to members of one Discord server, and that account is not in it.'
+};
+
+function loginErrorFromUrl(): string | null {
+  if (typeof window === 'undefined') return null;
+  const code = new URLSearchParams(window.location.search).get('login_error');
+  return code ? (LOGIN_ERRORS[code] ?? `Sign-in was refused (${code}).`) : null;
+}
+
 const SHOW_DEV_LOGIN =
   !import.meta.env.PROD ||
   (import.meta.env as Record<string, unknown>).VITE_DEV_LOGIN === '1';
@@ -45,6 +59,12 @@ export function LoginGate() {
   const mode = useEditor((s) => s.api.mode);
   const [username, setUsername] = useState('');
   const [busy, setBusy] = useState(false);
+  const [refused] = useState(loginErrorFromUrl);
+
+  // Once read, drop the code from the address bar so a reload is clean.
+  useEffect(() => {
+    if (refused) window.history.replaceState(null, '', window.location.pathname);
+  }, [refused]);
 
   const submit = useCallback(
     async (event: React.FormEvent) => {
@@ -63,6 +83,12 @@ export function LoginGate() {
         Connected to the live backend ({mode}). Editing requires an account so ops and locks
         can be attributed to you.
       </p>
+
+      {refused && (
+        <p className="gate__error" role="alert">
+          {refused}
+        </p>
+      )}
 
       <a className="btn btn--primary gate__discord" href={DISCORD_LOGIN_PATH}>
         Sign in with Discord
@@ -203,9 +229,13 @@ export function ProjectGate({ mode = 'none' }: { mode?: 'none' | 'choose' }) {
         </p>
       )}
 
-      <button type="button" className="btn btn--sm gate__signout" onClick={() => void signOut()}>
-        Sign out
-      </button>
+      <div className="field__row gate__signout">
+        {/* A fresh install's admin has no project yet and would never reach the top bar. */}
+        <AccessButton />
+        <button type="button" className="btn btn--sm" onClick={() => void signOut()}>
+          Sign out
+        </button>
+      </div>
     </Shell>
   );
 }

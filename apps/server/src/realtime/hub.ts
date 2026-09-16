@@ -141,6 +141,17 @@ export class Hub {
     return conn;
   }
 
+  /**
+   * Close every socket a user has open, after their access changed. Their
+   * locks are released by the normal close path; the client reconnects and is
+   * checked again from scratch.
+   */
+  disconnectUser(userId: string): void {
+    for (const conn of this.connections) {
+      if (conn.userId === userId) void conn.closeSocket();
+    }
+  }
+
   forget(conn: Connection): void {
     this.connections.delete(conn);
   }
@@ -251,6 +262,10 @@ export class Connection {
   private closed = false;
   private pingTimer: NodeJS.Timeout | null = null;
   private awaitingPong = false;
+
+  get userId(): string {
+    return this.auth.user.id;
+  }
 
   constructor(
     private readonly hub: Hub,

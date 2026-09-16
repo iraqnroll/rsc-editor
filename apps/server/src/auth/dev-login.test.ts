@@ -25,7 +25,8 @@ function ctxFor(overrides: Record<string, string>): AppContext {
       HOST: '127.0.0.1',
       ...overrides
     }),
-    db: {} as Database
+    db: {} as Database,
+    accessChanged: new Set()
   };
 }
 

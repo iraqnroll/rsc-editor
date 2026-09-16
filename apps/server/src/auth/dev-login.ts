@@ -29,7 +29,12 @@
  */
 
 import type { FastifyInstance } from 'fastify';
-import { createSession, toPublicUser, upsertUserFromDiscord } from '@rsc-editor/db';
+import {
+  createSession,
+  setUserAccess,
+  toPublicUser,
+  upsertUserFromDiscord
+} from '@rsc-editor/db';
 import type { AppContext } from '../context.js';
 import { badRequest } from '../errors.js';
 import { setSessionCookie } from './session.js';
@@ -59,7 +64,7 @@ export async function registerDevLogin(
       throw badRequest('username must be letters, digits, _ or -');
     }
 
-    const user = await upsertUserFromDiscord(ctx.db, {
+    let user = await upsertUserFromDiscord(ctx.db, {
       // `dev:` prefix cannot collide with a Discord snowflake, which is numeric
       id: `dev:${username.toLowerCase()}`,
       username,
@@ -67,6 +72,13 @@ export async function registerDevLogin(
       avatar: null,
       email: null
     });
+
+    // `admin: true` makes a local admin, so the Access screen can be used and
+    // tested without Discord. This route only exists off production and on
+    // loopback (`devLoginAllowed`), where it is already a full bypass.
+    if (body.admin === true && user.globalRole !== 'admin') {
+      user = (await setUserAccess(ctx.db, user.id, { globalRole: 'admin' })) ?? user;
+    }
 
     const { token } = await createSession(ctx.db, {
       userId: user.id,

@@ -1327,3 +1327,58 @@ input[type="color"] {
 .histrow--button:disabled {
   cursor: default;
 }
+
+/* Access screen: a people x projects matrix, wider than the usual modal. */
+.modal.modal--access {
+  width: min(1100px, calc(100vw - 32px));
+  max-height: calc(100vh - 64px);
+  display: flex;
+  flex-direction: column;
+}
+.access__intro {
+  margin: 8px 12px 0;
+}
+.access__bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+}
+.access__table-wrap {
+  overflow: auto;
+  padding: 0 12px 12px;
+}
+.access__table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 12px;
+}
+.access__table th,
+.access__table td {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  white-space: nowrap;
+}
+.access__table th {
+  position: sticky;
+  top: 0;
+  background: var(--bg-1);
+  font-weight: 600;
+}
+/* The person stays in view however far the project columns scroll. */
+.access__table .access__sticky {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--bg-1);
+}
+.access__table th.access__sticky {
+  z-index: 2;
+}
+.access__row--revoked td {
+  opacity: 0.5;
+}
+.access__actions {
+  text-align: right;
+}

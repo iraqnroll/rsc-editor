@@ -14,9 +14,9 @@ interface Editor {
   name: string;
 }
 
-async function login(baseURL: string, name: string): Promise<Editor> {
+async function login(baseURL: string, name: string, admin = false): Promise<Editor> {
   const api = await request.newContext({ baseURL });
-  const response = await api.post('/api/auth/dev-login', { data: { username: name } });
+  const response = await api.post('/api/auth/dev-login', { data: { username: name, admin } });
   expect(response.ok(), 'dev login -- is RSC_DEV_LOGIN=1 set on the server?').toBe(true);
   const { user } = (await response.json()) as { user: { id: string } };
   return { api, id: user.id, name };
@@ -64,7 +64,9 @@ async function stroke(page: Page): Promise<void> {
 }
 
 /** A fresh project with one empty sector, 0/50/50, and both users as editors. */
-async function setUp(baseURL: string): Promise<{ alice: Editor; bob: Editor }> {
+async function setUp(
+  baseURL: string
+): Promise<{ alice: Editor; bob: Editor; projectName: string; tag: string }> {
   const tag = `${Date.now().toString(36)}${Math.floor(Math.random() * 1000)}`;
   const alice = await login(baseURL, `e2e-alice-${tag}`);
   const bob = await login(baseURL, `e2e-bob-${tag}`);
@@ -75,7 +77,7 @@ async function setUp(baseURL: string): Promise<{ alice: Editor; bob: Editor }> {
   expect(
     (await alice.api.put(`/api/projects/${projectId}/members/${bob.id}`, { data: { role: 'editor' } })).ok()
   ).toBe(true);
-  return { alice, bob };
+  return { alice, bob, projectName: `e2e ${tag}`, tag };
 }
 
 test('every editing tool writes an op that a peer receives', async ({ browser, baseURL }) => {
@@ -225,5 +227,65 @@ test('history shows who changed what, and snapshots can be tagged', async ({ bro
   await b.getByRole('button', { name: 'export', exact: true }).click();
   await expect(b.getByRole('dialog', { name: 'Export refused' })).toBeVisible();
   await b.screenshot({ path: 'test-results/history-panel.png' });
+});
+
+test('an admin decides who can sign in and what they can open', async ({ browser, baseURL }) => {
+  const { alice, bob, projectName, tag } = await setUp(baseURL!);
+  const admin = await login(baseURL!, `e2e-admin-${tag}`, true);
+
+  // Bob can see alice's project because setUp made him an editor; take that
+  // away first so the grid is what grants it.
+  const b = await openEditor(browser, bob);
+
+  const context = await browser.newContext({ storageState: await admin.api.storageState() });
+  const a = await context.newPage();
+  await a.goto('/');
+  await a.getByRole('button', { name: 'Access', exact: true }).first().click();
+  const dialog = a.getByRole('dialog', { name: 'Access' });
+  await expect(dialog).toBeVisible();
+
+  // An invite for someone who has never signed in.
+  const invitee = `e2e_inv_${tag}`.slice(0, 32);
+  await dialog.getByLabel('Discord username').fill(`@${invitee}`);
+  await dialog.getByRole('button', { name: 'Add', exact: true }).click();
+  const inviteRow = dialog.locator(`tr[data-user="${invitee}"]`);
+  await expect(inviteRow.getByText('invited')).toBeVisible();
+  await dialog.getByLabel('Discord username').fill(invitee);
+  await dialog.getByRole('button', { name: 'Add', exact: true }).click();
+  await expect(dialog.getByRole('alert')).toHaveText(`${invitee} is already on the list`);
+  await inviteRow.getByRole('button', { name: 'remove' }).click();
+  await expect(inviteRow).toHaveCount(0);
+
+  // Bob's role in alice's project, from the grid, narrowed to that project.
+  await dialog.getByLabel('Filter projects').fill(projectName);
+  await dialog.getByLabel('Filter people').fill(bob.name);
+  const cell = dialog.getByLabel(`${bob.name} in ${projectName}`);
+  await expect(cell).toHaveValue('editor');
+  await cell.selectOption('viewer');
+  await expect(cell).toHaveValue('viewer');
+  expect(alice.name).toBeTruthy();
+
+  // Revoking signs bob out where he is.
+  await dialog.locator(`tr[data-user="${bob.name}"]`).getByRole('button', { name: 'revoke' }).click();
+  await expect(dialog.locator(`tr[data-user="${bob.name}"]`).getByText('revoked')).toBeVisible();
+  await b.reload();
+  await expect(b.getByRole('link', { name: 'Sign in with Discord' })).toBeVisible();
+
+  await dialog.locator(`tr[data-user="${bob.name}"]`).getByRole('button', { name: 'restore' }).click();
+  await expect(dialog.locator(`tr[data-user="${bob.name}"]`).getByText('revoked')).toHaveCount(0);
+  await a.screenshot({ path: 'test-results/access-screen.png' });
+});
+
+test('a first visit without a session is offered sign-in, not an error', async ({ browser }) => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  await page.goto('/');
+  await expect(page.getByRole('link', { name: 'Sign in with Discord' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Retry' })).toHaveCount(0);
+
+  // And a refused Discord sign-in says why.
+  await page.goto('/?login_error=not-invited');
+  await expect(page.getByRole('alert')).toContainText('not on this editor’s access list');
+  await context.close();
 });
 

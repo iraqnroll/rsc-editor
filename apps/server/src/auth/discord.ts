@@ -16,12 +16,12 @@ import type { FastifyInstance } from 'fastify';
 import {
   createSession,
   deleteSession,
-  upsertUserFromDiscord,
+  signInFromDiscord,
   type DiscordProfile
 } from '@rsc-editor/db';
 import { discordCallbackUri } from '../config.js';
 import type { AppContext } from '../context.js';
-import { HttpError, forbidden, unauthorized } from '../errors.js';
+import { HttpError, unauthorized } from '../errors.js';
 import { clearSessionCookie, setSessionCookie } from './session.js';
 
 const DISCORD_API = 'https://discord.com/api/v10';
@@ -56,6 +56,11 @@ export async function registerDiscordAuth(
   });
 
   app.get('/api/auth/discord/callback', async (request, reply) => {
+    // A refusal goes back to the editor, which says why; a JSON error page at
+    // the end of an OAuth redirect explains nothing to the person looking at it.
+    const refuse = (reason: string) =>
+      reply.redirect(`${ctx.config.webOrigin}/?login_error=${encodeURIComponent(reason)}`);
+
     const oauth = app[NAMESPACE];
     if (!oauth) throw new HttpError(500, 'oauth not configured', 'no_oauth');
 
@@ -70,12 +75,12 @@ export async function registerDiscordAuth(
         token.access_token,
         ctx.config.discord.requiredGuildId
       );
-      if (!member) {
-        throw forbidden('this instance is restricted to one Discord server');
-      }
+      if (!member) return refuse('not-in-guild');
     }
 
-    const user = await upsertUserFromDiscord(ctx.db, profile);
+    const outcome = await signInFromDiscord(ctx.db, profile, ctx.config.discord.adminUsernames);
+    if (!outcome.ok) return refuse(outcome.reason);
+    const user = outcome.user;
 
     const { token: sessionToken } = await createSession(ctx.db, {
       userId: user.id,

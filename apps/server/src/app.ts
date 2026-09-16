@@ -18,6 +18,7 @@ import { isHttpError } from './errors.js';
 import { registerDevLogin } from './auth/dev-login.js';
 import { registerDiscordAuth } from './auth/discord.js';
 import { registerSessionAuth } from './auth/session.js';
+import { registerAccessRoutes } from './routes/access.js';
 import { registerCacheAssetRoutes } from './routes/cache-assets.js';
 import { registerDefinitionRoutes } from './routes/definitions.js';
 import { registerExportRoutes } from './routes/export.js';
@@ -45,7 +46,7 @@ export async function buildApp(
   options: BuildAppOptions
 ): Promise<FastifyInstance> {
   const config = options.config ?? loadConfig();
-  const ctx: AppContext = { config, db: options.db };
+  const ctx: AppContext = { config, db: options.db, accessChanged: new Set() };
 
   const app = Fastify({
     logger: {
@@ -92,6 +93,7 @@ export async function buildApp(
   await registerCacheAssetRoutes(app, ctx);
   await registerExportRoutes(app, ctx);
   await registerHistoryRoutes(app, ctx);
+  await registerAccessRoutes(app, ctx);
 
   app.get('/api/health', async () => ({ ok: true }));
 
