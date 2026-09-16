@@ -42,6 +42,7 @@ import {
   type SceneryModelSource
 } from '@rsc-editor/render';
 import { getApi, isProjectNotOpen, type SceneryModelsAsset } from '../data/api.js';
+import { modelRecords } from './mesher.js';
 
 export interface ResolvedModels {
   source: SceneryModelSource;
@@ -128,8 +129,11 @@ export function loadSceneryModels(): Promise<ResolvedModels | null> {
       return null;
     }
 
+    const source = modelSourceFrom(wire.models);
+    // Workers cannot receive `source` (it has methods); they get the records.
+    modelRecords.set(source, wire.models);
     return {
-      source: modelSourceFrom(wire.models),
+      source,
       count: Object.keys(wire.models).length,
       missing: wire.missing
     };

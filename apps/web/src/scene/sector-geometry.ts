@@ -17,11 +17,14 @@
  * neighbours changes, or arrives for the first time. The signature below is the
  * sector's rev plus its neighbours' revs, which is exactly that condition.
  *
- * ## Why meshing is budgeted rather than eager
+ * ## Where meshing runs
  *
- * A dense real sector meshes in ~100ms (`packages/render/src/perf.test.ts`).
- * Twenty-five of them in one go is a two-second stall, so `drain()` builds at
- * most a budget's worth per call and the caller pumps it from the frame loop.
+ * A real sector takes ~30 ms to mesh, and an upper storey ~35 ms more for its
+ * storey grid, so the viewport meshes on a Web Worker pool (`mesher.ts`,
+ * `mesh-job.ts`) and this class only wraps what comes back. `drain()` is still
+ * pumped from the frame loop: it takes in finished results and hands out more
+ * work. The tests use the inline mesher, where `drain()` builds up to a
+ * budget's worth per call on the spot.
  *
  * ## Why scenery is not a per-sector geometry
  *
@@ -57,24 +60,20 @@ import {
   LandscapeView,
   TILE_SIZE,
   atlasUvs,
-  buildSectorMesh,
   linkConnectors,
-  listConnectors,
   neighboursFrom,
   planeElevation,
-  buildRoofHeightField,
-  buildStoreyHeights,
   planeOffsets,
   renderX,
-  storeyFloorHeights,
   withPlaneOffsets,
   type AtlasLayout,
   type ConnectorLink,
   type ConnectorPlacement,
   type GeometryData,
-  type HeightField,
   type SceneryModelSource
 } from '@rsc-editor/render';
+import { storeyPlanesUnder, type MeshJob, type MeshResult } from './mesh-job.js';
+import { InlineMesher, StaleMeshError, type Mesher } from './mesher.js';
 
 /** World units spanned by one sector edge. */
 export const SECTOR_SPAN = SECTOR_WIDTH * TILE_SIZE;
@@ -129,6 +128,8 @@ export interface SectorGeometrySet {
    * `storeyGrids`.
    */
   absoluteWalls: boolean;
+  /** see `MeshResult.floorHeight` */
+  floorHeight: number | null;
   /** this sector's placements, by batch key. Geometry lives on the cache. */
   scenery: SceneryPlacements[];
   /**
@@ -216,17 +217,6 @@ function signatureOf(
 }
 
 /**
- * The planes whose lanes decide how `plane` is meshed, itself last.
- *
- * Planes 1 and 2 are in the client's storey chain (`CLIENT_STOREY_CHAIN`), so
- * everything under them counts. The ground and the dungeon stand on their own
- * terrain.
- */
-function storeyPlanesUnder(plane: number): number[] {
-  return plane === 1 || plane === 2 ? [0, 1, 2].slice(0, plane + 1) : [plane];
-}
-
-/**
  * The connector picture for the whole loaded neighbourhood.
  *
  * Solved across every loaded plane at once rather than per sector, because the
@@ -276,13 +266,46 @@ export class SectorGeometryCache {
    * that contains it. Keying the GPU side per sector would put the same tree on
    * the card twenty-five times.
    */
-  private readonly sceneryData = new Map<string, GeometryData>();
   private readonly sceneryGeometry = new Map<string, BufferGeometry>();
+  private readonly createMesher: () => Mesher;
+  private meshWith: Mesher | null = null;
+  /** keys dispatched to an async mesher, with the signature they were sent for */
+  private readonly inflight = new Map<string, string>();
+  /** async results that arrived since the last `drain` */
+  private readonly arrived: MeshResult[] = [];
+  private nextJob = 1;
+  /** bumped by `clear`; a result from an older generation is dropped */
+  private generation = 0;
   /** merged instanced draws; invalidated whenever the entry set changes */
   private draws: SceneryDraw[] | null = null;
   /** solved connector graph; invalidated with the entry set */
   private connectors: SceneConnectors | null = null;
   built = 0;
+
+  /**
+   * Meshing runs on `mesher`: inline by default, which is what the tests use,
+   * or a worker pool (`createMesher()`), which is what the viewport uses.
+   */
+  constructor(createMesher: () => Mesher = () => new InlineMesher()) {
+    this.createMesher = createMesher;
+  }
+
+  /**
+   * Started on first use and again after `dispose`: StrictMode unmounts and
+   * remounts a component while keeping its memoised cache, and a cache that
+   * stayed disposed dropped every request in silence (DECISIONS 14).
+   */
+  private get mesher(): Mesher {
+    this.meshWith ??= this.createMesher();
+    return this.meshWith;
+  }
+
+  /** Stop the workers. The cache still works afterwards; see `mesher`. */
+  dispose(): void {
+    this.clear();
+    this.meshWith?.dispose();
+    this.meshWith = null;
+  }
 
   /**
    * Declare the set of sectors that should be meshed. Returns true when
@@ -317,57 +340,118 @@ export class SectorGeometryCache {
 
     for (const [key, entry] of this.entries) {
       const want = wanted.get(key);
-      if (!want || want.signature !== entry.signature) {
-        dispose(entry);
-        this.entries.delete(key);
-        this.invalidateDerived();
-        dirty = true;
-      }
+      if (want && want.signature === entry.signature) continue;
+      // A stale mesh stays on screen while an async mesher builds its
+      // replacement; dropping it first makes every edit flicker. Inline
+      // meshing replaces it within the same frame, so there it goes now.
+      if (want && this.mesher.async) continue;
+      dispose(entry);
+      this.entries.delete(key);
+      this.invalidateDerived();
+      dirty = true;
     }
 
     this.wanted = wanted;
     this.queue = [];
-    for (const key of wanted.keys()) {
-      if (!this.entries.has(key)) this.queue.push(key);
+    for (const [key, want] of wanted) {
+      if (this.entries.get(key)?.signature === want.signature) continue;
+      if (this.inflight.get(key) === want.signature) continue;
+      this.queue.push(key);
     }
-    if (this.queue.length > 0) dirty = true;
+    if (this.queue.length > 0 || this.inflight.size > 0) dirty = true;
 
     return dirty;
   }
 
   /**
-   * Mesh up to `budget` sectors. Returns true if it built anything, so the
-   * caller can re-render only when there is something new.
+   * Advance meshing. Returns true when an entry changed, so the caller can
+   * re-render only when there is something new.
+   *
+   * Inline: builds up to `budget` sectors now. Async: takes in whatever the
+   * workers finished, then hands them as much of the queue as they have room
+   * for; `budget` does not apply, the pool size does.
    */
   drain(budget = 1): boolean {
-    if (!this.config || this.queue.length === 0) return false;
+    if (!this.config) return false;
+
+    if (!this.mesher.async) {
+      let did = false;
+      for (let n = 0; n < budget; n++) {
+        const job = this.nextQueuedJob();
+        if (!job) break;
+        this.integrate(this.mesher.meshNow!(job));
+        did = true;
+      }
+      return did;
+    }
 
     let did = false;
-    for (let n = 0; n < budget; n++) {
-      const key = this.queue.shift();
-      if (key === undefined) break;
-
-      const want = this.wanted.get(key);
-      const sector = this.sectors.get(key);
-      if (!want || !sector || this.entries.has(key)) continue;
-
-      this.entries.set(key, this.build(key, sector, want.signature));
-      this.invalidateDerived();
-      this.built++;
-      did = true;
+    for (const result of this.arrived.splice(0)) {
+      if (this.integrate(result)) did = true;
+    }
+    while (this.inflight.size < this.mesher.capacity) {
+      const job = this.nextQueuedJob();
+      if (!job) break;
+      const generation = this.generation;
+      this.inflight.set(job.key, job.signature);
+      this.mesher.mesh(job).then(
+        (result) => {
+          if (this.inflight.get(job.key) === job.signature) this.inflight.delete(job.key);
+          if (generation === this.generation) this.arrived.push(result);
+        },
+        (err: unknown) => {
+          if (this.inflight.get(job.key) === job.signature) this.inflight.delete(job.key);
+          if (err instanceof StaleMeshError) return;
+          console.warn(`[mesh] ${job.key} failed; drawing without it:`, err);
+        }
+      );
     }
     return did;
   }
 
-  private build(key: string, sector: SectorSource, signature: string): SectorGeometrySet {
-    const view = new LandscapeView({
-      plane: sector.coord.plane,
-      centre: sector.buffers,
-      // Read-only. `buildSectorMesh` never writes through the view, which is
-      // what lets us mesh a sector while its neighbours are locked by someone
-      // else (CLAUDE.md rule 6).
-      neighbours: neighboursFrom(sector.coord, this.sectors)
-    });
+  private nextQueuedJob(): MeshJob | null {
+    for (;;) {
+      const key = this.queue.shift();
+      if (key === undefined) return null;
+      const want = this.wanted.get(key);
+      const sector = this.sectors.get(key);
+      if (!want || !sector) continue;
+      if (this.entries.get(key)?.signature === want.signature) continue;
+      return this.jobFor(key, sector, want.signature);
+    }
+  }
+
+  /** Everything a mesher needs, as plain data: see `MeshJob.sectors`. */
+  private jobFor(key: string, sector: SectorSource, signature: string): MeshJob {
+    const sectors: MeshJob['sectors'] = [];
+    for (const plane of storeyPlanesUnder(sector.coord.plane)) {
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dy = -1; dy <= 1; dy++) {
+          const at = sectorKey({ plane, x: sector.coord.x + dx, y: sector.coord.y + dy });
+          const found = this.sectors.get(at);
+          if (found) sectors.push({ key: at, buffers: found.buffers });
+        }
+      }
+    }
+    return { id: this.nextJob++, key, coord: sector.coord, signature, sectors };
+  }
+
+  /**
+   * A finished mesh -> GPU buffers and an entry. False when it was for a
+   * signature nobody wants any more; its scenery geometry is kept regardless,
+   * because the mesher sends each model once and will not send it again.
+   */
+  private integrate(result: MeshResult): boolean {
+    for (const batch of result.scenery) {
+      if (batch.geometry && !this.sceneryGeometry.has(batch.key)) {
+        const geometry = toBufferGeometry(batch.geometry, this.layout);
+        if (geometry) this.sceneryGeometry.set(batch.key, geometry);
+      }
+    }
+
+    const want = this.wanted.get(result.key);
+    const sector = this.sectors.get(result.key);
+    if (!want || !sector || want.signature !== result.signature) return false;
 
     // Mirrored, because the geometry inside the group is: `RscModel.build`
     // emits sector-local x in -6144..0 (`render-space.ts`). Translating by the
@@ -376,63 +460,41 @@ export class SectorGeometryCache {
     const originX = renderX(sector.coord.x * SECTOR_SPAN);
     const originZ = sector.coord.y * SECTOR_SPAN;
 
-    const grids = this.storeyGrids(sector.coord, view);
-    const mesh = buildSectorMesh(view, this.config!, {
-      ...(this.models ? { models: this.models } : {}),
-      sceneryGeometryCache: this.sceneryData,
-      ...(grids ? { walls: { heights: grids.walls }, roofs: { heights: grids.roofs } } : {})
-    });
-
-    const terrain = toBufferGeometry(mesh.terrain, this.layout);
-    const walls = toBufferGeometry(mesh.walls, this.layout);
-    const roofs = toBufferGeometry(mesh.roofs, this.layout);
-
     const scenery: SceneryPlacements[] = [];
-    for (const batch of mesh.scenery.batches) {
-      // Upload the geometry once for the whole world, not once per sector.
-      if (!this.sceneryGeometry.has(batch.key)) {
-        const geometry = toBufferGeometry(batch.geometry, this.layout);
-        if (!geometry) continue;
-        this.sceneryGeometry.set(batch.key, geometry);
+    for (const batch of result.scenery) {
+      if (!this.sceneryGeometry.has(batch.key)) continue;
+      const positions = batch.positions;
+      for (let i = 0; i < positions.length; i += 3) {
+        positions[i] = originX + positions[i]!;
+        positions[i + 2] = originZ + positions[i + 2]!;
       }
-
-      const positions = new Float32Array(batch.instances.length * 3);
-      for (let i = 0; i < batch.instances.length; i++) {
-        const instance = batch.instances[i]!;
-        positions[i * 3] = originX + instance.x;
-        positions[i * 3 + 1] = instance.y;
-        positions[i * 3 + 2] = originZ + instance.z;
-      }
-
-      scenery.push({
-        key: batch.key,
-        modelName: batch.modelName,
-        positions,
-        count: batch.instances.length
-      });
+      scenery.push({ key: batch.key, modelName: batch.modelName, positions, count: batch.count });
     }
 
-    return {
-      key,
+    const previous = this.entries.get(result.key);
+    if (previous) dispose(previous);
+    this.entries.set(result.key, {
+      key: result.key,
       coord: sector.coord,
-      signature,
+      signature: result.signature,
       originX,
       originZ,
-      terrain,
-      walls,
-      roofs,
-      terrainTiles: mesh.terrain.triangleTiles,
-      absoluteWalls: grids !== null,
+      terrain: toBufferGeometry(result.terrain, this.layout),
+      walls: toBufferGeometry(result.walls, this.layout),
+      roofs: toBufferGeometry(result.roofs, this.layout),
+      terrainTiles: result.terrain.triangleTiles,
+      absoluteWalls: result.absoluteWalls,
+      floorHeight: result.floorHeight,
       scenery,
-      // Cheap -- it walks the same placement list the scenery pass already
-      // walked -- so it rides along with the mesh rather than being a second
-      // scan of every sector on every plane change.
-      connectors: listConnectors(view, this.config!, sector.coord),
+      connectors: result.connectors,
       triangles:
-        mesh.terrain.triangleCount + mesh.walls.triangleCount + mesh.roofs.triangleCount,
-      sceneryTriangles: mesh.scenery.triangleCount,
-      missingModels: mesh.scenery.missing
-    };
+        result.terrain.triangleCount + result.walls.triangleCount + result.roofs.triangleCount,
+      sceneryTriangles: result.sceneryTriangles,
+      missingModels: result.missingModels
+    });
+    this.invalidateDerived();
+    this.built++;
+    return true;
   }
 
   list(): SectorGeometrySet[] {
@@ -580,69 +642,11 @@ export class SectorGeometryCache {
     const cached = this.storeyOffsets.get(key);
     if (cached !== undefined) return cached;
 
-    const answer =
-      this.gridStoreyHeights(coord).get(plane) ?? this.ladderStoreyOffset(coord, plane);
+    const meshed = this.entries.get(sectorKey({ plane, x: coord.x, y: coord.y }));
+    const answer = meshed?.floorHeight ?? this.ladderStoreyOffset(coord, plane);
 
     this.storeyOffsets.set(key, answer);
     return answer;
-  }
-
-  private gridStoreyHeights(coord: SectorCoord): Map<number, number> {
-    if (!this.config) return new Map();
-    return storeyFloorHeights(this.storeyViews(coord, 2), this.config);
-  }
-
-  /** Views of planes 0..`top` at one sector, for whichever of them are loaded. */
-  private storeyViews(coord: SectorCoord, top: number): Map<number, LandscapeView> {
-    const views = new Map<number, LandscapeView>();
-    for (const plane of storeyPlanesUnder(top)) {
-      const at = { plane, x: coord.x, y: coord.y };
-      const sector = this.sectors.get(sectorKey(at));
-      if (!sector) continue;
-      views.set(
-        plane,
-        new LandscapeView({
-          plane,
-          centre: sector.buffers,
-          neighbours: neighboursFrom(at, this.sectors)
-        })
-      );
-    }
-    return views;
-  }
-
-  /**
-   * The grids an upper storey's walls and roofs are built on, per corner.
-   *
-   * This is the client's own placement (DECISIONS 14): the plane 1 and 2 loads
-   * inherit `terrainHeightLocal` from the planes under them, so every wall
-   * corner stands on whatever is actually beneath it -- a 275-high tower wall,
-   * a roof deck, or bare ground where nothing is below. One offset per plane
-   * cannot say that; the castle's first floor alone spans 480..634.
-   *
-   * Null -- mesh flat, place by the plane offset, as before -- for the ground,
-   * the dungeon, and whenever plane 0 is not loaded under this sector. The last
-   * is the single-plane view, which only ever loads the plane being edited, and
-   * must stay exactly the view it has always been.
-   *
-   * `view` is the one being meshed, reused so the grid and the geometry read
-   * the same lanes.
-   */
-  private storeyGrids(
-    coord: SectorCoord,
-    view: LandscapeView
-  ): { walls: HeightField; roofs: HeightField } | null {
-    if (coord.plane !== 1 && coord.plane !== 2) return null;
-
-    const views = this.storeyViews(coord, coord.plane);
-    if (!views.has(0)) return null;
-    views.set(coord.plane, view);
-
-    const walls = buildStoreyHeights(views, this.config!).get(coord.plane);
-    if (!walls) return null;
-    // Passes 1 and 2 of this plane's own walls, which the roof builder expects
-    // to have run; it adds pass 3 as it meshes.
-    return { walls, roofs: buildRoofHeightField(view, this.config!, walls) };
   }
 
   private ladderStoreyOffset(coord: SectorCoord, plane: number): number {
@@ -682,7 +686,7 @@ export class SectorGeometryCache {
     return {
       built: this.built,
       cached: this.entries.size,
-      pending: this.queue.length,
+      pending: this.queue.length + this.inflight.size,
       triangles,
       sceneryTriangles,
       sceneryDraws: draws.length,
@@ -700,7 +704,13 @@ export class SectorGeometryCache {
     // triggers, and both of those invalidate the uploaded buffers.
     for (const geometry of this.sceneryGeometry.values()) geometry.dispose();
     this.sceneryGeometry.clear();
-    this.sceneryData.clear();
+    // Whatever is being meshed was meshed for the old inputs, and the mesher's
+    // record of which scenery it already sent is wrong now that the uploaded
+    // geometry is gone.
+    this.generation++;
+    this.inflight.clear();
+    this.arrived.length = 0;
+    if (this.config) this.mesher.configure(this.config, this.models);
   }
 }
 

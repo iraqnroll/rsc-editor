@@ -152,13 +152,15 @@ function clearHeightFlags(field: HeightField): void {
  */
 export function storeyFloorHeights(
   views: ReadonlyMap<number, LandscapeView>,
-  config: RscConfig
+  config: RscConfig,
+  /** `buildStoreyHeights(views, config)`, when the caller already has it */
+  precomputed?: ReadonlyMap<number, HeightField>
 ): Map<number, number> {
   const out = new Map<number, number>();
   const ground = views.get(0);
   if (!ground) return out;
 
-  const heights = buildStoreyHeights(views, config);
+  const heights = precomputed ?? buildStoreyHeights(views, config);
   for (const plane of CLIENT_STOREY_CHAIN) {
     if (plane === 0) continue;
     const view = views.get(plane);

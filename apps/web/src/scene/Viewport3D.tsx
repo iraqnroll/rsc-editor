@@ -77,6 +77,7 @@ import {
   clampWindow,
   sectorTintTransform
 } from './overlay-geometry.js';
+import { createMesher } from './mesher.js';
 import { sameTile, tileOfFace, tileOfGroundPlane, worldTileAt } from './picking.js';
 import {
   SectorGeometryCache,
@@ -1027,8 +1028,8 @@ export function Viewport3D(props: ViewportProps) {
     overviewOrbit(sectorCentre(activeSector?.x ?? 50, activeSector?.y ?? 50))
   );
 
-  const cache = useMemo(() => new SectorGeometryCache(), []);
-  useEffect(() => () => cache.clear(), [cache]);
+  const cache = useMemo(() => new SectorGeometryCache(createMesher), []);
+  useEffect(() => () => cache.dispose(), [cache]);
 
   /**
    * The other planes' lanes, read-only. See `plane-sectors.ts`.
