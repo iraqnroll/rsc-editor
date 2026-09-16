@@ -69,10 +69,10 @@
  * somewhere other than here, it fails loudly instead of reordering history.
  */
 
-import { and, asc, eq, gt, inArray, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, lt, sql } from 'drizzle-orm';
 import { sectorKey, type Op, type SectorCoord, type SequencedOp } from '@rsc-editor/schema';
 import type { Database, Executor } from './client.js';
-import { ops as opsTable, projects, type NewOpRow } from './schema.js';
+import { ops as opsTable, projects, users, type NewOpRow } from './schema.js';
 
 export interface AppendOpsInput {
   projectId: string;
@@ -327,3 +327,50 @@ export async function opsForSector(
     op: r.payload
   }));
 }
+
+/** One row of the history browser: an op, and who made it. */
+export interface HistoryEntry extends SequencedOp {
+  actorName: string;
+}
+
+/**
+ * The log newest first, for people rather than for sync.
+ *
+ * `beforeSeq` pages backwards; omit it to start at the head. Unlike `opsSince`
+ * this carries the actor's display name, because the one thing a history
+ * browser must answer is "who".
+ */
+export async function historyPage(
+  db: Executor,
+  projectId: string,
+  beforeSeq: number | undefined,
+  limit = 100
+): Promise<HistoryEntry[]> {
+  const rows = await db
+    .select({
+      seq: opsTable.seq,
+      actorId: opsTable.actorId,
+      actorName: sql<string>`coalesce(${users.globalName}, ${users.username})`,
+      createdAt: opsTable.createdAt,
+      payload: opsTable.payload
+    })
+    .from(opsTable)
+    .innerJoin(users, eq(users.id, opsTable.actorId))
+    .where(
+      beforeSeq === undefined
+        ? eq(opsTable.projectId, projectId)
+        : and(eq(opsTable.projectId, projectId), lt(opsTable.seq, beforeSeq))
+    )
+    .orderBy(desc(opsTable.seq))
+    .limit(limit);
+
+  return rows.map((r) => ({
+    seq: r.seq,
+    projectId,
+    actorId: r.actorId,
+    actorName: r.actorName,
+    createdAt: r.createdAt.toISOString(),
+    op: r.payload
+  }));
+}
+

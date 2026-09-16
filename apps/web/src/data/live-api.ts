@@ -110,11 +110,13 @@ import {
   pinnedProjectId,
   type EditorApi,
   type ExportOutcome,
+  type HistoryEntry,
   type LinkState,
   type LockResult,
   type OpSubmitResult,
   type ProjectSummary,
   type SessionSnapshot,
+  type SnapshotSummary,
   type WorldIndex
 } from './api.js';
 
@@ -1003,9 +1005,43 @@ export function createLiveApi(options: LiveApiOptions = {}): EditorApi {
      * route answers 404, which is a real and distinguishable state in a project
      * whose cache has not been imported yet.
      */
-    async exportProject(): Promise<ExportOutcome> {
+    async loadHistory(before?: number) {
       const id = requireProject();
-      const path = `/api/projects/${encodeURIComponent(id)}/export`;
+      const query = before === undefined ? '' : `?before=${before}`;
+      return apiJson<{ entries: HistoryEntry[]; next: number | null }>(
+        `/api/projects/${encodeURIComponent(id)}/history${query}`
+      );
+    },
+
+    async listSnapshots(): Promise<SnapshotSummary[]> {
+      const id = requireProject();
+      const body = await apiJson<{ snapshots: SnapshotSummary[] }>(
+        `/api/projects/${encodeURIComponent(id)}/snapshots`
+      );
+      return body.snapshots;
+    },
+
+    async createSnapshot(name: string): Promise<SnapshotSummary> {
+      const id = requireProject();
+      const body = await apiJson<{ snapshot: SnapshotSummary }>(
+        `/api/projects/${encodeURIComponent(id)}/snapshots`,
+        { method: 'POST', body: JSON.stringify({ name }) }
+      );
+      return body.snapshot;
+    },
+
+    async deleteSnapshot(snapshotId: string): Promise<void> {
+      const id = requireProject();
+      await apiFetch(
+        `/api/projects/${encodeURIComponent(id)}/snapshots/${encodeURIComponent(snapshotId)}`,
+        { method: 'DELETE' }
+      );
+    },
+
+    async exportProject(snapshotId?: string): Promise<ExportOutcome> {
+      const id = requireProject();
+      const query = snapshotId ? `?snapshot=${encodeURIComponent(snapshotId)}` : '';
+      const path = `/api/projects/${encodeURIComponent(id)}/export${query}`;
       // Not `apiFetch`: a 422 carries the gate's problem list, and `apiFetch`
       // turns every non-2xx into an error that has already consumed the body.
       const response = await fetch(`${API_BASE}${path}`, { credentials: 'include' });

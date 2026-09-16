@@ -50,16 +50,19 @@ import type {
   WallObjectDef
 } from '@rsc-editor/schema';
 import type { AuthUser } from './auth.js';
+import { ApiHttpError } from './http.js';
 import type {
   EditorApi,
   EntitySpriteSheet,
   ExportOutcome,
+  HistoryEntry,
   LinkState,
   LockResult,
   OpSubmitResult,
   ProjectSummary,
   SceneryModelsAsset,
   SessionSnapshot,
+  SnapshotSummary,
   TextureAtlasAsset,
   WorldIndex,
   WorldMapAsset
@@ -444,6 +447,8 @@ export function createMockApi(): EditorApi {
   const sectors = new Map<string, SectorFrame>();
   const locks = new Map<string, Lock>();
   const world = buildWorldIndex();
+  const snapshots: SnapshotSummary[] = [];
+  let snapshotCount = 0;
   let config: RscConfig | null = null;
   let seq = 0;
   let heartbeat: ReturnType<typeof setInterval> | null = null;
@@ -535,6 +540,36 @@ export function createMockApi(): EditorApi {
      * only has to make it show up in the world index -- which is the part the
      * UI actually reacts to.
      */
+    async loadHistory() {
+      // The mock keeps no server log; the session panel above is the history.
+      return { entries: [] as HistoryEntry[], next: null };
+    },
+
+    async listSnapshots(): Promise<SnapshotSummary[]> {
+      return [...snapshots].reverse();
+    },
+
+    async createSnapshot(name: string): Promise<SnapshotSummary> {
+      if (snapshots.some((s) => s.name === name)) {
+        throw new ApiHttpError(409, `a snapshot called "${name}" already exists`, 'snapshot_exists', '/mock');
+      }
+      const snapshot: SnapshotSummary = {
+        id: uuid(0x5000 + ++snapshotCount),
+        name,
+        description: null,
+        seq: 0,
+        createdByName: 'mock',
+        createdAt: new Date().toISOString()
+      };
+      snapshots.push(snapshot);
+      return snapshot;
+    },
+
+    async deleteSnapshot(id: string): Promise<void> {
+      const at = snapshots.findIndex((s) => s.id === id);
+      if (at >= 0) snapshots.splice(at, 1);
+    },
+
     async exportProject(): Promise<ExportOutcome> {
       await delay(undefined, 25);
       return { ok: false, problems: ['Export needs the live backend: the mock has no cache to write.'] };

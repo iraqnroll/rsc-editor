@@ -1307,3 +1307,23 @@ input[type="color"] {
   font-size: 12px;
   line-height: 1.5;
 }
+
+/* Project history: bounded lists so the session history above stays visible. */
+.snapshots,
+.project-log {
+  max-height: 30vh;
+  overflow: auto;
+}
+.histrow--button {
+  width: 100%;
+  background: none;
+  border: 0;
+  color: inherit;
+  /* family only: `font: inherit` would reset .histrow's 11.5px */
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.histrow--button:disabled {
+  cursor: default;
+}

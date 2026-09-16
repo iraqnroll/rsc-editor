@@ -112,8 +112,9 @@ change there, say so in your report rather than making it.
   and every tool writing an op a peer receives (`apps/web/e2e`). Stacked
   floors are drawn per corner off the client's storey grid (DECISIONS §14).
 - Phase 5 — **export done**: validated zip from the API and an Export
-  button (DECISIONS §15). Still to do: snapshots / history browser,
-  performance pass, deployment. Phase 4 (definition editors) after that.
+  button (DECISIONS §15); **snapshots and the project log** in the History
+  tab, with export as of a snapshot (§16). Still to do: performance pass,
+  deployment. Phase 4 (definition editors) after that.
 - Phases 4-5 — see `PLAN.md`
 
 Not yet verified anywhere: the Discord OAuth **callback** (needs a real Discord

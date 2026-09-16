@@ -5,16 +5,20 @@ import {
   loadConfig,
   type LoadedSector
 } from '@rsc-editor/cache';
-import { getProject, listDefinitions } from '@rsc-editor/db';
+import { getProject, getSnapshot, listDefinitions, opsSince } from '@rsc-editor/db';
 import {
   configSchema,
   decodeSectorFrame,
   definitionSchemas,
+  sectorKey,
   type DefinitionKind,
   type RscConfig
 } from '@rsc-editor/schema';
 import type { AppContext } from '../context.js';
+import { notFound } from '../errors.js';
 import { projectGuard, requireProject } from '../guards.js';
+import { requiredUuid } from '../validate.js';
+import { rewind } from '../rewind.js';
 import { zipStored } from '../zip.js';
 
 const DEFINITION_KINDS = Object.keys(definitionSchemas) as DefinitionKind[];
@@ -26,6 +30,11 @@ const DEFINITION_KINDS = Object.keys(definitionSchemas) as DefinitionKind[];
  * `@rsc-editor/cache`. This route loads the project's state, hands it over and
  * zips the result. A refusal is a 422 carrying every problem the gate found,
  * so the editor can say what is wrong instead of "export failed".
+ *
+ * `?snapshot=<id>` exports the project as it was at that snapshot: the ops
+ * after it are inverted first (`rewind`). If the log does not account for the
+ * current state -- something wrote the world outside it -- that is a refusal
+ * too, rather than a guess.
  *
  * Editors only. It is read-only, but it decodes and re-encodes the whole world
  * (a couple of seconds for the shipped cache), which is not something every
@@ -41,6 +50,12 @@ export async function registerExportRoutes(
     async (request, reply) => {
       const access = requireProject(request);
       const projectId = access.projectId;
+      const query = request.query as Record<string, unknown>;
+      const snapshot =
+        query.snapshot === undefined
+          ? null
+          : await getSnapshot(ctx.db, projectId, requiredUuid(query.snapshot, 'snapshot'));
+      if (query.snapshot !== undefined && !snapshot) throw notFound('no such snapshot');
 
       const [project, sectorRows, assetRows] = await Promise.all([
         getProject(ctx.db, projectId),
@@ -65,6 +80,17 @@ export async function registerExportRoutes(
       let result: ReturnType<typeof exportWorld>;
       try {
         const config = await projectConfig(ctx, projectId, archives);
+        if (snapshot) {
+          const later = await opsAfter(ctx, projectId, snapshot.seq);
+          const byKey = new Map(sectors.map((s) => [sectorKey(s.coord), s]));
+          const problems = rewind(byKey, config, later);
+          if (problems.length > 0) {
+            throw new ExportRefused([
+              `the log does not rewind cleanly to "${snapshot.name}" (seq ${snapshot.seq}):`,
+              ...problems
+            ]);
+          }
+        }
         result = exportWorld({ sectors, config, archives });
       } catch (err) {
         if (err instanceof ExportRefused) {
@@ -83,7 +109,7 @@ export async function registerExportRoutes(
         data: new TextEncoder().encode(`${JSON.stringify(result.report, null, 2)}\n`)
       });
 
-      const slug = project?.slug ?? projectId;
+      const slug = `${project?.slug ?? projectId}${snapshot ? `-${fileSafe(snapshot.name)}` : ''}`;
       return reply
         .header('content-type', 'application/zip')
         .header('content-disposition', `attachment; filename="${slug}-cache.zip"`)
@@ -116,3 +142,20 @@ async function projectConfig(
   out.models = original ? loadConfig(original[1]).models : [];
   return configSchema.parse(out);
 }
+
+/** Every op after `seq`, in pages; the log can be long. */
+async function opsAfter(ctx: AppContext, projectId: string, seq: number) {
+  const out: Awaited<ReturnType<typeof opsSince>> = [];
+  for (let since = seq; ; ) {
+    const page = await opsSince(ctx.db, projectId, since, 5000);
+    out.push(...page);
+    if (page.length < 5000) return out;
+    since = page[page.length - 1]!.seq;
+  }
+}
+
+/** A snapshot name, reduced to something every filesystem accepts. */
+function fileSafe(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'snapshot';
+}
+

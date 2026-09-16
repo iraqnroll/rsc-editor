@@ -9,12 +9,16 @@ import { defineConfig } from 'vitest/config';
  * postgres.js connects lazily, so building a `Database` and calling `.toSQL()`
  * on a query never opens a socket.
  *
- * Integration coverage (real transactions, real concurrency on `head_seq`,
- * real bytea round-trips) is still pending: Docker is not installed on this
- * machine, so no Postgres exists to run it against.
+ * `integration.test.ts` and `migrations.test.ts` run against a real Postgres
+ * when one is reachable (`pnpm db:up`) and skip themselves otherwise.
+ *
+ * The timeout is raised for those: a test that writes a few dozen rows one at
+ * a time can pass vitest's 5s default under a full parallel `pnpm test`, and
+ * failed that way once.
  */
 export default defineConfig({
   test: {
-    include: ['src/**/*.test.ts']
+    include: ['src/**/*.test.ts'],
+    testTimeout: 30_000
   }
 });

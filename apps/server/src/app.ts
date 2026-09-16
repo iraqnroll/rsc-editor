@@ -21,6 +21,7 @@ import { registerSessionAuth } from './auth/session.js';
 import { registerCacheAssetRoutes } from './routes/cache-assets.js';
 import { registerDefinitionRoutes } from './routes/definitions.js';
 import { registerExportRoutes } from './routes/export.js';
+import { registerHistoryRoutes } from './routes/history.js';
 import { registerMeRoutes } from './routes/me.js';
 import { registerMemberRoutes } from './routes/members.js';
 import { registerOpRoutes } from './routes/ops.js';
@@ -90,6 +91,7 @@ export async function buildApp(
   await registerDefinitionRoutes(app, ctx);
   await registerCacheAssetRoutes(app, ctx);
   await registerExportRoutes(app, ctx);
+  await registerHistoryRoutes(app, ctx);
 
   app.get('/api/health', async () => ({ ok: true }));
 

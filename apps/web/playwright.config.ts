@@ -29,6 +29,9 @@ export default defineConfig({
   workers: 1,
   reporter: 'list',
   use: {
+    // Playwright's default is no limit, so a missing element hangs until the
+    // test timeout instead of failing where it happened.
+    actionTimeout: 15_000,
     baseURL: 'http://localhost:5173',
     channel: 'chrome',
     viewport: { width: 1400, height: 800 }

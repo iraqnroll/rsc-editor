@@ -11,6 +11,7 @@
 import { useEditor } from '../state/editorStore.js';
 import { describeOp } from '../ops/apply.js';
 import { sectorKey } from '@rsc-editor/schema';
+import { ProjectHistory } from './ProjectHistory.js';
 
 export function HistoryPanel() {
   const history = useEditor((s) => s.history);
@@ -75,6 +76,8 @@ export function HistoryPanel() {
       <div style={{ padding: '6px 10px' }} className="hint">
         {sectorsTouched(history).join(', ') || 'none'}
       </div>
+
+      <ProjectHistory />
     </>
   );
 }

@@ -129,6 +129,24 @@ export function isProjectNotOpen(err: unknown): boolean {
   return err instanceof Error && err.name === 'NoProjectError';
 }
 
+/** A named point in the project's op log. */
+export interface SnapshotSummary {
+  id: string;
+  name: string;
+  description: string | null;
+  seq: number;
+  createdByName: string | null;
+  createdAt: string;
+}
+
+/** One op of the project log, with who made it. */
+export interface HistoryEntry {
+  seq: number;
+  actorName: string;
+  createdAt: string;
+  op: Op;
+}
+
 export type ExportOutcome =
   | { ok: true; zip: Blob; filename: string }
   | { ok: false; problems: string[] };
@@ -208,7 +226,14 @@ export interface EditorApi {
    * what it produced and lists every way it differs from the project, and the
    * editor shows that list. Anything else (network, 5xx) throws.
    */
-  exportProject(): Promise<ExportOutcome>;
+  exportProject(snapshotId?: string): Promise<ExportOutcome>;
+
+  /** The project log newest first; pass `next` back as `before` for more. */
+  loadHistory(before?: number): Promise<{ entries: HistoryEntry[]; next: number | null }>;
+  listSnapshots(): Promise<SnapshotSummary[]>;
+  /** Tag the log's head. Rejects with a 409 `ApiHttpError` on a taken name. */
+  createSnapshot(name: string): Promise<SnapshotSummary>;
+  deleteSnapshot(id: string): Promise<void>;
 
   submitOps(ops: Op[]): Promise<OpSubmitResult>;
 

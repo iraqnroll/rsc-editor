@@ -9,32 +9,37 @@ import { getApi } from '../data/api.js';
  * list of problems is the useful part -- a sector and a tile to go and fix --
  * so it is shown in full rather than as "export failed".
  */
+/**
+ * Export (optionally as of a snapshot) and hand the zip to the browser.
+ * Resolves to the refusal's problems, or null when a download started.
+ */
+export async function downloadExport(snapshotId?: string): Promise<string[] | null> {
+  try {
+    const outcome = await getApi().exportProject(snapshotId);
+    if (!outcome.ok) return outcome.problems;
+    const url = URL.createObjectURL(outcome.zip);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = outcome.filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    // Revoked on the next tick: some browsers start the download lazily.
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+    return null;
+  } catch (err) {
+    return [`the export request failed: ${err instanceof Error ? err.message : String(err)}`];
+  }
+}
+
 export function ExportButton() {
   const [busy, setBusy] = useState(false);
   const [problems, setProblems] = useState<string[] | null>(null);
 
   async function run(): Promise<void> {
     setBusy(true);
-    try {
-      const outcome = await getApi().exportProject();
-      if (!outcome.ok) {
-        setProblems(outcome.problems);
-        return;
-      }
-      const url = URL.createObjectURL(outcome.zip);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = outcome.filename;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      // Revoked on the next tick: some browsers start the download lazily.
-      setTimeout(() => URL.revokeObjectURL(url), 0);
-    } catch (err) {
-      setProblems([`the export request failed: ${err instanceof Error ? err.message : String(err)}`]);
-    } finally {
-      setBusy(false);
-    }
+    setProblems(await downloadExport());
+    setBusy(false);
   }
 
   return (
@@ -53,7 +58,7 @@ export function ExportButton() {
   );
 }
 
-function ExportProblems({ problems, onClose }: { problems: string[]; onClose: () => void }) {
+export function ExportProblems({ problems, onClose }: { problems: string[]; onClose: () => void }) {
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {

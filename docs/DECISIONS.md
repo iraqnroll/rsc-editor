@@ -685,3 +685,20 @@ odd values needs them repaired before it will export.
   set, the editor calls the API cross-origin, and a script only sees
   CORS-safelisted headers. The server now exposes `content-disposition`.
 
+## 16. A snapshot is a seq, and the log rewinds to it
+
+`snapshots` rows store a name and a seq, nothing else. The world at that seq is
+the current world with every later op inverted (`apps/server/src/rewind.ts`):
+every op already carries both sides of its change, so no copies are kept, and
+`GET /export?snapshot=<id>` runs the ordinary export on the rewound state.
+
+The log is only the whole story for edits the editor made. A re-import, a
+sector created empty, or a hand edit in the database is not in it, so rewind
+checks each change before undoing it -- the tile must hold what the op says it
+wrote -- and a mismatch refuses the export rather than producing a plausible
+but wrong world.
+
+There is no "restore" yet: rolling the live project back would need every
+touched sector locked at once, and an op per sector (CLAUDE.md rule 6).
+Exporting the old state covers the need to get it back out.
+

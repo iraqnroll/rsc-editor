@@ -194,3 +194,36 @@ test('export says why it refused, instead of downloading a broken cache', async 
   await dialog.getByRole('button', { name: 'close' }).click();
   await expect(dialog).toBeHidden();
 });
+
+test('history shows who changed what, and snapshots can be tagged', async ({ browser, baseURL }) => {
+  const { alice, bob } = await setUp(baseURL!);
+  const a = await openEditor(browser, alice);
+  const b = await openEditor(browser, bob);
+  await a.getByRole('button', { name: 'Claim', exact: true }).click();
+  await expect(status(a).getByText('you hold this sector')).toBeVisible();
+
+  await b.getByRole('tab', { name: 'History' }).or(b.getByRole('button', { name: 'History' })).first().click();
+  await b.getByLabel('Snapshot name').fill('before alice');
+  await b.getByRole('button', { name: 'Tag', exact: true }).click();
+  await expect(b.getByText('before alice')).toBeVisible();
+
+  await a.getByRole('button', { name: /Elevation$/ }).first().click();
+  await stroke(a);
+  await settledSeq(a);
+
+  // Bob's log fills in live, attributed to alice, and jumps to the sector.
+  const log = b.locator('.project-log');
+  await expect(log.getByText(alice.name).first()).toBeVisible();
+  await log.getByRole('button', { name: /0\/50\/50/ }).first().click();
+
+  // A duplicate name is refused in place.
+  await b.getByLabel('Snapshot name').fill('before alice');
+  await b.getByRole('button', { name: 'Tag', exact: true }).click();
+  await expect(b.getByRole('alert')).toHaveText('"before alice" is taken');
+
+  // This project has no imported cache, so the snapshot export explains why not.
+  await b.getByRole('button', { name: 'export', exact: true }).click();
+  await expect(b.getByRole('dialog', { name: 'Export refused' })).toBeVisible();
+  await b.screenshot({ path: 'test-results/history-panel.png' });
+});
+
