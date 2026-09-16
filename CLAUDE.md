@@ -21,6 +21,12 @@ pnpm dev
 
 Per-package: `pnpm --filter @rsc-editor/cache test`
 
+Browser, two users: `pnpm --filter @rsc-editor/web e2e` (needs `db:up`, the
+server's `RSC_DEV_LOGIN=1`, and Chrome; it starts the servers if they are not
+running). Not part of `pnpm test`. The Vite proxy defaults to API port 8080;
+set `RSC_API_PORT` if your server runs elsewhere. The e2e config reads it from
+`apps/server/.env`, `pnpm dev` does not.
+
 The integration suites skip themselves when no Postgres is reachable, so the
 tests pass without Docker — but they then prove much less. Run `db:up` first.
 
@@ -100,13 +106,14 @@ change there, say so in your report rather than making it.
 - Phase 1 (cache fidelity gate) — **passed**, 596/596 byte-exact
 - Phase 2 — done: models/textures, client-accurate geometry (visually verified),
   db + API + Discord auth (verified against real Postgres), editor shell
-- Phase 3 (editing + realtime) — **built, not yet verified end to end**: op
-  log, locks, presence, broadcast, catch-up, all seven tools, undo/redo,
-  history. Stacked floors are drawn per corner off the client's storey grid
-  (DECISIONS §14).
-- Next: verify Phase 3 in the browser with two users, then Phase 5 export
-  (before Phase 4 definitions — edits are only useful once they can leave).
+- Phase 3 (editing + realtime) — **done, verified in a browser**: two users,
+  locks, presence, live ops, undo/redo, reload, lock release on disconnect,
+  and every tool writing an op a peer receives (`apps/web/e2e`). Stacked
+  floors are drawn per corner off the client's storey grid (DECISIONS §14).
+- Next: Phase 5 export (before Phase 4 definitions — edits are only useful
+  once they can leave).
 - Phases 4-5 — see `PLAN.md`
 
 Not yet verified anywhere: the Discord OAuth **callback** (needs a real Discord
-app), and browser interaction with the editing tools and the definition forms.
+app), the definition forms in a browser, and a real-cache project in the e2e
+suite (it builds an empty one).

@@ -31,3 +31,7 @@ exports/
 # run; the test asserts geometric properties, not pixel equality, so these are
 # for looking at rather than for diffing against.
 packages/render/preview/
+
+# Playwright output
+**/test-results/
+**/playwright-report/
