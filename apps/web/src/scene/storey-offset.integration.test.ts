@@ -65,7 +65,7 @@ beforeAll(async () => {
 });
 
 describe.skipIf(!reachable)('storeyOffset at Wizards Tower', () => {
-  it('lands the first floor on the ground floor, not 96 units inside it', async () => {
+  it('stands each floor on the walls of the tower', async () => {
     if (!api || !PROJECT) return; // no project in this database: nothing to assert
     const sources = new Map<string, SectorSource>();
     for (let dx = -1; dx <= 1; dx++) {
@@ -96,9 +96,10 @@ describe.skipIf(!reachable)('storeyOffset at Wizards Tower', () => {
     };
     console.log('OFFSETS', JSON.stringify(result));
 
-    // The tower's OWN ladders, not the neighbourhood average.
-    expect(result.sectorPlane1).toBe(534);
-    expect(result.sectorPlane2).toBe(726);
-    expect(result.sectorPlane2 - result.sectorPlane1).toBe(192);
+    // The tower's own storey grid, not the neighbourhood average and not a
+    // flat 192 on its ladders (which said 534 and 726). Its first-floor walls
+    // are 275 high, and the floor above those stands 256 higher again.
+    expect(result.sectorPlane1).toBe(617);
+    expect(result.sectorPlane2).toBe(873);
   }, 60_000);
 });

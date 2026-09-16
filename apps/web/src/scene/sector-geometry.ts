@@ -64,6 +64,7 @@ import {
   planeElevation,
   planeOffsets,
   renderX,
+  storeyFloorHeights,
   withPlaneOffsets,
   type AtlasLayout,
   type ConnectorLink,
@@ -523,27 +524,24 @@ export class SectorGeometryCache {
   /**
    * Where a plane's geometry is drawn ABOVE ONE SECTOR.
    *
-   * `planeOffset` solves one number per plane by averaging
-   * `lower.groundY + STOREY_HEIGHT - upper.groundY` over every linked ladder in
-   * the whole loaded neighbourhood. That number is right for nowhere in
-   * particular: at Wizards' Tower (`52/51`, ground 342) the tower's own ladders
-   * say 534, and a radius-1 neighbourhood averages to **438** -- so the upper
-   * storeys drew 96 units low, sunk into the floor beneath, and the number
-   * moved as you panned.
+   * `planeOffset` solves one number per plane by averaging ladders across the
+   * whole loaded neighbourhood, which is right for nowhere in particular: at
+   * Wizards' Tower (`52/51`) a radius-1 neighbourhood averaged to 438 and the
+   * number moved as you panned.
    *
-   * This prefers the ladders standing in THIS sector, which are the actual
-   * connection between these two floors, and falls back to the neighbourhood
-   * solve where a sector has none of its own.
+   * Planes 1 and 2 are read off the client's storey grid for THIS sector
+   * (`storeyFloorHeights`): the height most of the plane's wall corners
+   * actually stand on. That is what replaced the ladder formula's flat
+   * `STOREY_HEIGHT`, which put the tower's first floor at 534 when its
+   * 275-high walls put it at 617 (DECISIONS 14).
    *
-   * ### Known limit
+   * Anything the grid cannot answer -- the dungeon, which the client never
+   * stacks, or a sector whose upper plane has no supported wall -- falls back
+   * to this sector's ladders, and then to the neighbourhood solve.
    *
-   * `planeOffsets` hardcodes `STOREY_HEIGHT` in its gap formula, so a building
-   * whose walls are not 192 high is still placed as though they were. The tower
-   * is one: 16 of its 20 first-floor wall corners stand at 617 in the client's
-   * accumulated height grid (ground 342 + a 275-high wall), not 534. The grid
-   * has the right answer per corner -- see `buildStoreyHeights` and DECISIONS
-   * 14 -- but using it means positioning upper-plane geometry absolutely rather
-   * than by a group translation, which is the open work described there.
+   * Still one number per plane, applied to every sector of it: per-corner
+   * placement is what the client does, but it moves picking and the overlays
+   * off a group translation, and that is separate work.
    */
   storeyOffset(coord: SectorCoord, plane: number): number {
     // Ground is the reference the stack is measured from, so it is 0 by
@@ -554,16 +552,41 @@ export class SectorGeometryCache {
     const cached = this.storeyOffsets.get(key);
     if (cached !== undefined) return cached;
 
+    const answer =
+      this.gridStoreyHeights(coord).get(plane) ?? this.ladderStoreyOffset(coord, plane);
+
+    this.storeyOffsets.set(key, answer);
+    return answer;
+  }
+
+  private gridStoreyHeights(coord: SectorCoord): Map<number, number> {
+    if (!this.config) return new Map();
+
+    const views = new Map<number, LandscapeView>();
+    for (const plane of [0, 1, 2]) {
+      const at = { plane, x: coord.x, y: coord.y };
+      const sector = this.sectors.get(sectorKey(at));
+      if (!sector) continue;
+      views.set(
+        plane,
+        new LandscapeView({
+          plane,
+          centre: sector.buffers,
+          neighbours: neighboursFrom(at, this.sectors)
+        })
+      );
+    }
+    return storeyFloorHeights(views, this.config);
+  }
+
+  private ladderStoreyOffset(coord: SectorCoord, plane: number): number {
     const here = this.connectorGraph().placements.filter(
       (c) => Math.floor(c.wx / SECTOR_WIDTH) === coord.x && Math.floor(c.wy / SECTOR_WIDTH) === coord.y
     );
 
     const local = planeOffsets(here).get(plane);
     const linked = here.some((c) => c.plane === plane);
-    const answer = linked && local !== undefined ? local : this.planeOffset(plane);
-
-    this.storeyOffsets.set(key, answer);
-    return answer;
+    return linked && local !== undefined ? local : this.planeOffset(plane);
   }
 
   private invalidateDerived(): void {

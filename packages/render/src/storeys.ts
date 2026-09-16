@@ -1,4 +1,4 @@
-import type { RscConfig } from '@rsc-editor/schema';
+import { SECTOR_HEIGHT, SECTOR_WIDTH, type RscConfig } from '@rsc-editor/schema';
 import { HEIGHT_FLAG } from './constants.js';
 import {
   applyRoofHeights,
@@ -107,7 +107,83 @@ export function buildStoreyHeights(
     // Passes 1 and 2, then pass 3, leaving the grid the next storey stands on.
     const next = buildRoofHeightField(view, config, forGeometry);
     applyRoofHeights(view, config, next);
+    clearHeightFlags(next);
     grid = next;
+  }
+
+  return out;
+}
+
+/**
+ * The last loop of `World#_loadSection_from4`: strip the flag off every corner.
+ *
+ * Skipping this is what put a second floor only 64 units above the first. A
+ * corner that still carries plane 0's flag fails `method428`'s `< 0x13880` test,
+ * so plane 1's walls never raise it and plane 2 inherits nothing but plane 1's
+ * roof height. With it, plane 2 at Lumbridge castle stands at 720 (528 + 192),
+ * not 528.
+ */
+function clearHeightFlags(field: HeightField): void {
+  for (let x = field.minX; x < field.minX + field.width; x++) {
+    for (let y = field.minY; y < field.minY + field.height; y++) {
+      const value = field.get(x, y);
+      if (value >= HEIGHT_FLAG) field.set(x, y, value - HEIGHT_FLAG);
+    }
+  }
+}
+
+/**
+ * One render-space height per upper plane, read off the storey grid.
+ *
+ * The editor translates a whole plane by a single offset (see `planeOffsets`),
+ * so this picks the height most of that plane's wall corners stand on in the
+ * CENTRE sector of `views`. Corners with nothing under them -- the grid there
+ * is still plane 0's bare terrain -- are left out: the client leaves those on
+ * the ground, and at Wizards' Tower they would otherwise outvote the tower.
+ * Ties go to the higher height, so the answer does not depend on map order.
+ *
+ * The answer is absolute, minus the plane's own terrain, because upper-plane
+ * geometry is meshed on that terrain (zero in the shipped cache) and then moved.
+ *
+ * Measured on the shipped cache: the tower (`52/51`) gives 617 and 873, the
+ * castle (`50/50`) 528 and 720. A plane with no supported wall corner in the
+ * centre sector is absent from the result, and the caller falls back to the
+ * ladders.
+ */
+export function storeyFloorHeights(
+  views: ReadonlyMap<number, LandscapeView>,
+  config: RscConfig
+): Map<number, number> {
+  const out = new Map<number, number>();
+  const ground = views.get(0);
+  if (!ground) return out;
+
+  const heights = buildStoreyHeights(views, config);
+  for (const plane of CLIENT_STOREY_CHAIN) {
+    if (plane === 0) continue;
+    const view = views.get(plane);
+    const field = heights.get(plane);
+    if (!view || !field) continue;
+
+    const tally = new Map<number, number>();
+    for (let x = 0; x < SECTOR_WIDTH; x++) {
+      for (let y = 0; y < SECTOR_HEIGHT; y++) {
+        if (view.wallHorizontal(x, y) <= 0 && view.wallVertical(x, y) <= 0) continue;
+        if (storeyLiftAt(field, ground, x, y) <= 0) continue;
+        const height = strippedHeight(field.get(x, y)) - view.terrainHeight(x, y);
+        tally.set(height, (tally.get(height) ?? 0) + 1);
+      }
+    }
+
+    let best: number | null = null;
+    let bestCount = 0;
+    for (const [height, count] of tally) {
+      if (count > bestCount || (count === bestCount && best !== null && height > best)) {
+        best = height;
+        bestCount = count;
+      }
+    }
+    if (best !== null) out.set(plane, best);
   }
 
   return out;

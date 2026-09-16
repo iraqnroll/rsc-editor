@@ -3,7 +3,13 @@ import { HEIGHT_FLAG } from './constants.js';
 import { buildWalls } from './walls.js';
 import { LandscapeView, neighboursFrom } from './landscape-view.js';
 import { realConfig, realLandscape } from './test-support.js';
-import { buildStoreyHeights, storeyLiftAt, CLIENT_STOREY_CHAIN } from './storeys.js';
+import {
+  buildStoreyHeights,
+  storeyFloorHeights,
+  storeyLiftAt,
+  strippedHeight,
+  CLIENT_STOREY_CHAIN
+} from './storeys.js';
 import { STOREY_HEIGHT } from './planes.js';
 
 /** Lumbridge castle: the one place in the shipped cache with three storeys. */
@@ -20,10 +26,13 @@ function viewAt(plane: number, x: number, y: number): LandscapeView | null {
   });
 }
 
-function castleViews(): Map<number, LandscapeView> {
+/** Wizards' Tower, whose walls are not the standard 192 high. */
+const TOWER = { x: 52, y: 51 };
+
+function castleViews(at = CASTLE): Map<number, LandscapeView> {
   const views = new Map<number, LandscapeView>();
   for (const plane of CLIENT_STOREY_CHAIN) {
-    const view = viewAt(plane, CASTLE.x, CASTLE.y);
+    const view = viewAt(plane, at.x, at.y);
     if (view) views.set(plane, view);
   }
   return views;
@@ -147,5 +156,43 @@ describe('the storey chain', () => {
       for (let y = 0; y < 48; y++) if (a.get(x, y) > 0) lifted++;
     }
     expect(lifted).toBeGreaterThan(0);
+  });
+
+  it('stands the second floor a full storey up, not a roof height', () => {
+    const views = castleViews();
+    const heights = buildStoreyHeights(views, realConfig());
+    const upper = views.get(2)!;
+
+    // Every plane-2 wall corner at the castle. Before the chain cleared the
+    // client's flags between planes, 13 of these 16 sat at 528 -- plane 1's
+    // own floor height -- because plane 1's walls could not raise a corner
+    // plane 0 had already flagged.
+    const tally = new Map<number, number>();
+    for (let x = 0; x < 48; x++) {
+      for (let y = 0; y < 48; y++) {
+        if (upper.wallHorizontal(x, y) <= 0 && upper.wallVertical(x, y) <= 0) continue;
+        const h = strippedHeight(heights.get(2)!.get(x, y));
+        tally.set(h, (tally.get(h) ?? 0) + 1);
+      }
+    }
+    expect([...tally]).toEqual([[720, 16]]);
+  });
+
+  it('reads each floor height off the grid, not off a constant', () => {
+    const config = realConfig();
+
+    // Castle: 528 is ground plus a standard wall, and 720 one more above it.
+    expect([...storeyFloorHeights(castleViews(), config)]).toEqual([
+      [1, 528],
+      [2, 720]
+    ]);
+
+    // Tower: 617 is ground 342 plus a 275-high wall, which a flat
+    // STOREY_HEIGHT put at 534. The 18 unsupported corners at ground level
+    // must not outvote the 16 that stand on the tower.
+    expect([...storeyFloorHeights(castleViews(TOWER), config)]).toEqual([
+      [1, 617],
+      [2, 873]
+    ]);
   });
 });

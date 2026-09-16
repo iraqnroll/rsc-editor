@@ -178,6 +178,7 @@ export {
 export {
   buildStoreyHeights,
   storeyLiftAt,
+  storeyFloorHeights,
   strippedHeight,
   CLIENT_STOREY_CHAIN
 } from './storeys.js';

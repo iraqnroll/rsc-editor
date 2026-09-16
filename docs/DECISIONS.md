@@ -576,18 +576,34 @@ showed them stacked exactly where they belonged on the tower.
 If the stacked view misbehaves again, do that first. `SectorGeometryCache` and
 the HUD can say a thing is loaded, meshed and placed and still be invisible.
 
+### The storey height, read off the grid
+
+`planeOffsets` put a floor a flat `STOREY_HEIGHT` above the ladder's foot, so a
+building whose walls are not 192 high was placed as though they were. The tower
+is one: its first-floor walls stand at 617 (ground 342 plus a 275-high wall),
+and the ladder formula said 534.
+
+`SectorGeometryCache.storeyOffset` now asks `storeyFloorHeights` first: the
+height most of that plane's wall corners stand on in the active sector's storey
+grid, ignoring corners with nothing under them (18 of them at the tower, which
+would otherwise outvote the 16 on the tower itself). Ladders are the fallback,
+for the dungeon and for sectors with no supported upper wall.
+
+The earlier attempt at this gave plane 2 only 64 units above plane 1. That was
+a porting gap, not a property of the grid: the last loop of
+`_loadSection_from4` (`world.js`, rsc-client) strips the flag off **every**
+corner once a plane is built. `buildStoreyHeights` did not, so a corner plane 0
+had flagged failed `method428`'s `< 0x13880` test, plane 1's walls never raised
+it, and plane 2 inherited only plane 1's roof height. With the clear, plane 2
+stands at 720 at the castle and 873 at the tower. Both are pinned in
+`storeys.test.ts` and, against a live server, `storey-offset.integration.test.ts`.
+
 ### Still open
 
-`planeOffsets` hardcodes `STOREY_HEIGHT` in its gap formula, so a building whose
-walls are not 192 high is placed as though they were. The tower is one: 16 of
-its 20 first-floor wall corners stand at 617 in the accumulated grid (ground 342
-plus a 275-high wall), not at 534.
-
-The grid has the right answer per corner. Using it means positioning
-upper-plane geometry absolutely rather than by a group translation, which moves
-`planeOffsets`, the connector layer, picking, the overlays and the camera
-presets — and an editor has to keep the deck you are editing pickable, which the
-client never has to care about. A first attempt at a per-corner offset also gave
-plane 2 only 64 units above plane 1 (a roof height, not a storey), so the mode
-over that grid is not yet trustworthy for the second storey either. It is the
-next real piece of work, not a tidy-up.
+It is still one number per plane, applied to every sector of that plane. The
+castle's first floor spreads over 480..634 and the mode (528) holds only 57 of
+128 corners. Placing each corner at its grid height is what the client does,
+and `buildWalls` / `buildRoofs` already accept the grid, but it means drawing
+upper planes at absolute heights instead of by a group translation. That moves
+the connector layer, picking, the overlays and the camera presets, and the
+editor still has to keep the deck you are editing pickable.
