@@ -6,6 +6,7 @@
  * and `src/state/gesture.ts` turns (tool + settings + tile) into ops.
  */
 
+import { clampLane } from '../ops/apply.js';
 import { BRUSH_SHAPES, ELEVATION_MODES, FALLOFFS, WALL_EDGES, WALL_EDGE_LABELS } from '../ops/builders.js';
 import { TOOLS, type ToolId } from '../tools/registry.js';
 import { useEditor } from '../state/editorStore.js';
@@ -172,7 +173,8 @@ function PaintOptions() {
             value={terrainBand(s.colourIndex)}
           />
           <div className="palette" role="radiogroup" aria-label="Terrain colour index">
-            {TERRAIN_PALETTE.map((hex, i) => (
+            {/* Even indices only: `.hei` stores colour / 2 (see clampLane). */}
+            {TERRAIN_PALETTE.map((hex, i) => i % 2 === 0 && (
               <button
                 key={i}
                 type="button"
@@ -188,8 +190,8 @@ function PaintOptions() {
             label="Index"
             value={s.colourIndex}
             min={0}
-            max={255}
-            onChange={(colourIndex) => update('paint', { colourIndex: colourIndex & 0xff })}
+            max={254}
+            onChange={(colourIndex) => update('paint', { colourIndex: clampLane('colour', colourIndex) })}
           />
           <div className="field__row">
             <span className="swatch" style={{ background: terrainColour(s.colourIndex), width: 18, height: 18 }} />

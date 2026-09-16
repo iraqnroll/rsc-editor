@@ -44,6 +44,47 @@ describe('falloff', () => {
   });
 });
 
+describe('the .hei constraint', () => {
+  // `.hei` stores elevation and colour as value / 2. An odd value cannot be
+  // exported, and the export gate refuses the whole world over one.
+  it('never writes an odd elevation or colour, whatever the brush does', () => {
+    const coord = { plane: 0, x: 50, y: 50 };
+    const centre = { plane: 0, wx: 50 * 48 + 24, wy: 50 * 48 + 24 };
+    const values: number[] = [];
+
+    for (const mode of ['raise', 'lower', 'smooth', 'flatten'] as const) {
+      for (const strength of [0.13, 0.5, 0.77, 1]) {
+        const { read, sectors } = makeWorld([coord]);
+        const b = sectors.get(sectorKey(coord))!;
+        // Uneven ground, so smooth and flatten have something to average.
+        for (let i = 0; i < b.elevation.length; i++) b.elevation[i] = (i * 38) % 250 & ~1;
+        const result = buildElevationOp(
+          centre,
+          { mode, radius: 4, falloff: 'smooth', shape: 'circle', strength },
+          read
+        );
+        for (const op of result.ops) for (const c of op.changes) values.push(c.to);
+      }
+    }
+    const { read } = makeWorld([coord]);
+    for (const index of [1, 7, 33, 255]) {
+      const result = buildPaintOp(centre, { radius: 1, shape: 'circle', lane: 'colour', value: index }, read);
+      for (const op of result.ops) for (const c of op.changes) values.push(c.to);
+    }
+    const fill = buildRegionFillOp(
+      { plane: 0, x0: centre.wx, y0: centre.wy, x1: centre.wx + 2, y1: centre.wy + 2 },
+      'elevation',
+      99,
+      read
+    );
+    for (const op of fill.ops) for (const c of op.changes) values.push(c.to);
+
+    expect(values.length).toBeGreaterThan(100);
+    expect(values.filter((v) => v % 2 !== 0)).toEqual([]);
+    expect(Math.max(...values)).toBeLessThanOrEqual(254);
+  });
+});
+
 describe('elevation brush', () => {
   it('raises the centre most and records exact before/after values', () => {
     const coord = { plane: 0, x: 50, y: 50 };

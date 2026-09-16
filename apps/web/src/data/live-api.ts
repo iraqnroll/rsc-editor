@@ -95,12 +95,21 @@ import {
 import { isSceneryModelsAsset, type SceneryModelsAsset } from './models.js';
 import { isWorldMapMeta, type WorldMapAsset } from './world-map.js';
 import { devLogin, fetchMe, logout, type AuthUser } from './auth.js';
-import { apiBinary, apiFetch, apiJson, isApiHttpError, websocketUrl } from './http.js';
+import {
+  API_BASE,
+  ApiHttpError,
+  apiBinary,
+  apiFetch,
+  apiJson,
+  isApiHttpError,
+  websocketUrl
+} from './http.js';
 import {
   AuthRequiredError,
   NoProjectError,
   pinnedProjectId,
   type EditorApi,
+  type ExportOutcome,
   type LinkState,
   type LockResult,
   type OpSubmitResult,
@@ -994,6 +1003,25 @@ export function createLiveApi(options: LiveApiOptions = {}): EditorApi {
      * route answers 404, which is a real and distinguishable state in a project
      * whose cache has not been imported yet.
      */
+    async exportProject(): Promise<ExportOutcome> {
+      const id = requireProject();
+      const path = `/api/projects/${encodeURIComponent(id)}/export`;
+      // Not `apiFetch`: a 422 carries the gate's problem list, and `apiFetch`
+      // turns every non-2xx into an error that has already consumed the body.
+      const response = await fetch(`${API_BASE}${path}`, { credentials: 'include' });
+      if (response.status === 422) {
+        const body = (await response.json()) as { problems?: unknown };
+        const problems = Array.isArray(body.problems) ? body.problems.map(String) : [];
+        return { ok: false, problems: problems.length > 0 ? problems : ['export refused'] };
+      }
+      if (!response.ok) {
+        throw new ApiHttpError(response.status, `export failed (${response.status})`, 'export_failed', path);
+      }
+      const disposition = response.headers.get('content-disposition') ?? '';
+      const filename = /filename="([^"]+)"/.exec(disposition)?.[1] ?? 'cache.zip';
+      return { ok: true, zip: await response.blob(), filename };
+    },
+
     async createSector(coord: SectorCoord): Promise<void> {
       const id = requireProject();
       await apiFetch(

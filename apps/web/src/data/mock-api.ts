@@ -53,6 +53,7 @@ import type { AuthUser } from './auth.js';
 import type {
   EditorApi,
   EntitySpriteSheet,
+  ExportOutcome,
   LinkState,
   LockResult,
   OpSubmitResult,
@@ -534,6 +535,11 @@ export function createMockApi(): EditorApi {
      * only has to make it show up in the world index -- which is the part the
      * UI actually reacts to.
      */
+    async exportProject(): Promise<ExportOutcome> {
+      await delay(undefined, 25);
+      return { ok: false, problems: ['Export needs the live backend: the mock has no cache to write.'] };
+    },
+
     async createSector(coord: SectorCoord): Promise<void> {
       const key = sectorKey(coord);
       if (!world.present.includes(key)) world.present.push(key);

@@ -129,6 +129,10 @@ export function isProjectNotOpen(err: unknown): boolean {
   return err instanceof Error && err.name === 'NoProjectError';
 }
 
+export type ExportOutcome =
+  | { ok: true; zip: Blob; filename: string }
+  | { ok: false; problems: string[] };
+
 export interface EditorApi {
   /** Surfaced in the status bar so nobody mistakes mock data for real data. */
   readonly mode: 'mock' | 'live';
@@ -196,6 +200,15 @@ export interface EditorApi {
    * socket had persisted by then.
    */
   loadModels(): Promise<SceneryModelsAsset | null>;
+
+  /**
+   * The open project as a cache directory, zipped.
+   *
+   * A refusal is an answer, not an error: the server's export gate re-imports
+   * what it produced and lists every way it differs from the project, and the
+   * editor shows that list. Anything else (network, 5xx) throws.
+   */
+  exportProject(): Promise<ExportOutcome>;
 
   submitOps(ops: Op[]): Promise<OpSubmitResult>;
 

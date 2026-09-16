@@ -13,6 +13,12 @@ import type { Lane, Op, SectorBuffers, SectorOp, TileDelta } from '@rsc-editor/s
 /** wallsDiagonal is Int32; the other seven lanes are Uint8. */
 export function clampLane(lane: Lane, value: number): number {
   if (lane === 'wallsDiagonal') return value | 0;
+  if (lane === 'elevation' || lane === 'colour') {
+    // `.hei` stores both as value / 2, so only even values exist in a cache.
+    // An odd one cannot be exported: the encoder's carry smears it across
+    // the rest of the sector, and the export gate refuses the whole world.
+    return Math.max(0, Math.min(254, Math.round(value / 2) * 2));
+  }
   return Math.max(0, Math.min(255, Math.round(value)));
 }
 

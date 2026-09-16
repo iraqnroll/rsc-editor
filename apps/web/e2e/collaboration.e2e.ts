@@ -182,3 +182,15 @@ test('two editors share a sector through locks, live ops and undo', async ({ bro
     await expect(status(b).getByText('you hold this sector')).toBeVisible();
   });
 });
+
+test('export says why it refused, instead of downloading a broken cache', async ({ browser, baseURL }) => {
+  const { alice } = await setUp(baseURL!);
+  const a = await openEditor(browser, alice);
+  // A project built by hand has no imported archives to overlay onto.
+  await a.getByRole('button', { name: 'Export', exact: true }).click();
+  const dialog = a.getByRole('dialog', { name: 'Export refused' });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText(/no imported config archive/)).toBeVisible();
+  await dialog.getByRole('button', { name: 'close' }).click();
+  await expect(dialog).toBeHidden();
+});

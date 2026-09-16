@@ -15,6 +15,7 @@ import { Resizer } from './components/Resizer.js';
 import { ShortcutsModal } from './components/ShortcutsModal.js';
 import { StatusBar } from './components/StatusBar.js';
 import { ToolPalette } from './components/ToolPalette.js';
+import { ExportButton } from './components/ExportButton.js';
 import { ViewportHost } from './components/ViewportHost.js';
 import { WorldMapModal } from './components/WorldMapModal.js';
 import './styles.css';
@@ -114,6 +115,7 @@ export function App() {
         <span className="hint">{apiMode === 'mock' ? 'mock backend' : 'live backend'}</span>
         {apiMode === 'live' && (
           <>
+            <ExportButton />
             <button
               type="button"
               className="btn btn--sm"

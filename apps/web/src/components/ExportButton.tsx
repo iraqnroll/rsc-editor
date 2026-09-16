@@ -1,0 +1,97 @@
+import { useEffect, useRef, useState } from 'react';
+import { getApi } from '../data/api.js';
+
+/**
+ * Download the project as a cache directory, or say exactly why not.
+ *
+ * The server only hands over a zip that it has re-imported and found identical
+ * to the project (`exportWorld` in `@rsc-editor/cache`). When it refuses, the
+ * list of problems is the useful part -- a sector and a tile to go and fix --
+ * so it is shown in full rather than as "export failed".
+ */
+export function ExportButton() {
+  const [busy, setBusy] = useState(false);
+  const [problems, setProblems] = useState<string[] | null>(null);
+
+  async function run(): Promise<void> {
+    setBusy(true);
+    try {
+      const outcome = await getApi().exportProject();
+      if (!outcome.ok) {
+        setProblems(outcome.problems);
+        return;
+      }
+      const url = URL.createObjectURL(outcome.zip);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = outcome.filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      // Revoked on the next tick: some browsers start the download lazily.
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+    } catch (err) {
+      setProblems([`the export request failed: ${err instanceof Error ? err.message : String(err)}`]);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        className="btn btn--sm"
+        disabled={busy}
+        title="Download this project as a cache directory (checked before download)"
+        onClick={() => void run()}
+      >
+        {busy ? 'Exporting…' : 'Export'}
+      </button>
+      {problems && <ExportProblems problems={problems} onClose={() => setProblems(null)} />}
+    </>
+  );
+}
+
+function ExportProblems({ problems, onClose }: { problems: string[]; onClose: () => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    ref.current?.focus();
+    function onKey(e: KeyboardEvent): void {
+      if (e.key === 'Escape') onClose();
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  return (
+    <div className="modal__scrim" onClick={onClose} role="presentation">
+      <div
+        className="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Export refused"
+        tabIndex={-1}
+        ref={ref}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="panel__header">
+          Export refused
+          <span className="spacer" />
+          <button type="button" className="btn btn--sm btn--ghost" onClick={onClose}>
+            close
+          </button>
+        </div>
+        <p className="hint">
+          The exported cache would not read back as this project, so nothing was downloaded.
+        </p>
+        <ul className="export-problems">
+          {problems.map((problem) => (
+            <li key={problem}>{problem}</li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
+}
