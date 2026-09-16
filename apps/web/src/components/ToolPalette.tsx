@@ -10,7 +10,7 @@ import { clampLane } from '../ops/apply.js';
 import { BRUSH_SHAPES, ELEVATION_MODES, FALLOFFS, WALL_EDGES, WALL_EDGE_LABELS } from '../ops/builders.js';
 import { TOOLS, type ToolId } from '../tools/registry.js';
 import { useEditor } from '../state/editorStore.js';
-import { copySelection } from '../state/gesture.js';
+import { copySelection, repairHeldScenery } from '../state/gesture.js';
 import { TERRAIN_PALETTE, terrainBand, terrainColour } from '../data/terrain-palette.js';
 import { NumberField, Readout, Section, Segmented, Slider, Toggle } from './controls.js';
 import { DefPicker } from './DefPicker.js';
@@ -364,6 +364,13 @@ function SceneryOptions() {
         Stored as <code>objectId + 48001</code> in the <code>wallsDiagonal</code> lane. Hold{' '}
         <span className="kbd">Alt</span> to delete; in rotate mode <span className="kbd">Shift</span>{' '}
         turns the other way.
+      </p>
+      <button type="button" className="btn btn--sm" onClick={repairHeldScenery}>
+        Repair scenery in held sectors
+      </button>
+      <p className="hint">
+        Re-lays every object across its full footprint. Use it if an export is refused over
+        scenery; objects that no longer fit are removed and listed. One undo step.
       </p>
     </Section>
   );

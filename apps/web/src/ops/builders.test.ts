@@ -6,12 +6,15 @@ import {
   invert,
   sectorKey
 } from '@rsc-editor/schema';
-import type { SectorBuffers, SectorCoord } from '@rsc-editor/schema';
+import type { Op, SectorBuffers, SectorCoord } from '@rsc-editor/schema';
 import {
   buildElevationOp,
   buildPaintOp,
   buildRegionFillOp,
   buildSceneryPlaceOp,
+  buildSceneryRemoveOp,
+  buildSceneryRepairOp,
+  buildSceneryRotateOp,
   buildWallOp,
   copyRegion,
   falloffWeight,
@@ -187,19 +190,160 @@ describe('paint', () => {
   });
 });
 
+/** 0: 1x1, 1: 2x1, 2: 2x3, 3: 0x0 (objects[581] in the real cache is 0x0) */
+const OBJECTS = [
+  { width: 1, height: 1 },
+  { width: 2, height: 1 },
+  { width: 2, height: 3 },
+  { width: 0, height: 0 }
+];
+
+/** Apply a build result to the synthetic world, the way the store does. */
+function applyAll(sectors: Map<string, SectorBuffers>, ops: readonly Op[]): void {
+  for (const op of ops) {
+    if (op.type === 'sector') applySectorOp(sectors.get(sectorKey(op.sector))!, op);
+  }
+}
+
+const S = { plane: 0, x: 50, y: 50 };
+const at = (x: number, y: number) => ({ plane: 0, wx: 50 * 48 + x, wy: 50 * 48 + y });
+const idx = (x: number, y: number) => x * SECTOR_WIDTH + y;
+
+/** Every tile holding scenery, as "x,y=id/dir". */
+function sceneryTiles(b: SectorBuffers): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < b.wallsDiagonal.length; i++) {
+    const v = b.wallsDiagonal[i]!;
+    if (v >= OBJECT_ID_BIAS) {
+      out.push(`${Math.floor(i / SECTOR_WIDTH)},${i % SECTOR_WIDTH}=${v - OBJECT_ID_BIAS}/${b.direction[i]}`);
+    }
+  }
+  return out.sort();
+}
+
+describe('scenery footprints', () => {
+  it('places an object across its whole footprint', () => {
+    const { read, sectors } = makeWorld([S]);
+    applyAll(sectors, buildSceneryPlaceOp(at(10, 10), 2, 0, read, OBJECTS).ops);
+    expect(sceneryTiles(sectors.get(sectorKey(S))!)).toEqual([
+      '10,10=2/0', '10,11=2/0', '10,12=2/0', '11,10=2/0', '11,11=2/0', '11,12=2/0'
+    ]);
+  });
+
+  it('transposes the footprint for an odd direction', () => {
+    const { read, sectors } = makeWorld([S]);
+    applyAll(sectors, buildSceneryPlaceOp(at(10, 10), 2, 2, read, OBJECTS).ops);
+    expect(sceneryTiles(sectors.get(sectorKey(S))!)).toEqual([
+      '10,10=2/2', '10,11=2/2', '11,10=2/2', '11,11=2/2', '12,10=2/2', '12,11=2/2'
+    ]);
+  });
+
+  it('clips at the sector edge instead of writing into the neighbour', () => {
+    const east = { plane: 0, x: 51, y: 50 };
+    const { read, sectors } = makeWorld([S, east]);
+    const result = buildSceneryPlaceOp(at(47, 0), 2, 0, read, OBJECTS);
+    expect(result.touched).toEqual([S]);
+    applyAll(sectors, result.ops);
+    expect(sceneryTiles(sectors.get(sectorKey(S))!)).toEqual(['47,0=2/0', '47,1=2/0', '47,2=2/0']);
+  });
+
+  it('refuses to overlap another object or a diagonal wall', () => {
+    const { read, sectors } = makeWorld([S]);
+    applyAll(sectors, buildSceneryPlaceOp(at(10, 10), 0, 0, read, OBJECTS).ops);
+    const overlap = buildSceneryPlaceOp(at(9, 9), 2, 0, read, OBJECTS);
+    expect(overlap.ops).toHaveLength(0);
+    expect(overlap.conflicts[0]).toContain('scenery object 0');
+
+    sectors.get(sectorKey(S))!.wallsDiagonal[idx(20, 21)] = 5;
+    const wall = buildSceneryPlaceOp(at(20, 20), 2, 0, read, OBJECTS);
+    expect(wall.ops).toHaveLength(0);
+    expect(wall.conflicts[0]).toContain('diagonal wall');
+  });
+
+  it('refuses an object with an empty footprint', () => {
+    const { read } = makeWorld([S]);
+    const result = buildSceneryPlaceOp(at(5, 5), 3, 0, read, OBJECTS);
+    expect(result.ops).toHaveLength(0);
+    expect(result.conflicts[0]).toContain('0 x 0');
+  });
+
+  it('removes the whole object from any of its tiles', () => {
+    const { read, sectors } = makeWorld([S]);
+    applyAll(sectors, buildSceneryPlaceOp(at(10, 10), 2, 0, read, OBJECTS).ops);
+    applyAll(sectors, buildSceneryRemoveOp(at(11, 12), read, OBJECTS).ops);
+    expect(sceneryTiles(sectors.get(sectorKey(S))!)).toEqual([]);
+  });
+
+  it('leaves a neighbouring object of the same id alone', () => {
+    const { read, sectors } = makeWorld([S]);
+    applyAll(sectors, buildSceneryPlaceOp(at(10, 10), 1, 0, read, OBJECTS).ops);
+    applyAll(sectors, buildSceneryPlaceOp(at(12, 10), 1, 0, read, OBJECTS).ops);
+    applyAll(sectors, buildSceneryRemoveOp(at(10, 10), read, OBJECTS).ops);
+    expect(sceneryTiles(sectors.get(sectorKey(S))!)).toEqual(['12,10=1/0', '13,10=1/0']);
+  });
+
+  it('re-lays the footprint when rotating, and undo restores it', () => {
+    const { read, sectors } = makeWorld([S]);
+    applyAll(sectors, buildSceneryPlaceOp(at(10, 10), 1, 0, read, OBJECTS).ops);
+    const before = sceneryTiles(sectors.get(sectorKey(S))!);
+    const rotate = buildSceneryRotateOp(at(11, 10), 1, read, OBJECTS);
+    applyAll(sectors, rotate.ops);
+    expect(sceneryTiles(sectors.get(sectorKey(S))!)).toEqual(['10,10=1/1', '10,11=1/1']);
+    applyAll(sectors, rotate.ops.map((op) => invert(op)));
+    expect(sceneryTiles(sectors.get(sectorKey(S))!)).toEqual(before);
+  });
+
+  it('refuses a rotation that would overlap', () => {
+    const { read, sectors } = makeWorld([S]);
+    applyAll(sectors, buildSceneryPlaceOp(at(10, 10), 1, 0, read, OBJECTS).ops);
+    applyAll(sectors, buildSceneryPlaceOp(at(10, 11), 0, 0, read, OBJECTS).ops);
+    const result = buildSceneryRotateOp(at(10, 10), 1, read, OBJECTS);
+    expect(result.ops).toHaveLength(0);
+    expect(result.conflicts[0]).toContain('overlap');
+  });
+
+  it('repairs one-tile objects and stray tiles the old tool left behind', () => {
+    const { read, sectors } = makeWorld([S]);
+    const b = sectors.get(sectorKey(S))!;
+    // The old tool: a 2x3 object written on its origin only...
+    b.wallsDiagonal[idx(10, 10)] = 2 + OBJECT_ID_BIAS;
+    // ...an object rotated without re-laying (origin says 2, rest says 0)...
+    for (const [x, y] of [[20, 20], [21, 20]] as const) b.wallsDiagonal[idx(x, y)] = 1 + OBJECT_ID_BIAS;
+    b.direction[idx(20, 20)] = 2;
+    // ...and a one-tile object whose footprint now runs into a diagonal wall.
+    b.wallsDiagonal[idx(30, 30)] = 1 + OBJECT_ID_BIAS;
+    b.wallsDiagonal[idx(31, 30)] = 5;
+
+    const repair = buildSceneryRepairOp(S, read, OBJECTS);
+    applyAll(sectors, repair.result.ops);
+    expect(repair.dropped).toEqual([{ id: 1, wx: 50 * 48 + 30, wy: 50 * 48 + 30 }]);
+    expect(sceneryTiles(b)).toEqual([
+      '10,10=2/0', '10,11=2/0', '10,12=2/0', '11,10=2/0', '11,11=2/0', '11,12=2/0',
+      '20,20=1/2', '20,21=1/2',
+      // the tile the rotation left behind is an object of its own, as the export reads it
+      '21,20=1/0', '22,20=1/0'
+    ]);
+    expect(b.wallsDiagonal[idx(31, 30)]).toBe(5);
+
+    // Idempotent: a repaired sector needs nothing further.
+    expect(buildSceneryRepairOp(S, read, OBJECTS).result.ops).toHaveLength(0);
+  });
+});
+
 describe('the multiplexed wallsDiagonal lane', () => {
   it('encodes scenery as objectId + 48001 and decodes back', () => {
     const coord = { plane: 0, x: 50, y: 50 };
     const { read } = makeWorld([coord]);
     const result = buildSceneryPlaceOp(
       { plane: 0, wx: 50 * 48 + 5, wy: 50 * 48 + 5 },
-      581,
+      1,
       3,
-      read
+      read,
+      OBJECTS
     );
     const diag = result.ops[0]!.changes.find((c) => c.lane === 'wallsDiagonal');
-    expect(diag?.to).toBe(581 + OBJECT_ID_BIAS);
-    expect(readDiagonalLane(diag!.to)).toEqual({ kind: 'object', id: 581 });
+    expect(diag?.to).toBe(1 + OBJECT_ID_BIAS);
+    expect(readDiagonalLane(diag!.to)).toEqual({ kind: 'object', id: 1 });
   });
 
   it('refuses to drop a diagonal wall onto a tile carrying scenery', () => {

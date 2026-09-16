@@ -74,6 +74,21 @@ async function setUp(
   const created = await alice.api.post('/api/projects', { data: { name: `e2e ${tag}` } });
   const projectId = ((await created.json()) as { project: { id: string } }).project.id;
   expect((await alice.api.post(`/api/projects/${projectId}/sectors/0/50/50`)).status()).toBe(201);
+  // The scenery tool refuses objects the project does not define (the export
+  // could not ship them), and an empty project defines none.
+  const object = {
+    name: 'e2e crate',
+    description: '',
+    commands: [],
+    model: { name: 'crate', id: 0 },
+    width: 1,
+    height: 1,
+    type: 'blocked',
+    itemHeight: 0
+  };
+  expect(
+    (await alice.api.put(`/api/projects/${projectId}/definitions/objects/0`, { data: { data: object } })).ok()
+  ).toBe(true);
   expect(
     (await alice.api.put(`/api/projects/${projectId}/members/${bob.id}`, { data: { role: 'editor' } })).ok()
   ).toBe(true);

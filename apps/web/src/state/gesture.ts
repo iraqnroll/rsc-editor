@@ -8,6 +8,7 @@
  * behaviour is identical and lives here.
  */
 
+import { parseSectorKey } from '@rsc-editor/schema';
 import type { Lane } from '@rsc-editor/schema';
 import {
   buildElevationOp,
@@ -16,11 +17,13 @@ import {
   buildRegionPasteOp,
   buildRoofOp,
   buildSceneryPlaceOp,
+  buildSceneryRepairOp,
   buildSceneryRemoveOp,
   buildSceneryRotateOp,
   buildWallOp,
   copyRegion,
-  normaliseRect
+  normaliseRect,
+  type BuildResult
 } from '../ops/builders.js';
 import type { WorldTile } from '../ops/coords.js';
 import { useEditor } from './editorStore.js';
@@ -92,15 +95,17 @@ export function applyGesture(tile: WorldTile, mods: GestureModifiers): void {
 
     case 'scenery': {
       const mode = mods.alt ? 'remove' : s.scenery.mode;
+      const objects = state.config?.objects;
+      if (!objects) {
+        state.setNotice({ kind: 'info', message: 'Definitions are still loading.' });
+        return;
+      }
       if (mode === 'place') {
-        state.commit(buildSceneryPlaceOp(tile, s.scenery.objectId, s.scenery.direction, read));
+        state.commit(buildSceneryPlaceOp(tile, s.scenery.objectId, s.scenery.direction, read, objects));
       } else if (mode === 'rotate') {
-        const current = read({ plane: tile.plane, x: Math.floor(tile.wx / 48), y: Math.floor(tile.wy / 48) });
-        const i = (tile.wx % 48) * 48 + (tile.wy % 48);
-        const dir = ((current?.direction[i] ?? 0) + (mods.shift ? 7 : 1)) & 7;
-        state.commit(buildSceneryRotateOp(tile, dir, read));
+        state.commit(buildSceneryRotateOp(tile, mods.shift ? 7 : 1, read, objects));
       } else {
-        state.commit(buildSceneryRemoveOp(tile, read));
+        state.commit(buildSceneryRemoveOp(tile, read, objects));
       }
       return;
     }
@@ -155,4 +160,53 @@ export function fillSelection(lane: Lane, value: number): void {
   const state = useEditor.getState();
   if (!state.selection) return;
   state.commit(buildRegionFillOp(normaliseRect(state.selection), lane, value, state.readSector));
+}
+
+/**
+ * Scenery tool: re-lay every object in the sectors you hold so the export
+ * reads them back unchanged. For maps edited before the tool wrote whole
+ * footprints; one undo step.
+ */
+export function repairHeldScenery(): void {
+  const state = useEditor.getState();
+  const objects = state.config?.objects;
+  const mine = state.me?.userId;
+  if (!objects || !mine) return;
+
+  const held = Object.entries(state.locks)
+    .filter(([, lock]) => lock.userId === mine)
+    .map(([key]) => parseSectorKey(key));
+  if (held.length === 0) {
+    state.setNotice({ kind: 'info', message: 'Claim the sectors to repair first.' });
+    return;
+  }
+
+  const merged: BuildResult = { ops: [], missing: [], touched: [], conflicts: [] };
+  let fixed = 0;
+  const dropped: string[] = [];
+  for (const coord of held) {
+    const repair = buildSceneryRepairOp(coord, state.readSector, objects);
+    merged.ops.push(...repair.result.ops);
+    merged.missing.push(...repair.result.missing);
+    merged.touched.push(...repair.result.touched);
+    fixed += repair.fixed;
+    for (const d of repair.dropped) dropped.push(`object ${d.id} at (${d.wx}, ${d.wy})`);
+  }
+  if (merged.missing.length > 0) {
+    state.commit(merged);
+    return;
+  }
+  if (merged.ops.length === 0) {
+    state.setNotice({ kind: 'info', message: `Scenery in ${held.length} held sector(s) is already consistent.` });
+    return;
+  }
+
+  state.startStroke();
+  state.commit(merged, 'Repair scenery');
+  const parts = [`Repaired scenery in ${merged.touched.length} sector(s): ${fixed} object(s) re-laid.`];
+  if (dropped.length > 0) {
+    parts.push(`Removed ${dropped.length} that no longer fit: ${dropped.slice(0, 5).join(', ')}` +
+      (dropped.length > 5 ? ', ...' : '') + '.');
+  }
+  useEditor.getState().setNotice({ kind: 'info', message: parts.join(' ') });
 }

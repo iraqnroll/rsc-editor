@@ -324,46 +324,280 @@ export function buildRoofOp(
 
 /* --------------------------------------------------------------- scenery -- */
 
+/**
+ * Scenery covers its whole footprint, not one tile.
+ *
+ * The cache repeats `objectId + OBJECT_ID_BIAS` (and the direction) across
+ * every tile an object stands on, clipped at the sector edge, and the importer
+ * and the export gate both work that way (`applyScenery`, `listPlacements` in
+ * packages/cache). A tool that wrote only the clicked tile produced lanes the
+ * export could not reproduce, so it refused the whole world. These builders
+ * follow the same rules, so what the editor writes is what the export ships.
+ */
+export interface SceneryFootprint {
+  width: number;
+  height: number;
+}
+
+interface SceneryAt {
+  id: number;
+  direction: number;
+  /** sector-local tile index of the origin */
+  origin: number;
+  /** every tile index the object holds, origin included */
+  tiles: number[];
+}
+
+/** `sceneryFootprint` in packages/cache: odd directions transpose, the sector edge clips. */
+function footprintTiles(origin: number, direction: number, def: SceneryFootprint): number[] {
+  const ox = Math.floor(origin / SECTOR_WIDTH);
+  const oy = origin % SECTOR_WIDTH;
+  const square = direction === 0 || direction === 4;
+  const width = square ? def.width : def.height;
+  const height = square ? def.height : def.width;
+  const tiles: number[] = [];
+  for (let x = ox; x < Math.min(ox + width, SECTOR_WIDTH); x++) {
+    for (let y = oy; y < Math.min(oy + height, SECTOR_WIDTH); y++) {
+      tiles.push(x * SECTOR_WIDTH + y);
+    }
+  }
+  return tiles;
+}
+
+/**
+ * The objects in one sector, read the way the export reads them
+ * (`listPlacements`): an x-then-y scan, where the first unclaimed tile of an id
+ * is its origin and claims the matching tiles of its footprint.
+ */
+function sceneryInSector(buffers: SectorBuffers, objects: readonly SceneryFootprint[]): SceneryAt[] {
+  const lane = buffers.wallsDiagonal;
+  const claimed = new Uint8Array(lane.length);
+  const out: SceneryAt[] = [];
+  for (let i = 0; i < lane.length; i++) {
+    if (claimed[i]) continue;
+    const value = lane[i]!;
+    if (value < OBJECT_ID_BIAS) continue;
+    const id = value - OBJECT_ID_BIAS;
+    const direction = buffers.direction[i]!;
+    const tiles = [i];
+    claimed[i] = 1;
+    const def = objects[id];
+    if (def) {
+      for (const t of footprintTiles(i, direction, def)) {
+        if (!claimed[t] && lane[t] === value) {
+          claimed[t] = 1;
+          tiles.push(t);
+        }
+      }
+    }
+    out.push({ id, direction, origin: i, tiles });
+  }
+  return out;
+}
+
+function sectorOf(tile: WorldTile, read: SectorReader) {
+  const st = toSectorTile(tile);
+  if (!st) return null;
+  return { ...st, buffers: read(st.coord) };
+}
+
+function worldOf(coord: SectorCoord, i: number): WorldTile {
+  return {
+    plane: coord.plane,
+    wx: coord.x * SECTOR_WIDTH + Math.floor(i / SECTOR_WIDTH),
+    wy: coord.y * SECTOR_WIDTH + (i % SECTOR_WIDTH)
+  };
+}
+
+/** Why a footprint cannot go on these tiles, or null. `ignore` is the object being moved. */
+function footprintBlocked(
+  buffers: SectorBuffers,
+  tiles: readonly number[],
+  ignore: ReadonlySet<number> = new Set()
+): string | null {
+  for (const t of tiles) {
+    if (ignore.has(t)) continue;
+    const value = buffers.wallsDiagonal[t]!;
+    if (value >= OBJECT_OFFSET) return `scenery object ${value - OBJECT_ID_BIAS}`;
+    if (value !== 0) return 'a diagonal wall';
+  }
+  return null;
+}
+
+function describeFootprint(def: SceneryFootprint, direction: number): string {
+  const square = direction === 0 || direction === 4;
+  return square ? `${def.width} x ${def.height}` : `${def.height} x ${def.width}`;
+}
+
 export function buildSceneryPlaceOp(
   tile: WorldTile,
   objectId: number,
   direction: number,
-  read: SectorReader
+  read: SectorReader,
+  objects: readonly SceneryFootprint[]
 ): BuildResult {
   const c = new DeltaCollector(read);
-  const existing = c.peek(tile, 'wallsDiagonal');
-  if (existing !== undefined && existing > 0 && existing < OBJECT_OFFSET) {
+  const def = objects[objectId];
+  if (!def) {
+    c.conflict(`Object ${objectId} is not defined.`);
+    return c.finish('scenery.place');
+  }
+  if (def.width < 1 || def.height < 1) {
+    // The importer skips these too: a 0x0 object covers no tile, so it cannot
+    // be stored and the export would drop it.
+    c.conflict(`Object ${objectId} has a ${def.width} x ${def.height} footprint and cannot be placed.`);
+    return c.finish('scenery.place');
+  }
+  const at = sectorOf(tile, read);
+  if (!at) return c.finish('scenery.place');
+  if (!at.buffers) {
+    c.write(tile, 'wallsDiagonal', 0); // records the sector as missing
+    return c.finish('scenery.place');
+  }
+
+  const dir = direction & 7;
+  const tiles = footprintTiles(at.i, dir, def);
+  const blocked = footprintBlocked(at.buffers, tiles);
+  if (blocked) {
     c.conflict(
-      `Tile (${tile.wx}, ${tile.wy}) carries a diagonal wall. ` +
-        'Scenery and diagonal walls share one lane — remove the wall first.'
+      `Object ${objectId} (${describeFootprint(def, dir)}) at (${tile.wx}, ${tile.wy}) would overlap ${blocked}.`
     );
     return c.finish('scenery.place');
   }
-  c.write(tile, 'wallsDiagonal', objectId + OBJECT_ID_BIAS);
-  c.write(tile, 'direction', direction & 7);
+  for (const t of tiles) {
+    const w = worldOf(at.coord, t);
+    c.write(w, 'wallsDiagonal', objectId + OBJECT_ID_BIAS);
+    c.write(w, 'direction', dir);
+  }
   return c.finish('scenery.place');
 }
 
+/** Turn the object under `tile` by `step` eighths, re-laying its footprint. */
 export function buildSceneryRotateOp(
   tile: WorldTile,
-  direction: number,
-  read: SectorReader
+  step: number,
+  read: SectorReader,
+  objects: readonly SceneryFootprint[]
 ): BuildResult {
   const c = new DeltaCollector(read);
-  c.write(tile, 'direction', direction & 7);
+  const at = sectorOf(tile, read);
+  const found = at?.buffers && sceneryInSector(at.buffers, objects).find((o) => o.tiles.includes(at.i));
+  if (!at?.buffers || !found) {
+    c.conflict(`No scenery on tile (${tile.wx}, ${tile.wy}).`);
+    return c.finish('scenery.rotate');
+  }
+  const def = objects[found.id];
+  const dir = (found.direction + step) & 7;
+  const next = def && def.width > 0 && def.height > 0 ? footprintTiles(found.origin, dir, def) : [found.origin];
+  const old = new Set(found.tiles);
+  const blocked = footprintBlocked(at.buffers, next, old);
+  if (blocked) {
+    c.conflict(`Turned to direction ${dir}, object ${found.id} would overlap ${blocked}.`);
+    return c.finish('scenery.rotate');
+  }
+
+  const keep = new Set(next);
+  for (const t of found.tiles) {
+    if (keep.has(t)) continue;
+    const w = worldOf(at.coord, t);
+    c.write(w, 'wallsDiagonal', 0);
+    c.write(w, 'direction', 0);
+  }
+  for (const t of next) {
+    const w = worldOf(at.coord, t);
+    c.write(w, 'wallsDiagonal', found.id + OBJECT_ID_BIAS);
+    c.write(w, 'direction', dir);
+  }
   return c.finish('scenery.rotate');
 }
 
-export function buildSceneryRemoveOp(tile: WorldTile, read: SectorReader): BuildResult {
+/** Remove the whole object under `tile`, whichever of its tiles was clicked. */
+export function buildSceneryRemoveOp(
+  tile: WorldTile,
+  read: SectorReader,
+  objects: readonly SceneryFootprint[]
+): BuildResult {
   const c = new DeltaCollector(read);
-  const existing = c.peek(tile, 'wallsDiagonal');
-  if (existing === undefined || existing < OBJECT_OFFSET) {
+  const at = sectorOf(tile, read);
+  const found = at?.buffers && sceneryInSector(at.buffers, objects).find((o) => o.tiles.includes(at.i));
+  if (!at?.buffers || !found) {
     c.conflict(`No scenery on tile (${tile.wx}, ${tile.wy}).`);
     return c.finish('scenery.remove');
   }
-  c.write(tile, 'wallsDiagonal', 0);
-  c.write(tile, 'direction', 0);
+  for (const t of found.tiles) {
+    const w = worldOf(at.coord, t);
+    c.write(w, 'wallsDiagonal', 0);
+    c.write(w, 'direction', 0);
+  }
   return c.finish('scenery.remove');
+}
+
+export interface SceneryRepair {
+  result: BuildResult;
+  /** objects whose footprint was filled in or trimmed */
+  fixed: number;
+  /** objects that could not be laid out whole and were removed */
+  dropped: Array<{ id: number; wx: number; wy: number }>;
+}
+
+/**
+ * Re-lay every object in a sector exactly as the export will re-apply it.
+ *
+ * For sectors edited before the tool wrote whole footprints: an object stored
+ * on one tile is widened to its footprint; a stray tile left behind by a
+ * one-tile removal becomes an object of its own, which is what the export
+ * would read too. Objects are laid in scan order, and one that no longer fits
+ * is removed and reported, never half-written. After this the sector reads
+ * back unchanged through the export.
+ */
+export function buildSceneryRepairOp(
+  coord: SectorCoord,
+  read: SectorReader,
+  objects: readonly SceneryFootprint[]
+): SceneryRepair {
+  const c = new DeltaCollector(read);
+  const buffers = read(coord);
+  if (!buffers) {
+    c.write(worldOf(coord, 0), 'wallsDiagonal', 0); // records the sector as missing
+    return { result: c.finish('scenery.place'), fixed: 0, dropped: [] };
+  }
+
+  const found = sceneryInSector(buffers, objects);
+  const diagonal = buffers.wallsDiagonal.slice();
+  const direction = buffers.direction.slice();
+  for (const o of found) {
+    for (const t of o.tiles) {
+      diagonal[t] = 0;
+      direction[t] = 0;
+    }
+  }
+
+  let fixed = 0;
+  const dropped: SceneryRepair['dropped'] = [];
+  for (const o of found) {
+    const def = objects[o.id];
+    const tiles = def && def.width > 0 && def.height > 0 ? footprintTiles(o.origin, o.direction, def) : [];
+    const free = tiles.length > 0 && tiles.every((t) => diagonal[t] === 0);
+    if (!free) {
+      const w = worldOf(coord, o.origin);
+      dropped.push({ id: o.id, wx: w.wx, wy: w.wy });
+      continue;
+    }
+    const same =
+      tiles.length === o.tiles.length &&
+      tiles.every((t) => o.tiles.includes(t) && buffers.direction[t] === o.direction);
+    if (!same) fixed++;
+    for (const t of tiles) {
+      diagonal[t] = o.id + OBJECT_ID_BIAS;
+      direction[t] = o.direction;
+    }
+  }
+
+  for (let t = 0; t < diagonal.length; t++) {
+    if (diagonal[t] !== buffers.wallsDiagonal[t]) c.write(worldOf(coord, t), 'wallsDiagonal', diagonal[t]!);
+    if (direction[t] !== buffers.direction[t]) c.write(worldOf(coord, t), 'direction', direction[t]!);
+  }
+  return { result: c.finish('scenery.place'), fixed, dropped };
 }
 
 /** Decode the multiplexed lane for display. */

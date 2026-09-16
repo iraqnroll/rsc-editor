@@ -96,6 +96,12 @@ export function ExportProblems({ problems, onClose }: { problems: string[]; onCl
             <li key={problem}>{problem}</li>
           ))}
         </ul>
+        {problems.some((p) => /scenery|wallsDiagonal|direction/.test(p)) && (
+          <p className="hint">
+            Scenery that doesn&apos;t cover its full footprint causes this. Claim the sectors listed
+            above, then use <b>Scenery → Repair scenery in held sectors</b> and export again.
+          </p>
+        )}
       </div>
     </div>
   );
