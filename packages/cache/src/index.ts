@@ -10,6 +10,7 @@
 export * from './landscape-codec.js';
 export * from './landscape.js';
 export * from './scenery.js';
+export * from './export.js';
 export * from './config.js';
 export * from './models.js';
 export * from './colour.js';
