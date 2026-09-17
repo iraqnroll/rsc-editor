@@ -100,3 +100,38 @@ export function sameTile(a: WorldTile | null, b: WorldTile | null): boolean {
   if (a === null || b === null) return a === b;
   return a.plane === b.plane && a.wx === b.wx && a.wy === b.wy;
 }
+
+/** A mouse sample this far from the last one is a jump, not a stroke. */
+export const MAX_STROKE_STEP = 16;
+
+/**
+ * The tiles a stroke crosses going from `from` to `to`, excluding `from` and
+ * ending with `to`. Pointer events arrive every frame, not every tile, so a
+ * quick drag moves several tiles between two samples; painting only the
+ * sampled ones left gaps. Steps go one axis at a time, so the line is
+ * 4-connected and a diagonal stroke paints a solid band rather than a
+ * checkerboard. A different plane or a jump too long to be a stroke yields
+ * just `to`.
+ */
+export function tilesBetween(from: WorldTile, to: WorldTile): WorldTile[] {
+  const dx = to.wx - from.wx;
+  const dy = to.wy - from.wy;
+  const steps = Math.abs(dx) + Math.abs(dy);
+  if (from.plane !== to.plane || steps === 0 || Math.max(Math.abs(dx), Math.abs(dy)) > MAX_STROKE_STEP) {
+    return steps === 0 && from.plane === to.plane ? [] : [to];
+  }
+  const out: WorldTile[] = [];
+  let { wx, wy } = from;
+  const sx = Math.sign(dx);
+  const sy = Math.sign(dy);
+  // Walk the grid cells the segment passes through, choosing the axis whose
+  // next boundary the line reaches first.
+  for (let i = 0; i < steps; i++) {
+    const tx = sx === 0 ? Infinity : (Math.abs(wx - from.wx) + 0.5) / Math.abs(dx);
+    const ty = sy === 0 ? Infinity : (Math.abs(wy - from.wy) + 0.5) / Math.abs(dy);
+    if (tx <= ty) wx += sx;
+    else wy += sy;
+    out.push({ plane: to.plane, wx, wy });
+  }
+  return out;
+}

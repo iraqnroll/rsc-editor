@@ -79,7 +79,7 @@ import {
   sectorTintTransform
 } from './overlay-geometry.js';
 import { createMesher } from './mesher.js';
-import { sameTile, tileOfFace, tileOfGroundPlane, worldTileAt } from './picking.js';
+import { sameTile, tilesBetween, tileOfFace, tileOfGroundPlane, worldTileAt } from './picking.js';
 import {
   SectorGeometryCache,
   SECTOR_SPAN,
@@ -310,7 +310,14 @@ function SceneContents(props: SceneProps) {
       // to be looked through, not clicked through: if it could take a hit, a
       // brush stroke on the ground floor would silently start landing on the
       // first floor wherever one happens to be overhead.
-      const hits = raycaster.intersectObjects([...terrainMeshes.current.values()], false);
+      const meshes = [...terrainMeshes.current.values()];
+      // A sector re-meshed by an edit mounts a new mesh whose world matrix is
+      // still identity until the next frame renders, so a pick in between
+      // missed it and fell through to the flat ground plane -- a tile far from
+      // the cursor on a hill. Painting re-meshes on every tile, so a held
+      // stroke jumped around and left gaps.
+      for (const mesh of meshes) mesh.updateWorldMatrix(true, false);
+      const hits = raycaster.intersectObjects(meshes, false);
       const hit = hits[0];
 
       if (hit) {
@@ -1430,8 +1437,9 @@ export function Viewport3D(props: ViewportProps) {
       }
       // Each tile once per crossing: moving within a tile is not another stroke.
       if (sameTile(tile, drag.last ?? null)) return;
+      const path = drag.last ? tilesBetween(drag.last, tile) : [tile];
       drag.last = tile;
-      onPick(tile, { alt: e.altKey, shift: e.shiftKey, continued: true });
+      for (const step of path) onPick(step, { alt: e.altKey, shift: e.shiftKey, continued: true });
     }
   };
 
