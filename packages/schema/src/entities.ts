@@ -53,15 +53,25 @@ export const itemSpawnSchema = z.object({
 });
 export type ItemSpawn = z.infer<typeof itemSpawnSchema>;
 
-/** rsc-server's wall-object directions, which match the lane names. */
-export const DOOR_DIRECTIONS = ['horizontal', 'vertical', 'diagonal-nesw', 'diagonal-nwse'] as const;
+/**
+ * rsc-server's wall-object directions, in its own order.
+ *
+ * The diagonals are NOT in lane order, which is the trap: the client stands a
+ * direction-2 wall between the corners `(x+1, y)` and `(x, y+1)` -- the "\\"
+ * diagonal, which the lane stores biased by 12000 -- and a direction-3 wall
+ * between `(x, y)` and `(x+1, y+1)`, the unbiased "/" one
+ * (`mudclient#createModel`, `World#_loadSection_from4`, and rsc-landscape's
+ * own `tile.js`, which all agree). Having them the other way round drew and
+ * exported every diagonal door mirrored.
+ */
+export const DOOR_DIRECTIONS = ['horizontal', 'vertical', 'diagonal-nwse', 'diagonal-nesw'] as const;
 
 export const doorSchema = z.object({
   kind: z.literal('door'),
   i: tileIndexSchema,
   /** index into `config.wallObjects` -- zero-based, unlike the wall lanes */
   wallId: z.number().int().min(0),
-  /** 0 horizontal, 1 vertical, 2 "/", 3 "\" -- see DOOR_DIRECTIONS */
+  /** 0 horizontal, 1 vertical, 2 "\", 3 "/" -- see DOOR_DIRECTIONS */
   direction: z.number().int().min(0).max(3)
 });
 export type Door = z.infer<typeof doorSchema>;

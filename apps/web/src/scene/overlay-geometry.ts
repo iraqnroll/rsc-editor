@@ -279,9 +279,9 @@ export function buildEntityMarkers(heights: WorldHeights, markers: readonly Enti
         m.direction === 1
           ? [[m.wx, m.wy], [m.wx, m.wy + 1]]
           : m.direction === 2
-            ? [[m.wx, m.wy], [m.wx + 1, m.wy + 1]]
+            ? [[m.wx + 1, m.wy], [m.wx, m.wy + 1]]
             : m.direction === 3
-              ? [[m.wx + 1, m.wy], [m.wx, m.wy + 1]]
+              ? [[m.wx, m.wy], [m.wx + 1, m.wy + 1]]
               : [[m.wx, m.wy], [m.wx + 1, m.wy]];
       const h = m.height ?? 192;
       const ax = tileRenderX(a![0]!);

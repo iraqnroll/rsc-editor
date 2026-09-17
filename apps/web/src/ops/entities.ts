@@ -149,12 +149,15 @@ export function isEntityOp(op: Op): op is EntityOp {
 
 /* --------------------------------------------------------------- doors -- */
 
-/** rsc-server's door directions, which are the wall lanes in the same order. */
+/**
+ * Wall edge -> rsc-server's door direction. The diagonals cross over: see
+ * DOOR_DIRECTIONS in @rsc-editor/schema for why.
+ */
 export const DOOR_DIRECTION_BY_EDGE: Record<WallEdge, number> = {
   horizontal: 0,
   vertical: 1,
-  'diagonal-nesw': 2,
-  'diagonal-nwse': 3
+  'diagonal-nesw': 3,
+  'diagonal-nwse': 2
 };
 
 /* ------------------------------------------------------------ coordinates -- */

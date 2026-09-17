@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { entityGamePosition, invert, sectorKey } from '@rsc-editor/schema';
+import { DOOR_DIRECTIONS, entityGamePosition, invert, sectorKey } from '@rsc-editor/schema';
 import type { EntityData, EntityOp } from '@rsc-editor/schema';
 import {
+  DOOR_DIRECTION_BY_EDGE,
   applyEntityOp,
   buildEntityAdd,
   buildEntityRemove,
@@ -88,5 +89,28 @@ describe('entity coordinates', () => {
     expect(wanderAround(at(24, 24), 5)).toEqual({ minX: 115, maxX: 125, minY: 643, maxY: 653 });
     const corner = { plane: 0, wx: 48 * 48, wy: 37 * 48 };
     expect(wanderAround(corner, 3)).toEqual({ minX: 0, maxX: 3, minY: 0, maxY: 3 });
+  });
+});
+
+describe('door directions', () => {
+  /**
+   * The client stands a direction-2 wall between (x+1, y) and (x, y+1) -- the
+   * "\\" diagonal the lane biases by 12000 -- and a direction-3 one between
+   * (x, y) and (x+1, y+1), the unbiased "/". Getting this backwards mirrored
+   * every diagonal door, in the editor and in the game.
+   */
+  it('sends each edge to the direction rsc-server means by it', () => {
+    expect(DOOR_DIRECTION_BY_EDGE).toEqual({
+      horizontal: 0,
+      vertical: 1,
+      'diagonal-nwse': 2,
+      'diagonal-nesw': 3
+    });
+  });
+
+  it('labels a direction the same way the edge that made it is labelled', () => {
+    for (const [edge, direction] of Object.entries(DOOR_DIRECTION_BY_EDGE)) {
+      expect(DOOR_DIRECTIONS[direction]).toBe(edge);
+    }
   });
 });
