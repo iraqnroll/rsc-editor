@@ -271,6 +271,42 @@ describe.skipIf(!available)('asset library', () => {
     expect((await api('POST', '/definitions/textures/move', { from: 5, to: 0 })).statusCode).toBe(200);
   }, 120_000);
 
+  it('refuses a 75th NPC sprite set, from any path', async () => {
+    const distinct = new Set(original.animations.map((a) => a.name.toLowerCase())).size;
+    expect(distinct).toBe(62);
+    const base = { colour: 'rgb(255, 255, 255)', genderModel: 0, hasA: false, hasF: false };
+    const count = original.animations.length;
+    for (let n = 0; n < 12; n++) {
+      const res = await api('POST', '/definitions/animations', { data: { ...base, name: `extra${n}` } });
+      expect(res.statusCode, res.body).toBe(200);
+    }
+    const full = await api('POST', '/definitions/animations', { data: { ...base, name: 'onetoomany' } });
+    expect(full.statusCode).toBe(409);
+    expect(full.json().message).toMatch(/room for 74/);
+    // reusing a set costs nothing
+    expect((await api('POST', '/definitions/animations', { data: { ...base, name: 'EXTRA3' } })).statusCode).toBe(200);
+
+    // Renaming, through the definitions route, an animation whose set another
+    // animation also uses would add a 75th name: refused. (Renaming the only
+    // user of a set frees one name as it takes another, so that is allowed.)
+    const names = original.animations.map((a) => a.name.toLowerCase());
+    const shared = names.findIndex((n, i) => names.indexOf(n) !== i);
+    expect(shared).toBeGreaterThan(0);
+    const rename = await app.inject({
+      method: 'PUT',
+      url: `/api/projects/${projectId}/definitions/animations/${shared}`,
+      headers: { cookie },
+      payload: { data: { ...(await definition('animations', shared)), name: 'brandnew' } }
+    });
+    expect(rename.statusCode).toBe(409);
+    expect((await definition('animations', shared)).name).toBe(original.animations[shared]!.name);
+
+    // tidy up, last first
+    for (let i = count + 12; i >= count; i--) {
+      expect((await api('DELETE', `/definitions/animations/${i}`)).statusCode).toBe(200);
+    }
+  }, 120_000);
+
   it('exports the library into the archives it changed, and nothing else', async () => {
     const res = await app.inject({ method: 'GET', url: `/api/projects/${projectId}/export`, headers: { cookie } });
     expect(res.statusCode, res.body.slice(0, 400)).toBe(200);

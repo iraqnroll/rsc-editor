@@ -33,6 +33,13 @@ import { useEditor } from '../state/editorStore.js';
 
 type Tab = 'models' | 'textures' | 'npcs' | 'items';
 
+/**
+ * Distinct NPC sprite-set names the 204 client can load: 27 sprite slots each
+ * below slot 2000. The server enforces it (`MAX_SPRITE_SETS` in
+ * @rsc-editor/cache, DECISIONS section 20); this copy is only for the counter.
+ */
+const MAX_SPRITE_SETS = 74;
+
 const TABS: Array<[Tab, string]> = [
   ['models', 'Models'],
   ['textures', 'Textures'],
@@ -384,6 +391,7 @@ function NpcSpritesTab({ act }: { act: Act }) {
         the 9 fight frames. The 204 client has room for about a dozen more full sets.
       </p>
       <h3 className="assets__heading">Animation numbers</h3>
+      <SpriteSetRoom animations={animations} />
       <DefinitionTable<AnimationDef>
         kind="animations"
         rows={animations}
@@ -625,6 +633,20 @@ function DefinitionTable<T extends object>({
         </tbody>
       </table>
     </div>
+  );
+}
+
+/** How many of the client's sprite-set blocks the animation table uses. */
+function SpriteSetRoom({ animations }: { animations: readonly AnimationDef[] }) {
+  const used = new Set(animations.map((a) => a.name.toLowerCase())).size;
+  const left = MAX_SPRITE_SETS - used;
+  return (
+    <p className={left <= 0 ? 'gate__error assets__room' : 'hint assets__room'} data-testid="sprite-set-room">
+      {used} of {MAX_SPRITE_SETS} sprite sets in use{' '}
+      {left > 0
+        ? `-- room for ${left} more. Animations that reuse a set cost nothing.`
+        : '-- the 204 client has no room for another; reuse an existing set.'}
+    </p>
   );
 }
 

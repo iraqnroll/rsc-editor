@@ -10,7 +10,7 @@ import {
   readSpriteGroups,
   rebuildSpriteArchive
 } from './library-archives.js';
-import { CLIENT_MODELS } from './library-refs.js';
+import { CLIENT_MODELS, MAX_SPRITE_SETS, spriteSetCount } from './library-refs.js';
 import {
   packSpriteGroups,
   packSpriteSet,
@@ -388,6 +388,13 @@ export function checkReferences(
       }
     }
   });
+
+  const setCount = spriteSetCount(config.animations);
+  if (setCount > MAX_SPRITE_SETS) {
+    problems.push(
+      `the animation table names ${setCount} different NPC sprite sets; the 204 client has room for ${MAX_SPRITE_SETS}`
+    );
+  }
 
   config.animations.forEach((a, i) => {
     const name = lower(a.name);

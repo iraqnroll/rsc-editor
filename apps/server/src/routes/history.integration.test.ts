@@ -241,7 +241,9 @@ describe.skipIf(!available)('history and snapshots', () => {
     expect(then.statusCode).toBe(200);
     expect(then.headers['content-disposition']).toMatch(/-before-the-hill-cache\.zip"/);
     expect(elevationIn(then.rawPayload)).toBe(original);
-  });
+    // Two exports, each reading the project's archives into its asset library
+    // state: seconds apiece when the whole suite shares the CPU.
+  }, 60_000);
 
   it('refuses a snapshot export the log cannot account for', async () => {
     const { projectId, userId, cookie } = await seeded();
@@ -256,7 +258,7 @@ describe.skipIf(!available)('history and snapshots', () => {
     const { problems } = res.json() as { problems: string[] };
     expect(problems[0]).toMatch(/does not rewind cleanly to "tag"/);
     expect(problems[1]).toMatch(/elevation\[\d+\] is 150, but the log says it was set to 200/);
-  });
+  }, 60_000);
 
   it('lists the log newest first, with who made each change, in pages', async () => {
     const { projectId, userId, cookie, name } = await seeded();

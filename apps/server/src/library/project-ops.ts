@@ -19,6 +19,7 @@ import {
   deleteLibraryEntry,
   getDefinition,
   getLibraryEntry,
+  listDefinitions,
   parseDefinition,
   putDefinition,
   putLibraryEntries,
@@ -31,6 +32,7 @@ import {
   type DefinitionOp,
   type SequencedOp
 } from '@rsc-editor/schema';
+import { MAX_SPRITE_SETS, spriteSetCount } from '@rsc-editor/cache';
 import type { AppContext } from '../context.js';
 
 export type ProjectOp = DefinitionOp | AssetOp;
@@ -64,6 +66,9 @@ export async function applyProjectOps(
     for (const op of ops) {
       if (op.type === 'definition') await applyDefinition(tx, projectId, actorId, op);
       else await applyAsset(tx, projectId, actorId, op);
+    }
+    if (ops.some((op) => op.type === 'definition' && op.defKind === 'animations')) {
+      await checkSpriteSetRoom(tx, projectId);
     }
     // The log takes 64 ops per append; a reorder is many more. Several
     // appends in one transaction still reserve one contiguous run of seqs,
@@ -101,6 +106,23 @@ function canonical(value: unknown): string {
     return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonical(v)}`).join(',')}}`;
   }
   return JSON.stringify(value ?? null);
+}
+
+/**
+ * The 204 client reserves 27 sprite slots per distinct name in the animation
+ * table and has room for 74 names (`MAX_SPRITE_SETS`). Checked after the whole
+ * batch, so a reorder that passes through a duplicate name is fine.
+ */
+export async function checkSpriteSetRoom(tx: Executor, projectId: string): Promise<void> {
+  const rows = await listDefinitions(tx, projectId, 'animations');
+  const count = spriteSetCount(rows.map((r) => r.data as { name: string }));
+  if (count > MAX_SPRITE_SETS) {
+    throw new OpRejected(
+      'invalid',
+      `the animation table would name ${count} different NPC sprite sets; the 204 client has room for ${MAX_SPRITE_SETS}. ` +
+        'Reuse an existing sprite set, or free one by removing every animation that uses it'
+    );
+  }
 }
 
 function parseOrReject(kind: DefinitionKind, data: unknown): Record<string, unknown> {

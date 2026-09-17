@@ -29,7 +29,7 @@ import type { AppContext } from '../context.js';
 import { badRequest, conflict, notFound } from '../errors.js';
 import { projectGuard, requireAuth, requireProject } from '../guards.js';
 import { asObject, optionalInteger, requiredInteger } from '../validate.js';
-import { announce } from '../library/project-ops.js';
+import { OpRejected, announce, checkSpriteSetRoom } from '../library/project-ops.js';
 
 /** rsc-config's largest table (items) is 1290 entries; 65535 is slack. */
 const MAX_DEFINITION_INDEX = 65_535;
@@ -102,6 +102,15 @@ export async function registerDefinitionRoutes(
       const data = parseDefinition(kind, body.data);
 
       const response = await ctx.db.transaction(async (tx) => {
+        const checkRoom = async () => {
+          if (kind !== 'animations') return;
+          try {
+            await checkSpriteSetRoom(tx, access.projectId);
+          } catch (err) {
+            if (err instanceof OpRejected) throw conflict(err.message, 'no_room');
+            throw err;
+          }
+        };
         const existing = await getDefinition(
           tx,
           access.projectId,
@@ -126,6 +135,7 @@ export async function registerDefinitionRoutes(
           data,
           updatedBy: auth.user.id
         });
+        await checkRoom();
 
         // Whole-field replacement, matching `definitionOpSchema`'s from/to
         // contract. Parsed through the schema so a malformed op can never

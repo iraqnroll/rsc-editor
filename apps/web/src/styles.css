@@ -1511,3 +1511,6 @@ input[type="color"] {
   gap: 3px;
   margin-top: 3px;
 }
+.assets__room {
+  margin: 0 0 6px;
+}

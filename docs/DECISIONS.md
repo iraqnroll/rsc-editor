@@ -855,7 +855,11 @@ change approved by the project owner (CLAUDE.md rule 4).
   twice; all 408 shipped models draw identically after a round trip, though not
   byte-identically -- the `.ob3` download is.
 - **Client limits (204).** Item sprites 48x32, at most 1000 (450 shipped);
-  textures 64 or 128 square, about 780 slots; NPC sprites share 2000 sprite
-  slots with 62 shipped names, so about a dozen more full sets fit. Sprites hold
+  textures 64 or 128 square, about 780 slots. NPC sprites: `loadEntities`
+  gives every distinct (case-insensitive) name in the animation table a block
+  of 27 slots below slot 2000, pictures or not, so 74 names fit and the shipped
+  cache uses 62. `MAX_SPRITE_SETS` is enforced on every animation-table change
+  (library routes, the definitions route, socket edits and undo) after the
+  whole batch, and again by the export. Animations that reuse a name are free. Sprites hold
   254 colours plus the transparency key; item sprites share one palette per
   file of 30.

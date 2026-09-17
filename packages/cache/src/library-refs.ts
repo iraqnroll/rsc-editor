@@ -20,6 +20,23 @@ import { isTextureFill, type FaceFill, type RscModel } from './models.js';
  */
 
 /**
+ * How many distinct NPC sprite-set names the 204 client can hold.
+ *
+ * `mudclient#loadEntities` gives every distinct name in the animation table a
+ * block of 27 sprite slots (15 walk, 3 attack, 9 fight -- reserved whether or
+ * not the set has them, and whether or not its pictures exist), starting at
+ * slot 0. The interface sprites start at slot 2000 (`spriteMedia`), so
+ * 2000 / 27 = 74 blocks fit; a 75th would draw over the interface. Names are
+ * compared case-insensitively, as the client does. The shipped cache uses 62.
+ */
+export const MAX_SPRITE_SETS = 74;
+
+/** Distinct sprite-set names an animation table makes the client load. */
+export function spriteSetCount(animations: readonly { name: string }[]): number {
+  return new Set(animations.map((a) => a.name.toLowerCase())).size;
+}
+
+/**
  * Models the 204 client loads by name before any object asks for them
  * (`ANIMATED_MODELS` in rsc-client's mudclient.js): torch, fire and spell
  * animation frames. Removing one breaks the client even though no definition

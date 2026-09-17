@@ -108,4 +108,19 @@ describe('exporting the library', () => {
     const out = exportLibrary(archives, config, config, original, current);
     expect(out.problems).toEqual(['objects use model "tree2", which is not in the library']);
   });
+
+  it('refuses an animation table naming more NPC sprite sets than the client has room for', () => {
+    const extra = Array.from({ length: 13 }, (_, n) => ({ ...config.animations[0]!, name: `extra${n}` }));
+    const crowded = { ...config, animations: [...config.animations, ...extra] };
+    const current = original.concat(
+      extra.map((a) => ({ ...original.find((e) => e.kind === 'spriteSet')!, key: a.name }))
+    );
+    const out = exportLibrary(archives, crowded, config, original, current);
+    expect(out.problems).toContain(
+      'the animation table names 75 different NPC sprite sets; the 204 client has room for 74'
+    );
+    const fits = { ...config, animations: [...config.animations, ...extra.slice(0, 12)] };
+    expect(exportLibrary(archives, fits, config, original, current).problems.filter((p) => /room for/.test(p))).toEqual([]);
+  });
 });
+
