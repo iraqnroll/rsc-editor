@@ -147,6 +147,9 @@ const MESH_BUDGET = 1;
  */
 const GHOST_OPACITY = 0.72;
 
+/** How far the pointer must travel after a press before painting follows it. */
+const PAINT_DRAG_THRESHOLD_PX = 5;
+
 /** Wireframe colour for walls the client skips; magenta reads against grass, stone and water. */
 const HIDDEN_WALL_COLOUR = '#ff3df2';
 
@@ -1000,6 +1003,13 @@ export function Viewport3D(props: ViewportProps) {
   const dragRef = useRef<{
     mode: 'paint' | 'pan' | 'region' | 'orbit';
     from: WorldTile | null;
+    /** paint: the tile the last edit went to, so a drag edits each tile once */
+    last?: WorldTile | null;
+    /** paint: where the button went down, in screen pixels */
+    downX?: number;
+    downY?: number;
+    /** paint: the pointer has travelled far enough to count as a drag */
+    moved?: boolean;
   } | null>(null);
   const lastHover = useRef<WorldTile | null>(null);
 
@@ -1294,7 +1304,7 @@ export function Viewport3D(props: ViewportProps) {
       onDragRegion({ plane, x0: tile.wx, y0: tile.wy, x1: tile.wx, y1: tile.wy });
       return;
     }
-    dragRef.current = { mode: 'paint', from: tile };
+    dragRef.current = { mode: 'paint', from: tile, last: tile, downX: e.clientX, downY: e.clientY, moved: false };
     onPick(tile, { alt: e.altKey, shift: e.shiftKey, continued: false });
   };
 
@@ -1326,6 +1336,19 @@ export function Viewport3D(props: ViewportProps) {
     if (drag.mode === 'region' && drag.from) {
       onDragRegion({ plane, x0: drag.from.wx, y0: drag.from.wy, x1: tile.wx, y1: tile.wy });
     } else if (drag.mode === 'paint') {
+      // A click is not a drag. A hand never holds perfectly still, and raising
+      // the terrain moves the surface under a stationary cursor, so without
+      // this one click re-applied the tool several times and spilled onto the
+      // tiles next to it.
+      if (!drag.moved) {
+        const dx = e.clientX - (drag.downX ?? e.clientX);
+        const dy = e.clientY - (drag.downY ?? e.clientY);
+        if (dx * dx + dy * dy < PAINT_DRAG_THRESHOLD_PX * PAINT_DRAG_THRESHOLD_PX) return;
+        drag.moved = true;
+      }
+      // Each tile once per crossing: moving within a tile is not another stroke.
+      if (sameTile(tile, drag.last ?? null)) return;
+      drag.last = tile;
       onPick(tile, { alt: e.altKey, shift: e.shiftKey, continued: true });
     }
   };
@@ -1403,6 +1426,9 @@ export function Viewport3D(props: ViewportProps) {
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={() => {
+          dragRef.current = null;
+        }}
+        onPointerCancel={() => {
           dragRef.current = null;
         }}
         onPointerLeave={() => {

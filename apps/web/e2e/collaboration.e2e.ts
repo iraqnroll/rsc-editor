@@ -122,6 +122,29 @@ test('every editing tool writes an op that a peer receives', async ({ browser, b
   }
 });
 
+test('a shaky click edits once, and a drag edits each tile once', async ({ browser, baseURL }) => {
+  const { alice } = await setUp(baseURL!);
+  const a = await openEditor(browser, alice);
+  await a.getByRole('button', { name: 'Claim', exact: true }).click();
+  await expect(status(a).getByText('you hold this sector')).toBeVisible();
+  await a.getByRole('button', { name: /Elevation$/ }).first().click();
+
+  const box = (await a.locator('.pane--center canvas').first().boundingBox())!;
+  const x = box.x + box.width / 2;
+  const y = box.y + box.height / 2;
+
+  // A click whose hand wobbles by a couple of pixels: one op, not one per wobble.
+  const head = await settledSeq(a);
+  await a.mouse.move(x, y);
+  await a.mouse.down();
+  for (const [dx, dy] of [[1, 0], [2, 1], [0, 2], [-1, 1], [2, -1], [0, 0]]) {
+    await a.mouse.move(x + dx!, y + dy!);
+  }
+  await a.mouse.up();
+  await expect.poll(() => seq(a)).toBeGreaterThan(head);
+  expect(await settledSeq(a)).toBe(head + 1);
+});
+
 test('two editors share a sector through locks, live ops and undo', async ({ browser, baseURL }) => {
   const { alice, bob } = await setUp(baseURL!);
 

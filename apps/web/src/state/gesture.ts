@@ -94,6 +94,9 @@ export function applyGesture(tile: WorldTile, mods: GestureModifiers): void {
     }
 
     case 'scenery': {
+      // One object per click. Dragging would place a row of them, or spin the
+      // one under the cursor once per tile crossed.
+      if (mods.continued) return;
       const mode = mods.alt ? 'remove' : s.scenery.mode;
       const objects = state.config?.objects;
       if (!objects) {
