@@ -1,6 +1,8 @@
 import {
   applyScenery,
   assertConfigRoundTrip,
+  spawnsToEntities,
+  type SpawnSkipReason,
   loadConfig,
   loadLandscape,
   type LoadedSector,
@@ -10,13 +12,16 @@ import {
   SECTOR_FRAME_BYTES,
   definitionSchemas,
   encodeSectorFrame,
-  type DefinitionKind
+  sectorKey,
+  type DefinitionKind,
+  type EntityKind
 } from '@rsc-editor/schema';
 import {
   createProject,
   getProjectBySlug,
   parseDefinition,
   putDefinition,
+  putEntities,
   putMember,
   putSector,
   slugify,
@@ -41,6 +46,7 @@ import { assertImportable, readCacheDirectory } from './cache-dir.js';
 import { buildEntitySprites } from './entity-sprites.js';
 import { buildModelsAsset } from './models-asset.js';
 import { readSceneryFile } from './scenery.js';
+import { readSpawnLists, spawnEntityId } from './spawns.js';
 import { buildWorldMaps } from './world-map.js';
 
 /**
@@ -110,6 +116,15 @@ export interface ImportOptions {
    * to the cache it came from.
    */
   sceneryPath?: string;
+  /**
+   * An rsc-data `locations/` directory. Off unless given. NPC spawns, ground
+   * items and doors are the game server's, not the cache's, so like scenery
+   * they are opt-in. They are placed on whatever sectors the project has once
+   * the landscape is written, which with `noLandscape` means the sectors made
+   * in the editor. Each gets an id derived from the project and its row, so a
+   * re-import updates the same entities instead of adding copies.
+   */
+  spawnsDir?: string;
   /** decode and report, write nothing. */
   dryRun?: boolean;
   /**
@@ -137,6 +152,7 @@ export interface ProgressEvent {
     | 'project'
     | 'landscape'
     | 'scenery'
+    | 'spawns'
     | 'sectors'
     | 'config'
     | 'definitions'
@@ -166,6 +182,13 @@ export interface ImportSummary {
    * and "null" says that plainly where a zeroed report would not.
    */
   scenery: (SceneryImportReport & { path: string }) | null;
+  /** null unless `--spawns` was given */
+  spawns: {
+    dir: string;
+    read: number;
+    placed: Record<EntityKind, number>;
+    skipped: Record<SpawnSkipReason, number>;
+  } | null;
   definitions: { total: number; byKind: Record<DefinitionKind, number> };
   assets: { count: number; bytes: number; changed: number };
   models: {
@@ -371,6 +394,7 @@ export async function importCache(
       bytes: 0
     },
     scenery,
+    spawns: null,
     definitions: { total: 0, byKind: emptyCounts() },
     assets: { count: 0, bytes: 0, changed: 0 },
     models: {
@@ -444,7 +468,28 @@ export async function importCache(
       : [])
   ];
 
+  const spawnLists = options.spawnsDir ? readSpawnLists(options.spawnsDir) : null;
+  const placeSpawns = (hasSector: (coord: { plane: number; x: number; y: number }) => boolean) => {
+    if (!spawnLists || !options.spawnsDir) return null;
+    const result = spawnsToEntities(spawnLists, hasSector);
+    const placed: Record<EntityKind, number> = { npc: 0, item: 0, door: 0 };
+    for (const p of result.placed) placed[p.data.kind]++;
+    summary.spawns = { dir: options.spawnsDir, read: result.read, placed, skipped: result.skipped };
+    report({
+      stage: 'spawns',
+      message:
+        `${result.placed.length}/${result.read} placements ` +
+        `(${placed.npc} npcs, ${placed.item} items, ${placed.door} doors)`,
+      done: result.placed.length,
+      total: result.read
+    });
+    return result;
+  };
+
   if (dryRun) {
+    // Against the decoded landscape; a --no-landscape dry run cannot know
+    // which sectors the project already has, and says so by placing none.
+    placeSpawns((coord) => loaded.has(sectorKey(coord)));
     const assets = [
       ...cache.files.map((f) => f.data),
       ...derived.map(([, data]) => data)
@@ -499,6 +544,30 @@ export async function importCache(
         done: written,
         total: landscape.length
       });
+    }
+  }
+
+  // -- NPCs, items and doors, onto every sector the project now has
+  if (spawnLists) {
+    // The query-builder callback form: drizzle-orm's operators belong to
+    // @rsc-editor/db, not to this tool (see sectors.ts).
+    const rows = await db.query.sectors.findMany({
+      columns: { id: true, plane: true, x: true, y: true },
+      where: (t, { eq }) => eq(t.projectId, projectId)
+    });
+    const sectorIds = new Map(rows.map((r) => [sectorKey(r), r.id]));
+    const result = placeSpawns((coord) => sectorIds.has(sectorKey(coord)));
+    if (result) {
+      await putEntities(
+        db,
+        result.placed.map((p) => ({
+          id: spawnEntityId(projectId, p.list, p.index),
+          projectId,
+          sectorId: sectorIds.get(sectorKey(p.sector))!,
+          data: p.data,
+          updatedBy: null
+        }))
+      );
     }
   }
 

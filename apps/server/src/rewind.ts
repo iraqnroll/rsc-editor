@@ -1,5 +1,11 @@
 import type { LoadedSector } from '@rsc-editor/cache';
-import { sectorKey, type Entity, type RscConfig, type SequencedOp } from '@rsc-editor/schema';
+import {
+  sameEntityData,
+  sectorKey,
+  type Entity,
+  type RscConfig,
+  type SequencedOp
+} from '@rsc-editor/schema';
 
 /**
  * Current state -> the state at an earlier seq, by inverting the ops after it.
@@ -49,10 +55,8 @@ export function rewind(
 
     if (op.type === 'entity') {
       const current = entities.get(op.entity);
-      const now = current ? canonical(current.data) : null;
-      const said = op.to ? canonical(op.to) : null;
-      const where = current ? sectorKey(current.sector) : null;
-      if (now !== said || (current && where !== sectorKey(op.sector))) {
+      const moved = current !== undefined && sectorKey(current.sector) !== sectorKey(op.sector);
+      if (!sameEntityData(current?.data ?? null, op.to) || moved) {
         problems.push(`seq ${seq}: entity ${op.entity} is not what the log says it was set to`);
         continue;
       }
@@ -80,16 +84,4 @@ export function rewind(
   }
 
   return problems;
-}
-
-/** Key-order-independent JSON, because jsonb does not keep key order. */
-function canonical(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
-  if (value && typeof value === 'object') {
-    const entries = Object.entries(value as Record<string, unknown>)
-      .filter(([, v]) => v !== undefined)
-      .sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0));
-    return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonical(v)}`).join(',')}}`;
-  }
-  return JSON.stringify(value);
 }

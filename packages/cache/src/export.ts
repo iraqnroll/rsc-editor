@@ -15,6 +15,8 @@ import {
   sectorEntryName,
   sectorKey,
   tileIndex,
+  type Entity,
+  type EntityKind,
   type RscConfig,
   type SectorBuffers
 } from '@rsc-editor/schema';
@@ -26,6 +28,13 @@ import {
   unrepresentableSceneryIds,
   type SceneryPlacement
 } from './scenery.js';
+import {
+  SPAWN_FILES,
+  checkSpawnLists,
+  countEntityKinds,
+  encodeSpawnList,
+  entitiesToSpawnLists
+} from './spawns.js';
 
 /**
  * Project state -> a cache directory a client can load, or a refusal.
@@ -65,11 +74,19 @@ export interface ExportInput {
   config: RscConfig;
   /** the project's imported cache files, by file name (`land63.jag`, ...) */
   archives: ReadonlyMap<string, Uint8Array>;
+  /**
+   * Server-side placements. When there are any, the export also writes the
+   * game server's `npcs.json`, `items.json` and `wall-objects.json`; a project
+   * with none writes none, so loading its export keeps the server's own lists.
+   */
+  entities?: readonly Entity[];
 }
 
 export interface ExportReport {
   sectors: { written: number; members: number; emptyDropped: number };
   scenery: { placements: number; locSectors: number; kept: number; jsonOnly: number };
+  /** null when the project has no placements and no lists were written */
+  entities: Record<EntityKind, number> | null;
   files: Array<{ name: string; bytes: number; changed: boolean }>;
 }
 
@@ -115,6 +132,7 @@ export function exportWorld(input: ExportInput): ExportResult {
   const report: ExportReport = {
     sectors: { written: 0, members: 0, emptyDropped: 0 },
     scenery: { placements: 0, locSectors: 0, kept: 0, jsonOnly: 0 },
+    entities: null,
     files: []
   };
 
@@ -181,9 +199,26 @@ export function exportWorld(input: ExportInput): ExportResult {
   }
 
   // ------------------------------------------------------------------ gate --
+  const entities = input.entities ?? [];
+  const spawnFiles = new Map<string, Uint8Array>();
+  if (entities.length > 0) {
+    const lists = entitiesToSpawnLists(entities);
+    spawnFiles.set(SPAWN_FILES.npcs, encodeSpawnList(lists.npcs));
+    spawnFiles.set(SPAWN_FILES.items, encodeSpawnList(lists.items));
+    spawnFiles.set(SPAWN_FILES.wallObjects, encodeSpawnList(lists.wallObjects));
+    report.entities = countEntityKinds(entities);
+  }
+
+  // A placement on a sector the export drops (an all-zero one) has no ground
+  // under it in the game, however valid its list entry is.
+  const kept = new Set(written.map((s) => sectorKey(s.coord)));
+  const stranded = [...new Set(entities.map((e) => sectorKey(e.sector)))].filter((k) => !kept.has(k));
+
   const problems = [
     ...checkLandscape(written, landscape, placements, input.config),
-    ...checkConfig(input.config, config)
+    ...checkConfig(input.config, config),
+    ...stranded.map((k) => `${k}: has NPCs, items or doors but no map data, so it is not exported`),
+    ...checkSpawnLists(entities, spawnFiles)
   ];
   if (problems.length > 0) throw new ExportRefused(problems);
 
@@ -195,7 +230,8 @@ export function exportWorld(input: ExportInput): ExportResult {
     [names.landMem, landscape.landMem],
     [names.mapsMem, landscape.mapsMem],
     [names.config, config],
-    [SCENERY_FILE, new TextEncoder().encode(`${JSON.stringify(placements, null, 1)}\n`)]
+    [SCENERY_FILE, new TextEncoder().encode(`${JSON.stringify(placements, null, 1)}\n`)],
+    ...spawnFiles
   ];
   for (const [name, bytes] of replaced) files.set(name, bytes);
 

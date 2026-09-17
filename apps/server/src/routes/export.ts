@@ -86,11 +86,13 @@ export async function registerExportRoutes(
       let result: ReturnType<typeof exportWorld>;
       try {
         const config = await projectConfig(ctx, projectId, archives);
+        const placed = new Map(
+          (await listProjectEntities(ctx.db, projectId)).map((e) => [e.id, e])
+        );
         if (snapshot) {
           const later = await opsAfter(ctx, projectId, snapshot.seq);
           const byKey = new Map(sectors.map((s) => [sectorKey(s.coord), s]));
-          const placed = await listProjectEntities(ctx.db, projectId);
-          const problems = rewind(byKey, config, later, new Map(placed.map((e) => [e.id, e])));
+          const problems = rewind(byKey, config, later, placed);
           if (problems.length > 0) {
             throw new ExportRefused([
               `the log does not rewind cleanly to "${snapshot.name}" (seq ${snapshot.seq}):`,
@@ -98,7 +100,7 @@ export async function registerExportRoutes(
             ]);
           }
         }
-        result = exportWorld({ sectors, config, archives });
+        result = exportWorld({ sectors, config, archives, entities: [...placed.values()] });
       } catch (err) {
         if (err instanceof ExportRefused) {
           return reply.code(422).send({

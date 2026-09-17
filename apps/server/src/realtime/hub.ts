@@ -71,6 +71,7 @@ import {
   clientMessageSchema,
   invert,
   parseSectorKey,
+  sameEntityData,
   sectorKey,
   type ClientMessage,
   type EntityData,
@@ -989,25 +990,11 @@ function invertEditOp(op: EditOp): EditOp {
 /** What the socket accepts: map edits and placements. Definitions go through HTTP. */
 type EditOp = SectorOp | EntityOp;
 
-/**
- * Entity state equality. `data` comes back from jsonb with its keys reordered,
- * so it is compared field by field rather than as a string.
- */
+/** Same sector, same data (`sameEntityData` ignores jsonb's key order). */
 function sameEntityState(
   a: { sectorId: string; data: EntityData } | null,
   b: { sectorId: string; data: EntityData } | null
 ): boolean {
   if (a === null || b === null) return a === b;
-  return a.sectorId === b.sectorId && canonical(a.data) === canonical(b.data);
-}
-
-function canonical(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
-  if (value && typeof value === 'object') {
-    const entries = Object.entries(value as Record<string, unknown>)
-      .filter(([, v]) => v !== undefined)
-      .sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0));
-    return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonical(v)}`).join(',')}}`;
-  }
-  return JSON.stringify(value);
+  return a.sectorId === b.sectorId && sameEntityData(a.data, b.data);
 }

@@ -36,6 +36,7 @@ async function main(argv: string[]): Promise<number> {
       ...(options.sceneryPath
         ? { sceneryPath: resolveFromInvocationDir(options.sceneryPath) }
         : {}),
+      ...(options.spawnsDir ? { spawnsDir: resolveFromInvocationDir(options.spawnsDir) } : {}),
       replace: options.replace,
       dryRun: options.dryRun,
       verifyConfig: options.verifyConfig,
@@ -129,6 +130,19 @@ function formatSummary(summary: ImportSummary): string {
     lines.push('             (export will now contain .loc the source cache had not)');
   } else {
     lines.push('scenery      none (--scenery not given); export stays byte-exact');
+  }
+  if (summary.spawns) {
+    const s = summary.spawns;
+    lines.push(
+      `spawns       ${s.placed.npc} npcs, ${s.placed.item} items, ${s.placed.door} doors ` +
+        `(${s.placed.npc + s.placed.item + s.placed.door}/${s.read} placed)`
+    );
+    lines.push(`             read from ${s.dir}`);
+    for (const [reason, count] of Object.entries(s.skipped)) {
+      if (count > 0) lines.push(`             skipped ${String(count).padStart(5)}  ${reason}`);
+    }
+  } else {
+    lines.push('spawns       none (--spawns not given)');
   }
   lines.push(`definitions  ${summary.definitions.total}`);
   for (const [kind, count] of Object.entries(summary.definitions.byKind)) {

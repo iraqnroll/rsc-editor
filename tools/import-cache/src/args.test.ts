@@ -118,4 +118,14 @@ describe('parseArgs', () => {
       )
     ).toThrow(/cannot be combined/);
   });
+
+  it('takes an rsc-data locations directory for --spawns, off by default', () => {
+    const env = { DATABASE_URL: 'postgres://x' };
+    const base = ['--cache', './c', '--project', 'W'];
+    expect(parseArgs(base, env).spawnsDir).toBeUndefined();
+    expect(parseArgs([...base, '--spawns', './locations'], env).spawnsDir).toBe('./locations');
+    // allowed with --no-landscape: placements go on sectors made in the editor
+    expect(parseArgs([...base, '--no-landscape', '--spawns=./l'], env).spawnsDir).toBe('./l');
+    expect(() => parseArgs([...base, '--spawns'], env)).toThrow(/--spawns needs a value/);
+  });
 });

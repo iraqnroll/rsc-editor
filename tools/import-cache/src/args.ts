@@ -15,6 +15,8 @@ export interface CliOptions {
   ownerId?: string;
   /** path to a scenery placement list; absent means no scenery is imported */
   sceneryPath?: string;
+  /** rsc-data `locations/` directory; absent means no NPCs, items or doors */
+  spawnsDir?: string;
   /**
    * Import everything EXCEPT the landscape: no sectors, no scenery.
    *
@@ -55,6 +57,13 @@ Options
                        this flag an import is byte-exact against the source
                        archives. Export writes the placed scenery back out
                        as object-locs.json (docs/DECISIONS.md section 15).
+  --spawns <dir>       also place NPCs, ground items and doors from the game
+                       server's lists: an rsc-data \`locations/\` directory
+                       holding npcs.json, items.json and wall-objects.json.
+                       OFF by default; none of these are in the cache.
+                       Placements land on the sectors the project has --
+                       with --no-landscape, the ones already made in the
+                       editor. A re-import restores the stock placements.
   --database-url <url> Postgres URL. Defaults to $DATABASE_URL.
   --replace            re-import into the existing project with this slug.
                        Without it, an existing slug is an error. Re-import is
@@ -72,6 +81,7 @@ const NEEDS_VALUE = new Set([
   '--slug',
   '--owner',
   '--scenery',
+  '--spawns',
   '--database-url'
 ]);
 
@@ -177,6 +187,8 @@ export function parseArgs(
   // guarantee holds.
   const sceneryPath = values.get('--scenery');
   if (sceneryPath) options.sceneryPath = sceneryPath;
+  const spawnsDir = values.get('--spawns');
+  if (spawnsDir) options.spawnsDir = spawnsDir;
 
   // Loud, not ignored -- the whole reason this parser is hand-rolled. Scenery
   // is written into sector lanes, so with no sectors there is nothing for it to

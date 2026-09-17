@@ -114,3 +114,28 @@ export function sectorTileAtGame(x: number, y: number): { sector: SectorCoord; i
   if (!parsed.success) return null;
   return { sector: parsed.data, i: tx * SECTOR_WIDTH + ty };
 }
+
+/**
+ * A stable string for entity data, independent of key order. Postgres `jsonb`
+ * does not keep the order an object was written in, so comparing two
+ * `JSON.stringify` outputs would call equal placements different.
+ */
+export function entityDataKey(data: EntityData): string {
+  return canonical(data);
+}
+
+export function sameEntityData(a: EntityData | null, b: EntityData | null): boolean {
+  if (a === null || b === null) return a === b;
+  return canonical(a) === canonical(b);
+}
+
+function canonical(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
+  if (value && typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, v]) => v !== undefined)
+      .sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0));
+    return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonical(v)}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}

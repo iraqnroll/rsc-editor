@@ -1,7 +1,8 @@
 import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { gunzipSync } from 'node:zlib';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
@@ -37,6 +38,7 @@ import {
 } from '@rsc-editor/schema';
 import {
   createDb,
+  listProjectEntities,
   createSession,
   putMember,
   upsertUserFromDiscord,
@@ -577,6 +579,46 @@ describe.skipIf(!available)('cache import against a real database', () => {
     expect(second.assets.changed).toBe(0);
 
     expect(await rowCounts(handle, projectId)).toEqual(before);
+  }, 600_000);
+
+  it('places NPCs, items and doors on the sectors the project has, once', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'rsc-spawns-'));
+    // Lumbridge, which the cache has, and one row far off the populated map.
+    writeFileSync(
+      join(dir, 'npcs.json'),
+      JSON.stringify([{ id: 0, x: 120, y: 648, minX: 110, maxX: 130, minY: 640, maxY: 656 }])
+    );
+    writeFileSync(
+      join(dir, 'items.json'),
+      JSON.stringify([{ id: 10, respawn: 60000, x: 121, y: 649 }, { id: 11, respawn: 1, x: 815, y: 3743 }])
+    );
+    writeFileSync(join(dir, 'wall-objects.json'), JSON.stringify([{ id: 2, direction: 1, x: 123, y: 651 }]));
+
+    const run = () =>
+      importCache(db, {
+        cacheDir: FIXTURES,
+        projectName: `Import Test ${SLUG}`,
+        slug: SLUG,
+        replace: true,
+        noLandscape: true,
+        spawnsDir: dir,
+        verifyConfig: false
+      });
+
+    const first = await run();
+    expect(first.spawns).toMatchObject({
+      read: 4,
+      placed: { npc: 1, item: 1, door: 1 },
+      skipped: { 'missing-sector': 1 }
+    });
+    const placed = await listProjectEntities(db, projectId);
+    expect(placed.map((e) => e.data.kind).sort()).toEqual(['door', 'item', 'npc']);
+    expect(placed.every((e) => e.sector.x === 50 && e.sector.y === 50)).toBe(true);
+
+    // Stable ids: a second run updates the same three rows.
+    await run();
+    const again = await listProjectEntities(db, projectId);
+    expect(again.map((e) => e.id).sort()).toEqual(placed.map((e) => e.id).sort());
   }, 600_000);
 
   it('refuses to write into an existing project without --replace', async () => {
