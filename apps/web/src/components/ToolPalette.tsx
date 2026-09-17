@@ -270,9 +270,13 @@ function WallOptions() {
       />
       {s.door && (
         <p className="hint">
-          Places a door entity on the edge instead of writing the map. Pair it with a hidden
-          placeholder wall (Doorframe) so the client has something under it. Clicking an existing
-          door selects it; <span className="kbd">Alt</span> removes it.
+          Places a door entity on the edge instead of writing the map, and the game server
+          writes it into the map itself at startup — so leave that edge <em>empty</em>, or the
+          map wall stays there and blocks the doorway whether the door is open or not.
+          Use wall object <strong>#2 (Door)</strong> on a horizontal or vertical edge: that is
+          the one rsc-server's generic door script opens (swapping it for #1, Doorframe). Any
+          other id is just a wall that never opens. Clicking an existing door selects it;{' '}
+          <span className="kbd">Alt</span> removes it.
         </p>
       )}
       <DefPicker
