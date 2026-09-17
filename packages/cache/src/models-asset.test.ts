@@ -3,7 +3,8 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { gunzipSync } from 'node:zlib';
 import { describe, expect, it } from 'vitest';
-import { loadConfig, modelIndexOf } from '@rsc-editor/cache';
+import { loadConfig } from './config.js';
+import { modelIndexOf } from './models.js';
 import { buildModelsAsset, type ModelsJson } from './models-asset.js';
 
 /**

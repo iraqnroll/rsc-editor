@@ -11,6 +11,8 @@ import {
   ANIMATION_SPRITE_STRIDE,
   ITEM_SPRITES_PER_FILE,
   animationSpriteId,
+  buildSpriteEntries,
+  encodeSpriteGroup,
   loadEntitySprites,
   packSpriteSheet,
   parseSpriteGroup,
@@ -324,5 +326,98 @@ describe('sprite sheet packing', () => {
     const b = packSpriteSheet(images);
     expect(a.entries).toEqual(b.entries);
     expect(Buffer.from(a.data)).toEqual(Buffer.from(b.data));
+  });
+});
+
+describe('the sprite writer', () => {
+  /**
+   * Every sprite of an archive whose frame counts are known, decoded and laid
+   * out again in the order its headers sit in index.dat, must be the archive's
+   * own bytes: index.dat and every entry. That is the only proof the writer is
+   * the reader's inverse, index order and all.
+   */
+  function rebuild(
+    archiveBytes: Uint8Array,
+    entries: Array<[string, number]>,
+    /** entries no definition names, by hash: decoded under a stand-in name */
+    unnamed: Array<[string, number, number]> = []
+  ) {
+    const archive = new JagArchive();
+    archive.readArchive(archiveBytes);
+    const index = archive.getEntry('index.dat');
+    for (const [stand, hash] of unnamed) {
+      archive.entries.set(hashFilename(`${stand}.dat`), archive.entries.get(hash)!);
+      archive.entries.delete(hash);
+    }
+    const present = [
+      ...entries.filter(([name]) => archive.entries.has(hashFilename(`${name}.dat`))),
+      ...unnamed.map(([stand, , frames]) => [stand, frames] as [string, number])
+    ];
+    const groups = present
+      .map(([name, frames]) => {
+        const data = archive.getEntry(`${name}.dat`);
+        return { offset: (data[0]! << 8) | data[1]!, group: parseSpriteGroup(name, data, index, frames) };
+      })
+      .sort((a, b) => a.offset - b.offset);
+    const built = buildSpriteEntries(groups.map((g) => g.group));
+    return { archive, index, built, present, count: archive.entries.size - 1 };
+  }
+
+  const expectIdentical = (r: ReturnType<typeof rebuild>) => {
+    // every non-index entry was accounted for by name
+    expect(r.present.length).toBe(r.count);
+    expect(Buffer.from(r.built.get('index.dat')!).equals(Buffer.from(r.index))).toBe(true);
+    for (const [name] of r.present) {
+      const original = r.archive.getEntry(`${name}.dat`);
+      expect(Buffer.from(r.built.get(`${name}.dat`)!).equals(Buffer.from(original)), name).toBe(true);
+    }
+  };
+
+  it('rebuilds textures17 byte for byte', () => {
+    const names = new Set<string>();
+    for (const t of CONFIG.textures) {
+      names.add(t.name);
+      if (t.subName) names.add(t.subName);
+    }
+    // One entry no texture definition names: a plain 128x128 texture the
+    // client never loads. The export drops such orphans when it rebuilds the
+    // archive; here it is kept, so the comparison covers every byte.
+    expectIdentical(
+      rebuild(read('textures17.jag'), [...names].map((n) => [n, 1]), [['unnamed', -1565164309, 1]])
+    );
+  });
+
+  it('rebuilds entity24.jag and entity24.mem byte for byte', () => {
+    const entries: Array<[string, number]> = [];
+    const seen = new Set<string>();
+    for (const a of CONFIG.animations) {
+      const name = a.name.toLowerCase();
+      if (seen.has(name)) continue;
+      seen.add(name);
+      entries.push([name, ANIMATION_BASE_FRAMES], [`${name}a`, ANIMATION_ATTACK_FRAMES], [`${name}f`, ANIMATION_FIGHT_FRAMES]);
+    }
+    expectIdentical(rebuild(ENTITY_JAG, entries));
+    expectIdentical(rebuild(ENTITY_MEM, entries));
+  });
+
+  it('appends after an existing index and refuses what the format cannot hold', () => {
+    const group: SpriteGroup = {
+      name: 'probe',
+      fullWidth: 2,
+      fullHeight: 1,
+      palette: Int32Array.from([0xff00ff, 0x112233]),
+      frames: [{ offsetX: 0, offsetY: 0, width: 2, height: 1, indices: Uint8Array.from([0, 1]) }]
+    };
+    const built = buildSpriteEntries([group], Uint8Array.from([9, 9, 9]));
+    expect(Array.from(built.get('index.dat')!.subarray(0, 3))).toEqual([9, 9, 9]);
+    expect(Array.from(built.get('probe.dat')!)).toEqual([0, 3, 0, 1]);
+    const back = parseSpriteGroup('probe', built.get('probe.dat')!, built.get('index.dat')!, 1);
+    expect(Array.from(back.frames[0]!.indices)).toEqual([0, 1]);
+    expect(back.palette[1]).toBe(0x112233);
+
+    expect(() => encodeSpriteGroup({ ...group, palette: new Int32Array(256) })).toThrow(/1-255/);
+    const bad = { ...group, frames: [{ ...group.frames[0]!, indices: Uint8Array.from([0, 2]) }] };
+    expect(() => encodeSpriteGroup(bad)).toThrow(/outside its palette/);
+    expect(() => buildSpriteEntries([group], new Uint8Array(0x10000))).toThrow(/index.dat is full/);
   });
 });

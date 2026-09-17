@@ -1,8 +1,5 @@
-import {
-  decodeTextures,
-  packTextureAtlas,
-  type RgbaImage
-} from '@rsc-editor/cache';
+import type { RgbaImage } from './sprites.js';
+import { decodeTextures, packTextureAtlas } from './textures.js';
 import type { RscConfig } from '@rsc-editor/schema';
 import { encodePng } from './png.js';
 

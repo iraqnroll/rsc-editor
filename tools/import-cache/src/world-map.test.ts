@@ -18,7 +18,7 @@ import {
   sectorKey,
   tileIndex
 } from '@rsc-editor/schema';
-import { buildTextureAtlas } from './atlas.js';
+import { buildTextureAtlas } from '@rsc-editor/cache';
 import {
   MAP_TILE_SIZE,
   ORIGIN_SECTOR,

@@ -1,5 +1,5 @@
 import { gzipSync } from 'node:zlib';
-import { loadModels, type FaceFill } from '@rsc-editor/cache';
+import { loadModels, type FaceFill } from './models.js';
 
 /**
  * Every `.ob3` in the cache, decoded once at import time and served as one

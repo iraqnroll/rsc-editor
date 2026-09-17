@@ -23,6 +23,7 @@ import {
 import { exportConfig, loadConfig } from './config.js';
 import { encodeDat, encodeHei, encodeLoc, isEmptySector } from './landscape-codec.js';
 import { loadLandscape, type LandscapeArchives, type LoadedSector } from './landscape.js';
+import { packArchive } from './library-archives.js';
 import {
   applyScenery,
   unrepresentableSceneryIds,
@@ -182,10 +183,11 @@ export function exportWorld(input: ExportInput): ExportResult {
   report.scenery.placements = placements.length;
 
   const landscape: Required<LandscapeArchives> = {
-    landJag: land.toArchive(true),
-    mapsJag: maps.toArchive(true),
-    landMem: landMem.toArchive(true),
-    mapsMem: mapsMem.toArchive(true)
+    // Checked packing: see `packArchive` for the entry the format can misread.
+    landJag: packArchive(land),
+    mapsJag: packArchive(maps),
+    landMem: packArchive(landMem),
+    mapsMem: packArchive(mapsMem)
   };
 
   // ---------------------------------------------------------------- config --

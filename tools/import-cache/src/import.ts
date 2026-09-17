@@ -41,10 +41,10 @@ import {
   worldMapMetaAsset,
   type AssetRef
 } from './assets.js';
-import { buildTextureAtlas } from './atlas.js';
+import { buildTextureAtlas } from '@rsc-editor/cache';
 import { assertImportable, readCacheDirectory } from './cache-dir.js';
-import { buildEntitySprites } from './entity-sprites.js';
-import { buildModelsAsset } from './models-asset.js';
+import { buildEntitySprites } from '@rsc-editor/cache';
+import { buildModelsAsset } from '@rsc-editor/cache';
 import { readSceneryFile } from './scenery.js';
 import { readSpawnLists, spawnEntityId } from './spawns.js';
 import { buildWorldMaps } from './world-map.js';

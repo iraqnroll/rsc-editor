@@ -2,11 +2,8 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { inflateSync } from 'node:zlib';
 import { describe, expect, it } from 'vitest';
-import {
-  ANIMATION_SPRITE_BASE,
-  animationSpriteId,
-  loadConfig
-} from '@rsc-editor/cache';
+import { loadConfig } from './config.js';
+import { ANIMATION_SPRITE_BASE, animationSpriteId } from './sprites.js';
 import { buildEntitySprites } from './entity-sprites.js';
 
 /**

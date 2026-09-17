@@ -62,6 +62,12 @@ export interface SpriteFrame {
   height: number;
   /** `width * height` palette indices, row-major after any transposition. */
   indices: Uint8Array;
+  /**
+   * How the indices were stored: 0 row-major, anything else column-major.
+   * Kept only so a decoded sprite re-encodes to its original bytes; the
+   * pixels are the same either way. Absent means row-major.
+   */
+  indexOrder?: number;
 }
 
 /** One `<name>.dat` entry: a shared palette and box, and N frames. */
@@ -160,7 +166,7 @@ export function parseSpriteGroup(
       }
     }
 
-    frames.push({ offsetX, offsetY, width, height, indices });
+    frames.push({ offsetX, offsetY, width, height, indices, indexOrder });
   }
 
   if (sprite.offset > spriteData.length) {
@@ -170,6 +176,108 @@ export function parseSpriteGroup(
   }
 
   return { name, fullWidth, fullHeight, palette, frames };
+}
+
+/**
+ * The two halves of one encoded group: its header, which lives in the
+ * archive's shared `index.dat`, and its pixels, which are the group's own
+ * `<name>.dat` after a u16 offset into `index.dat`. The inverse of
+ * {@link parseSpriteGroup}.
+ */
+export function encodeSpriteGroup(group: SpriteGroup): { header: Uint8Array; pixels: Uint8Array } {
+  if (group.palette.length < 1 || group.palette.length > 255) {
+    throw new RangeError(
+      `sprite "${group.name}" has ${group.palette.length} palette entries; the format holds 1-255`
+    );
+  }
+  const u16 = (v: number, what: string) => {
+    if (!Number.isInteger(v) || v < 0 || v > 0xffff) {
+      throw new RangeError(`sprite "${group.name}": ${what} ${v} does not fit in 16 bits`);
+    }
+    return [(v >> 8) & 0xff, v & 0xff];
+  };
+  const u8 = (v: number, what: string) => {
+    if (!Number.isInteger(v) || v < 0 || v > 0xff) {
+      throw new RangeError(`sprite "${group.name}": ${what} ${v} does not fit in 8 bits`);
+    }
+    return v;
+  };
+
+  const header: number[] = [
+    ...u16(group.fullWidth, 'width'),
+    ...u16(group.fullHeight, 'height'),
+    group.palette.length
+  ];
+  for (let i = 1; i < group.palette.length; i++) {
+    const c = group.palette[i]!;
+    header.push((c >> 16) & 0xff, (c >> 8) & 0xff, c & 0xff);
+  }
+
+  let size = 0;
+  for (const f of group.frames) size += f.width * f.height;
+  const pixels = new Uint8Array(size);
+  let at = 0;
+  group.frames.forEach((f, n) => {
+    if (f.indices.length !== f.width * f.height) {
+      throw new RangeError(`sprite "${group.name}" frame ${n} has the wrong number of pixels`);
+    }
+    const order = f.indexOrder ?? 0;
+    header.push(
+      u8(f.offsetX, `frame ${n} x offset`),
+      u8(f.offsetY, `frame ${n} y offset`),
+      ...u16(f.width, `frame ${n} width`),
+      ...u16(f.height, `frame ${n} height`),
+      u8(order, `frame ${n} index order`)
+    );
+    for (const index of f.indices) {
+      if (index >= group.palette.length) {
+        throw new RangeError(`sprite "${group.name}" frame ${n} uses colour ${index} outside its palette`);
+      }
+    }
+    if (order === 0) {
+      pixels.set(f.indices, at);
+      at += f.indices.length;
+    } else {
+      for (let x = 0; x < f.width; x++) {
+        for (let y = 0; y < f.height; y++) pixels[at++] = f.indices[x + y * f.width]!;
+      }
+    }
+  });
+
+  return { header: Uint8Array.from(header), pixels };
+}
+
+/**
+ * Lay out sprite groups as archive entries: one `index.dat` (starting from
+ * `baseIndex`, whose bytes are kept as they are) and one `<name>.dat` per
+ * group, each prefixed with its header's offset. Groups sharing a name are an
+ * error: the archive keys entries by name.
+ */
+export function buildSpriteEntries(
+  groups: readonly SpriteGroup[],
+  baseIndex: Uint8Array = new Uint8Array(0)
+): Map<string, Uint8Array> {
+  const out = new Map<string, Uint8Array>();
+  const index: number[] = Array.from(baseIndex);
+  for (const group of groups) {
+    const entry = `${group.name}.dat`;
+    if (out.has(entry)) throw new RangeError(`two sprites are both named "${group.name}"`);
+    const offset = index.length;
+    if (offset > 0xffff) {
+      throw new RangeError(
+        `index.dat is full: "${group.name}" would start at byte ${offset}, past the 16-bit limit`
+      );
+    }
+    const { header, pixels } = encodeSpriteGroup(group);
+    for (const b of header) index.push(b);
+    const data = new Uint8Array(pixels.length + 2);
+    data[0] = (offset >> 8) & 0xff;
+    data[1] = offset & 0xff;
+    data.set(pixels, 2);
+    out.set(entry, data);
+  }
+  out.set('index.dat', Uint8Array.from(index));
+  return out;
 }
 
 /**

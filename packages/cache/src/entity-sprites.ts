@@ -1,8 +1,4 @@
-import {
-  loadEntitySprites,
-  packSpriteSheet,
-  type EntitySpriteArchives
-} from '@rsc-editor/cache';
+import { loadEntitySprites, packSpriteSheet, type EntitySpriteArchives } from './sprites.js';
 import type { RscConfig } from '@rsc-editor/schema';
 import { encodePng } from './png.js';
 

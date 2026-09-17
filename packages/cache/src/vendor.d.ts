@@ -20,7 +20,10 @@ declare module '@2003scape/rsc-archiver' {
 
     readArchive(buffer: Uint8Array): void;
     getEntry(name: string): Uint8Array;
+    /** `entry` must be a Buffer: the writer calls `.copy` on it. */
     putEntry(filename: string, entry: Uint8Array): void;
+    /** Throws when there is no such entry. */
+    removeEntry(filename: string): void;
     /** `individualCompress` compresses each entry separately (.jag style) */
     toArchive(individualCompress?: boolean): Uint8Array;
   }

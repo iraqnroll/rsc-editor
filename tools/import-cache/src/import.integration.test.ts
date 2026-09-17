@@ -58,7 +58,7 @@ import {
   worldMapAsset,
   worldMapMetaAsset
 } from './assets.js';
-import { buildTextureAtlas } from './atlas.js';
+import { buildTextureAtlas } from '@rsc-editor/cache';
 import { loadConfig as loadCacheConfig } from '@rsc-editor/cache';
 import { buildApp } from '../../../apps/server/src/app.js';
 import { loadConfig as loadServerConfig } from '../../../apps/server/src/config.js';

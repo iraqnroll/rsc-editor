@@ -18,7 +18,7 @@ import {
   type RscConfig,
   type TileDef
 } from '@rsc-editor/schema';
-import { encodePng } from './png.js';
+import { encodePng } from '@rsc-editor/cache';
 
 /**
  * The coloured world map, one PNG per plane, one pixel per tile.

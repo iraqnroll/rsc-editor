@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { loadConfig } from '@rsc-editor/cache';
+import { loadConfig } from './config.js';
 import { buildTextureAtlas } from './atlas.js';
 import { decodePng } from './png.js';
 
