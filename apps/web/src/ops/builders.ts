@@ -277,17 +277,26 @@ export const WALL_EDGE_LABELS: Record<WallEdge, string> = {
 };
 
 /** wallId 0 clears. */
+/**
+ * Place wall definition `wallId` (zero-based into `config.wallObjects`), or
+ * clear the edge when it is `null`.
+ *
+ * The lanes store `wallId + 1`, so 0 can mean "no wall" (`World#loadSection`
+ * and the renderer both read `value - 1`). Writing the picker's index as-is
+ * drew the definition before the one chosen, and made wall 0 unplaceable.
+ */
 export function buildWallOp(
   tile: WorldTile,
   edge: WallEdge,
-  wallId: number,
+  wallId: number | null,
   read: SectorReader
 ): BuildResult {
   const c = new DeltaCollector(read);
-  const kind: OpKind = wallId === 0 ? 'wall.clear' : 'wall.set';
+  const kind: OpKind = wallId === null ? 'wall.clear' : 'wall.set';
+  const stored = wallId === null ? 0 : wallId + 1;
 
   if (edge === 'horizontal' || edge === 'vertical') {
-    c.write(tile, edge === 'horizontal' ? 'wallsHorizontal' : 'wallsVertical', wallId);
+    c.write(tile, edge === 'horizontal' ? 'wallsHorizontal' : 'wallsVertical', stored);
     return c.finish(kind);
   }
 
@@ -301,7 +310,7 @@ export function buildWallOp(
     return c.finish(kind);
   }
 
-  const value = wallId === 0 ? 0 : edge === 'diagonal-nwse' ? wallId + NW_SE_OFFSET : wallId;
+  const value = stored === 0 ? 0 : edge === 'diagonal-nwse' ? stored + NW_SE_OFFSET : stored;
   c.write(tile, 'wallsDiagonal', value);
   return c.finish(kind);
 }
@@ -600,14 +609,15 @@ export function buildSceneryRepairOp(
   return { result: c.finish('scenery.place'), fixed, dropped };
 }
 
-/** Decode the multiplexed lane for display. */
+/** Decode the multiplexed lane for display. Wall ids are zero-based definition indices. */
 export function readDiagonalLane(
   value: number
 ): { kind: 'none' } | { kind: 'wall'; id: number; edge: WallEdge } | { kind: 'object'; id: number } {
   if (value <= 0) return { kind: 'none' };
   if (value >= OBJECT_OFFSET) return { kind: 'object', id: value - OBJECT_ID_BIAS };
-  if (value >= NW_SE_OFFSET) return { kind: 'wall', id: value - NW_SE_OFFSET, edge: 'diagonal-nwse' };
-  return { kind: 'wall', id: value, edge: 'diagonal-nesw' };
+  if (value > NW_SE_OFFSET) return { kind: 'wall', id: value - NW_SE_OFFSET - 1, edge: 'diagonal-nwse' };
+  if (value === NW_SE_OFFSET) return { kind: 'none' };
+  return { kind: 'wall', id: value - 1, edge: 'diagonal-nesw' };
 }
 
 /* ---------------------------------------------------------------- region -- */

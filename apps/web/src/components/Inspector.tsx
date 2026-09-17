@@ -4,6 +4,7 @@
 
 import { useState } from 'react';
 import { SECTOR_WIDTH, sectorKey } from '@rsc-editor/schema';
+import type { RscConfig } from '@rsc-editor/schema';
 import { useEditor } from '../state/editorStore.js';
 import { isSpawnTile } from '../data/spawn.js';
 import { readDiagonalLane } from '../ops/builders.js';
@@ -116,8 +117,8 @@ function TileInspector() {
         }
       />
       <Readout label="Direction" value={buffers.direction[i] ?? 0} />
-      <Readout label="Wall horizontal" value={valueOrNone(buffers.wallsHorizontal[i])} />
-      <Readout label="Wall vertical" value={valueOrNone(buffers.wallsVertical[i])} />
+      <Readout label="Wall horizontal" value={describeWall(buffers.wallsHorizontal[i] ?? 0, config)} />
+      <Readout label="Wall vertical" value={describeWall(buffers.wallsVertical[i] ?? 0, config)} />
       <Readout label="Roof" value={valueOrNone(buffers.wallsRoof[i])} />
       <Readout
         label="Diagonal lane"
@@ -125,7 +126,7 @@ function TileInspector() {
           diag.kind === 'none'
             ? 'none'
             : diag.kind === 'wall'
-              ? `wall ${diag.id} (${diag.edge === 'diagonal-nwse' ? '\\' : '/'})`
+              ? `${describeWall(diag.id + 1, config)} (${diag.edge === 'diagonal-nwse' ? '\\' : '/'})`
               : `object ${diag.id}`
         }
       />
@@ -186,4 +187,13 @@ function SectorInspector() {
       )}
     </Section>
   );
+}
+
+/** A wall lane value (definition index + 1) as "wall 3 Window", flagging ones the client hides. */
+function describeWall(stored: number, config: RscConfig | null | undefined): string {
+  if (stored <= 0) return 'none';
+  const id = stored - 1;
+  const def = config?.wallObjects[id];
+  if (!def) return `wall ${id} (undefined)`;
+  return `wall ${id} ${def.name}${def.invisible ? ' — hidden in game' : ''}`;
 }

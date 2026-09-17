@@ -370,8 +370,33 @@ describe('the multiplexed wallsDiagonal lane', () => {
       7,
       read
     );
-    expect(result.ops[0]!.changes[0]!.to).toBe(12_007);
-    expect(readDiagonalLane(12_007)).toEqual({ kind: 'wall', id: 7, edge: 'diagonal-nwse' });
+    // stored as definition index + 1, then offset
+    expect(result.ops[0]!.changes[0]!.to).toBe(12_008);
+    expect(readDiagonalLane(12_008)).toEqual({ kind: 'wall', id: 7, edge: 'diagonal-nwse' });
+  });
+});
+
+describe('walls', () => {
+  it('stores the definition index plus one, as the client reads it', () => {
+    const { read } = makeWorld([S]);
+    for (const edge of ['horizontal', 'vertical'] as const) {
+      const change = buildWallOp(at(5, 5), edge, 4, read).ops[0]!.changes[0]!;
+      expect(change.lane).toBe(edge === 'horizontal' ? 'wallsHorizontal' : 'wallsVertical');
+      expect(change.to).toBe(5);
+    }
+    const diagonal = buildWallOp(at(5, 5), 'diagonal-nesw', 4, read).ops[0]!.changes[0]!;
+    expect(readDiagonalLane(diagonal.to)).toEqual({ kind: 'wall', id: 4, edge: 'diagonal-nesw' });
+  });
+
+  it('can place wall 0, and null clears', () => {
+    const { read, sectors } = makeWorld([S]);
+    const placed = buildWallOp(at(5, 5), 'horizontal', 0, read);
+    expect(placed.ops[0]!.kind).toBe('wall.set');
+    expect(placed.ops[0]!.changes[0]!.to).toBe(1);
+    applyAll(sectors, placed.ops);
+    const cleared = buildWallOp(at(5, 5), 'horizontal', null, read);
+    expect(cleared.ops[0]!.kind).toBe('wall.clear');
+    expect(cleared.ops[0]!.changes[0]!.to).toBe(0);
   });
 });
 

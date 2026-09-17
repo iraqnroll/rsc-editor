@@ -737,3 +737,29 @@ and a 401 from that call was shown as an error page ("not signed in", Retry).
 That was every anonymous first visit: in production nobody would ever have
 seen the Discord button. Any 401 during connect is now the sign-in state.
 
+
+## 18. Wall lanes hold the definition index plus one; many walls are hidden on purpose
+
+`wallsHorizontal`, `wallsVertical` and the diagonal part of `wallsDiagonal`
+store `wallObjects` index **+ 1**, so 0 can mean "no wall": the client and
+`packages/render/src/walls.ts` both read `value - 1` (and
+`value - 12000 - 1` for "\"). Roofs (`wallsRoof`) and overlays work the same
+way and the editor already handled them. The Walls tool did not: it wrote the
+picker's zero-based index as-is, so choosing wall 4 drew wall 3, and wall 0
+could not be placed at all. `buildWallOp` now takes the index (or `null` to
+clear) and writes `index + 1`; the Inspector shows `wall N <name>`.
+
+### "Invisible" is not a bug
+
+180 of the 214 wall definitions carry `invisible` (the client's
+`wallObjectInvisible`), and `World#loadSection` skips them when it meshes the
+map -- Door and Doorframe among them. The visible door is a separate entity
+the game server spawns on that edge (rsc-server's `wall-objects.json`); the map
+only holds a placeholder. The renderer copies the client, so a door painted
+with the Walls tool is invisible in the editor exactly as it is in the game.
+The wall picker and Inspector now say "hidden in game", and the tool's default
+is wall 0 ("Wall") rather than 1 ("Doorframe"), which the off-by-one had been
+disguising as a visible wall.
+
+Walls placed before this fix are stored one lower than intended. They cannot
+be told apart from imported walls by value, so they are not migrated.

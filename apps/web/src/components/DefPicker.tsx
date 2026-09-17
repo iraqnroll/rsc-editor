@@ -88,6 +88,14 @@ export function DefPicker({ kind, value, onChange, label, preview }: DefPickerPr
             {'colourFront' in entry && <ColourSwatch value={asColour(entry.colourFront)} />}
             {'colour' in entry && <ColourSwatch value={asColour(entry.colour)} />}
             <span className="row__name">{String(entry.name ?? `#${i}`)}</span>
+            {entry.invisible === true && (
+              <span
+                className="row__tag"
+                title="The client does not draw this wall from the map. Doors and doorframes are like this: the game server spawns the visible door there."
+              >
+                hidden in game
+              </span>
+            )}
             {isZeroFootprint(entry) && (
               <span className="row__tag" title="Width and height are both 0 in the cache">
                 0x0

@@ -157,7 +157,7 @@ export interface ToolSettings {
 export const DEFAULT_TOOL_SETTINGS: ToolSettings = {
   elevation: { mode: 'raise', radius: 3, falloff: 'smooth', shape: 'circle', strength: 0.5 },
   paint: { target: 'colour', colourIndex: 80, overlayIndex: 1, radius: 1, shape: 'circle' },
-  wall: { edge: 'horizontal', wallId: 1, erase: false },
+  wall: { edge: 'horizontal', wallId: 0, erase: false },
   roof: { roofId: 1, radius: 0, shape: 'square', erase: false },
   scenery: { mode: 'place', objectId: 0, direction: 0 },
   region: {

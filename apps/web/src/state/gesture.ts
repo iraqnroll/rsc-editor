@@ -81,7 +81,7 @@ export function applyGesture(tile: WorldTile, mods: GestureModifiers): void {
 
     case 'wall': {
       const erase = s.wall.erase || mods.alt;
-      state.commit(buildWallOp(tile, s.wall.edge, erase ? 0 : s.wall.wallId, read));
+      state.commit(buildWallOp(tile, s.wall.edge, erase ? null : s.wall.wallId, read));
       return;
     }
 
