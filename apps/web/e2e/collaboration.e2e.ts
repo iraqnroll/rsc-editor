@@ -190,6 +190,9 @@ test('the asset library: an upload one editor makes appears for the other', asyn
     return dialog;
   };
   const da = await openAssets(a, 'Item sprites');
+  // The tab bar must actually take up room, not just exist.
+  const tabs = await da.getByRole('tablist', { name: 'Asset kind' }).boundingBox();
+  expect(tabs?.height ?? 0).toBeGreaterThan(15);
   const db = await openAssets(b, 'Item sprites');
   await expect(da.getByText('Nothing matches.')).toBeVisible();
 

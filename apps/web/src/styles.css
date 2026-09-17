@@ -1391,7 +1391,17 @@ input[type="color"] {
   display: flex;
   flex-direction: column;
 }
+/* The header, tabs and notice keep their height; only the body scrolls.
+   Without `flex: none` the tab bar (itself `overflow-x: auto`, so allowed to
+   shrink to nothing) collapsed to 0px under a tall grid. */
+.modal--assets > .panel__header,
+.modal--assets > .tabs,
+.modal--assets > .assets__notice {
+  flex: none;
+}
 .assets__body {
+  flex: 1 1 auto;
+  min-height: 0;
   overflow: auto;
   padding: 0 12px 16px;
 }
