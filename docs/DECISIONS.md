@@ -757,7 +757,11 @@ map -- Door and Doorframe among them. The visible door is a separate entity
 the game server spawns on that edge (rsc-server's `wall-objects.json`); the map
 only holds a placeholder. The renderer copies the client, so a door painted
 with the Walls tool is invisible in the editor exactly as it is in the game.
-The wall picker and Inspector now say "hidden in game", and the tool's default
+The wall picker and Inspector now say "hidden in game", and the viewport's
+**hidden walls** toggle (on by default) outlines them in magenta wireframe:
+`buildWalls(..., { hiddenOnly: true })` meshes only those walls with a solid
+fill, because many of them have transparent fills and would otherwise produce
+no faces. It is drawn for the active plane only and is never pickable. The tool's default
 is wall 0 ("Wall") rather than 1 ("Doorframe"), which the off-by-one had been
 disguising as a visible wall.
 

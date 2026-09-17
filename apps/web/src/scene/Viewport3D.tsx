@@ -147,6 +147,9 @@ const MESH_BUDGET = 1;
  */
 const GHOST_OPACITY = 0.72;
 
+/** Wireframe colour for walls the client skips; magenta reads against grass, stone and water. */
+const HIDDEN_WALL_COLOUR = '#ff3df2';
+
 /** Colours for the connector overlay. Amber links, green markers. */
 const LINK_COLOUR = '#ffb020';
 const MARKER_COLOUR = '#5cf08a';
@@ -181,6 +184,7 @@ interface SceneProps extends ViewportProps {
   /** planes being drawn, bottom to top */
   planeSet: number[];
   showConnectors: boolean;
+  showHiddenWalls: boolean;
 }
 
 interface Plate {
@@ -400,6 +404,7 @@ function SceneContents(props: SceneProps) {
             atlas={atlas}
             ghost={ghost}
             showDeck={!above}
+            showHiddenWalls={props.showHiddenWalls && !ghost}
             planeY={planeY(set.coord.plane)}
             wallY={set.absoluteWalls ? absoluteWallY(set.coord.plane) : planeY(set.coord.plane)}
             register={
@@ -659,8 +664,11 @@ function SectorLayer({
   showDeck,
   planeY,
   wallY,
-  register
+  register,
+  showHiddenWalls
 }: {
+  /** overlay the walls the client skips as a wireframe */
+  showHiddenWalls: boolean;
   set: SectorGeometrySet;
   atlas: Texture | null;
   /** true for a plane that is being shown but not edited; see GHOST_OPACITY */
@@ -740,6 +748,12 @@ function SectorLayer({
       <group position={[0, wallY, 0]}>
         {set.walls && <mesh geometry={set.walls}>{material}</mesh>}
         {set.roofs && <mesh geometry={set.roofs}>{material}</mesh>}
+        {showHiddenWalls && set.hiddenWalls && (
+          // Not pickable and never hides anything: it is a marker, not a surface.
+          <mesh geometry={set.hiddenWalls} raycast={() => null} renderOrder={1}>
+            <meshBasicMaterial color={HIDDEN_WALL_COLOUR} wireframe toneMapped={false} side={DoubleSide} />
+          </mesh>
+        )}
       </group>
     </group>
   );
@@ -1012,6 +1026,7 @@ export function Viewport3D(props: ViewportProps) {
    */
   const [planeMode, setPlaneMode] = useState<PlaneSetMode>('all');
   const [showConnectors, setShowConnectors] = useState(true);
+  const [showHiddenWalls, setShowHiddenWalls] = useState(true);
   const [hud, setHud] = useState({
     triangles: 0,
     sectors: 0,
@@ -1428,6 +1443,7 @@ export function Viewport3D(props: ViewportProps) {
             sectorList={activeSectors}
             planeSet={planeSet}
             showConnectors={showConnectors}
+            showHiddenWalls={showHiddenWalls}
             cache={cache}
             atlas={atlas?.texture ?? null}
             orbitRef={orbitRef}
@@ -1587,6 +1603,13 @@ export function Viewport3D(props: ViewportProps) {
               title="Mark ladders and staircases, and draw the link between the floors they join"
             >
               ladders
+            </CameraButton>
+            <CameraButton
+              active={showHiddenWalls}
+              onClick={() => setShowHiddenWalls((v) => !v)}
+              title="Outline walls the game does not draw from the map (doors, doorframes and other placeholders)"
+            >
+              hidden walls
             </CameraButton>
           </div>
         </div>

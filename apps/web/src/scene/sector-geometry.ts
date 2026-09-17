@@ -114,6 +114,8 @@ export interface SectorGeometrySet {
   originZ: number;
   terrain: BufferGeometry | null;
   walls: BufferGeometry | null;
+  /** walls the client hides, drawn as a wireframe on request */
+  hiddenWalls: BufferGeometry | null;
   roofs: BufferGeometry | null;
   /**
    * `triangleTiles` of the terrain geometry, kept so a raycast hit can be turned
@@ -481,6 +483,7 @@ export class SectorGeometryCache {
       originZ,
       terrain: toBufferGeometry(result.terrain, this.layout),
       walls: toBufferGeometry(result.walls, this.layout),
+      hiddenWalls: toBufferGeometry(result.hiddenWalls, this.layout),
       roofs: toBufferGeometry(result.roofs, this.layout),
       terrainTiles: result.terrain.triangleTiles,
       absoluteWalls: result.absoluteWalls,
@@ -717,6 +720,7 @@ export class SectorGeometryCache {
 function dispose(entry: SectorGeometrySet): void {
   entry.terrain?.dispose();
   entry.walls?.dispose();
+  entry.hiddenWalls?.dispose();
   entry.roofs?.dispose();
 }
 

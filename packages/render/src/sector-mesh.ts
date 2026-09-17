@@ -22,6 +22,8 @@ import { buildWalls, type WallOptions } from './walls.js';
 export interface SectorMesh {
   terrain: GeometryData;
   walls: GeometryData;
+  /** walls the client does not draw (doors, doorframes, ...), flat-coloured; see `WallOptions.hiddenOnly` */
+  hiddenWalls: GeometryData;
   roofs: GeometryData;
   /**
    * Empty unless {@link SectorMeshOptions.models} was supplied. No model source
@@ -58,6 +60,7 @@ export function buildSectorMesh(
   return {
     terrain: buildTerrain(view, config, { ...options, ...options.terrain }),
     walls: buildWalls(view, config, { ...options, ...options.walls }),
+    hiddenWalls: buildWalls(view, config, { ...options, ...options.walls, hiddenOnly: true }),
     roofs: buildRoofs(view, config, { ...options, ...options.roofs }),
     scenery: options.models
       ? buildScenery(view, config, {

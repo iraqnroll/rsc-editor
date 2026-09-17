@@ -1,5 +1,5 @@
 import { SECTOR_HEIGHT, SECTOR_WIDTH, type RscConfig } from '@rsc-editor/schema';
-import { wallFills } from './colour.js';
+import { packFill, wallFills } from './colour.js';
 import {
   DIAGONAL_NW_SE_MAX,
   DIAGONAL_NW_SE_MIN,
@@ -41,6 +41,13 @@ export interface WallOptions extends BuildOptions {
    */
   showInvisible?: boolean;
   /**
+   * Draw ONLY the walls flagged invisible, in one flat colour. The editor
+   * overlays this as a wireframe so doorframes, doors and the other
+   * placeholders the client skips can be seen and picked out; many of them
+   * have transparent fills, which would otherwise produce no faces at all.
+   */
+  hiddenOnly?: boolean;
+  /**
    * Stand the walls on this grid instead of the sector's own terrain.
    *
    * `World#method422` reads `terrainHeightLocal`, which for the plane you are
@@ -61,6 +68,8 @@ export function buildWalls(
 ): GeometryData {
   const model = new RscModel();
   const show = options.showInvisible ?? false;
+  const hiddenOnly = options.hiddenOnly ?? false;
+  const hiddenFill = packFill(255, 0, 255);
 
   const heights = options.heights;
   const groundAt = (x: number, y: number): number => {
@@ -82,7 +91,7 @@ export function buildWalls(
     const def = config.wallObjects[id];
     if (!def) return;
 
-    const { front, back } = wallFills(def);
+    const { front, back } = hiddenOnly ? { front: hiddenFill, back: hiddenFill } : wallFills(def);
     const height = def.height;
 
     const ha = -groundAt(ax, ay);
@@ -109,6 +118,7 @@ export function buildWalls(
   const visible = (id: number): boolean => {
     const def = config.wallObjects[id];
     if (!def) return false;
+    if (hiddenOnly) return def.invisible;
     return show || !def.invisible;
   };
 

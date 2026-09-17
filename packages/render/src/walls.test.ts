@@ -222,3 +222,28 @@ describe('walls on a real sector', () => {
     }
   });
 });
+
+describe('hidden walls', () => {
+  it('draws only the walls the client skips, even when their fills are transparent', () => {
+    const config = realConfig();
+    const { view, centre } = flatView();
+    centre.wallsHorizontal[tileIndexOf(10, 10)] = 1; // id 0, "Wall": visible
+    centre.wallsHorizontal[tileIndexOf(12, 10)] = 3; // id 2, "Door": hidden in game
+    expect(config.wallObjects[0]!.invisible).toBe(false);
+    expect(config.wallObjects[2]!.invisible).toBe(true);
+
+    const normal = buildWalls(view, config);
+    const hidden = buildWalls(view, config, { hiddenOnly: true });
+
+    expect(normal.triangleCount).toBe(4);
+    expect(hidden.triangleCount).toBe(4);
+    expect(distinctPositions(hidden)).toEqual(
+      new Set([
+        at(12, 10, GROUND),
+        at(12, 10, GROUND + config.wallObjects[2]!.height),
+        at(13, 10, GROUND + config.wallObjects[2]!.height),
+        at(13, 10, GROUND)
+      ])
+    );
+  });
+});
