@@ -90,6 +90,7 @@ import {
 } from './sector-geometry.js';
 import { loadSceneryModels, type ResolvedModels } from './scenery-models.js';
 import { refreshLibraryAssets } from './library-refresh.js';
+import { EntitySprites } from './EntitySprites.js';
 import type { ViewportProps } from './viewport-props.js';
 
 // The vertex colours are final sRGB values, not linear working-space colours.
@@ -193,6 +194,7 @@ interface SceneProps extends ViewportProps {
   planeSet: number[];
   showConnectors: boolean;
   showHiddenWalls: boolean;
+  showEntitySprites: boolean;
 }
 
 interface Plate {
@@ -786,8 +788,18 @@ function Overlays(props: SceneProps) {
     showLockTint,
     painting,
     version,
-    entities
+    entities,
+    config,
+    showEntitySprites
   } = props;
+  const libraryVersion = props.libraryVersion ?? 0;
+  // Entities drawn as pictures; the rest keep their line markers.
+  const [pictured, setPictured] = useState<ReadonlySet<string>>(() => new Set());
+  const onPictured = useCallback((ids: ReadonlySet<string>) => setPictured(ids), []);
+  const onPlaneEntities = useMemo(
+    () => (entities ?? []).filter((e) => e.plane === plane),
+    [entities, plane]
+  );
 
   // One height reader per render. It memoises a LandscapeView per sector, so
   // every overlay below shares the same eight-neighbour lookups.
@@ -836,9 +848,15 @@ function Overlays(props: SceneProps) {
   // Server-side placements: one line buffer per kind, plus the selection on
   // top of them. Only the plane being edited, like the other overlays.
   const entityGeometries = useMemo(() => {
-    const onPlane = (entities ?? []).filter((e) => e.plane === plane);
+    const onPlane = onPlaneEntities;
+    const drawnAsPicture = (id: string) => showEntitySprites && pictured.has(id);
     const byKind = (kind: 'npc' | 'item' | 'door') =>
-      lineGeometry(buildEntityMarkers(heights, onPlane.filter((e) => e.kind === kind && !e.selected)));
+      lineGeometry(
+        buildEntityMarkers(
+          heights,
+          onPlane.filter((e) => e.kind === kind && !e.selected && !drawnAsPicture(e.id))
+        )
+      );
     const selected = onPlane.filter((e) => e.selected);
     const wander = selected.find((e) => e.wander)?.wander;
     return {
@@ -850,7 +868,7 @@ function Overlays(props: SceneProps) {
         ? lineGeometry(buildRectOutline(heights, wander.x0, wander.y0, wander.x1, wander.y1))
         : null
     };
-  }, [entities, plane, heights]);
+  }, [onPlaneEntities, heights, pictured, showEntitySprites]);
   useEffect(() => {
     return () => {
       for (const g of Object.values(entityGeometries)) g?.dispose();
@@ -921,6 +939,15 @@ function Overlays(props: SceneProps) {
         </lineSegments>
       )}
 
+      {showEntitySprites && (
+        <EntitySprites
+          entities={onPlaneEntities}
+          config={config}
+          heights={heights}
+          libraryVersion={libraryVersion}
+          onPictured={onPictured}
+        />
+      )}
       {(['npc', 'item', 'door'] as const).map((kind) => (
         <lineSegments key={`entities-${kind}`} geometry={entityGeometries[kind]}>
           <lineBasicMaterial color={ENTITY_COLOURS[kind]} toneMapped={false} />
@@ -1081,6 +1108,7 @@ export function Viewport3D(props: ViewportProps) {
   const [planeMode, setPlaneMode] = useState<PlaneSetMode>('all');
   const [showConnectors, setShowConnectors] = useState(true);
   const [showHiddenWalls, setShowHiddenWalls] = useState(true);
+  const [showEntitySprites, setShowEntitySprites] = useState(true);
   const [hud, setHud] = useState({
     triangles: 0,
     sectors: 0,
@@ -1524,6 +1552,7 @@ export function Viewport3D(props: ViewportProps) {
             planeSet={planeSet}
             showConnectors={showConnectors}
             showHiddenWalls={showHiddenWalls}
+            showEntitySprites={showEntitySprites}
             cache={cache}
             atlas={atlas?.texture ?? null}
             orbitRef={orbitRef}
@@ -1690,6 +1719,13 @@ export function Viewport3D(props: ViewportProps) {
               title="Outline walls the game does not draw from the map (doors, doorframes and other placeholders)"
             >
               hidden walls
+            </CameraButton>
+            <CameraButton
+              active={showEntitySprites}
+              onClick={() => setShowEntitySprites((v) => !v)}
+              title="Draw NPCs and ground items as their sprites; off shows markers"
+            >
+              sprites
             </CameraButton>
           </div>
         </div>

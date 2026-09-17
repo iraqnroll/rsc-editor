@@ -95,6 +95,10 @@ export interface ViewportEntity {
   /** doors: the wall object's height, in render units */
   height?: number;
   selected: boolean;
+  /** NPCs: the definition index, for the picture */
+  npcId?: number;
+  /** items: the definition index, for the picture */
+  itemId?: number;
   /** NPCs: the wander box in world tiles, inclusive */
   wander?: RegionRect;
 }

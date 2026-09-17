@@ -60,6 +60,8 @@ export function ViewportHost() {
           entity.direction = data.direction;
           entity.height = config?.wallObjects[data.wallId]?.height ?? 192;
         }
+        if (data.kind === 'npc') entity.npcId = data.npcId;
+        if (data.kind === 'item') entity.itemId = data.itemId;
         if (data.kind === 'npc' && selected) {
           const a = gameToWorldTile(data.wander.minX, data.wander.minY, sector.plane);
           const b = gameToWorldTile(data.wander.maxX, data.wander.maxY, sector.plane);

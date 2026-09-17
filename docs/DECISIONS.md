@@ -799,6 +799,16 @@ the project owner, CLAUDE.md rule 4), not squeezed into a lane.
   back as part of the gate. A project with none writes none, so loading its
   export leaves the server's own lists alone. A few shipped NPC rows order their
   keys differently from the rest; values, not key order, are compared.
+- **NPCs and items are drawn as the client draws them** (`EntitySprites`,
+  `entity-compose.ts`): camera-facing pictures, NPCs at their definition's
+  width and height and items at 96x64. An NPC is composed from its 12
+  animation slots in the client's front-facing layer order (head over body over
+  legs), each layer's full box stretched to one size; grey pixels are
+  multiplied by the layer's colour (animation colour 1/2/3 = the NPC's hair,
+  top, bottom) and r=255, g=b pixels by the skin colour, `(c * k) >> 8`, with 0
+  meaning white. NPC colours are used exactly as stored: many are 1 or 2,
+  which comes out near-black, as in the client. Anything without a picture
+  keeps its line marker; a "sprites" toggle switches to markers.
 - **Doors** are drawn as a frame on their edge. The map under a real door is a
   hidden placeholder wall (section 18); the Walls tool's "server door" option
   places the entity, and the plain tool the placeholder.
