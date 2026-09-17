@@ -29,6 +29,7 @@ import type { AppContext } from '../context.js';
 import { badRequest, conflict, notFound } from '../errors.js';
 import { projectGuard, requireAuth, requireProject } from '../guards.js';
 import { asObject, optionalInteger, requiredInteger } from '../validate.js';
+import { announce } from '../library/project-ops.js';
 
 /** rsc-config's largest table (items) is 1290 entries; 65535 is slack. */
 const MAX_DEFINITION_INDEX = 65_535;
@@ -100,7 +101,7 @@ export async function registerDefinitionRoutes(
       // cache actually contains is accepted and an invented one is not.
       const data = parseDefinition(kind, body.data);
 
-      return ctx.db.transaction(async (tx) => {
+      const response = await ctx.db.transaction(async (tx) => {
         const existing = await getDefinition(
           tx,
           access.projectId,
@@ -146,13 +147,19 @@ export async function registerDefinitionRoutes(
         });
 
         return {
-          kind,
-          index,
-          version: row.version,
-          data: row.data,
-          seq: sequenced?.seq ?? null
+          body: {
+            kind,
+            index,
+            version: row.version,
+            data: row.data,
+            seq: sequenced?.seq ?? null
+          },
+          applied: sequenced ? [sequenced] : []
         };
       });
+      // Peers see the edit live, like any other.
+      await announce(ctx, access.projectId, response.applied);
+      return response.body;
     }
   );
 }

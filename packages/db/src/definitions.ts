@@ -8,7 +8,7 @@
  * locally invented shape would reject the real cache.
  */
 
-import { and, asc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, count, eq, inArray, sql } from 'drizzle-orm';
 import {
   definitionSchemas,
   type DefinitionKind
@@ -151,4 +151,31 @@ export async function putDefinitionIfVersion(
     .returning();
 
   return rows[0];
+}
+
+/** Delete one row (the last of its table, by the op contract). */
+export async function deleteDefinition(
+  db: Executor,
+  projectId: string,
+  kind: DefinitionKind,
+  index: number
+): Promise<void> {
+  await db
+    .delete(definitions)
+    .where(
+      and(
+        eq(definitions.projectId, projectId),
+        eq(definitions.kind, kind),
+        eq(definitions.index, index)
+      )
+    );
+}
+
+/** How many rows a definition table has; tables are dense from 0. */
+export async function countDefinitions(db: Executor, projectId: string, kind: DefinitionKind): Promise<number> {
+  const [row] = await db
+    .select({ n: count() })
+    .from(definitions)
+    .where(and(eq(definitions.projectId, projectId), eq(definitions.kind, kind)));
+  return Number(row?.n ?? 0);
 }

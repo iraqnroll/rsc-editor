@@ -138,7 +138,11 @@ export function ProjectHistory() {
         {entries.map((entry) => {
           const op = entry.op;
           const where =
-            op.type === 'definition' ? `${op.defKind}[${op.index}]` : sectorKey(op.sector);
+            op.type === 'definition'
+              ? `${op.defKind}[${op.index}]`
+              : op.type === 'asset'
+                ? `${op.assetKind} ${op.key}`
+                : sectorKey(op.sector);
           return (
             <button
               key={entry.seq}

@@ -41,7 +41,14 @@ import {
   uniqueIndex,
   uuid
 } from 'drizzle-orm/pg-core';
-import type { DefinitionKind, EntityData, EntityKind, Op } from '@rsc-editor/schema';
+import type {
+  DefinitionKind,
+  EntityData,
+  EntityKind,
+  LibraryKind,
+  LibraryMeta,
+  Op
+} from '@rsc-editor/schema';
 
 /**
  * `bytea`. Drizzle has no built-in for it.
@@ -448,6 +455,45 @@ export const entities = pgTable(
 );
 
 // ---------------------------------------------------------------------------
+// asset library
+// ---------------------------------------------------------------------------
+
+/**
+ * Content-addressed bytes for the asset library. Shared by every project and
+ * never rewritten: replacing an asset stores new bytes under a new hash and
+ * repoints the library entry, so the old bytes are still there for an undo or
+ * a snapshot export.
+ */
+export const assetBlobs = pgTable('asset_blobs', {
+  sha256: text('sha256').primaryKey(),
+  byteLength: integer('byte_length').notNull(),
+  data: bytea('data').notNull(),
+  createdAt: createdAt()
+});
+
+/**
+ * A project's models, texture images, NPC sprite sets and item sprites
+ * (`LibraryKind` in @rsc-editor/schema), each a key pointing at a blob.
+ */
+export const libraryAssets = pgTable(
+  'library_assets',
+  {
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    kind: text('kind').$type<LibraryKind>().notNull(),
+    key: text('key').notNull(),
+    sha256: text('sha256')
+      .notNull()
+      .references(() => assetBlobs.sha256, { onDelete: 'restrict' }),
+    meta: jsonb('meta').$type<LibraryMeta>().notNull(),
+    updatedAt: updatedAt(),
+    updatedBy: uuid('updated_by').references(() => users.id, { onDelete: 'set null' })
+  },
+  (t) => [primaryKey({ name: 'library_assets_pkey', columns: [t.projectId, t.kind, t.key] })]
+);
+
+// ---------------------------------------------------------------------------
 // op log
 // ---------------------------------------------------------------------------
 
@@ -472,7 +518,7 @@ export const ops = pgTable(
     actorId: uuid('actor_id')
       .notNull()
       .references(() => users.id, { onDelete: 'restrict' }),
-    /** 'sector' | 'definition' | 'entity' -- the op discriminator. */
+    /** 'sector' | 'definition' | 'entity' | 'asset' -- the op discriminator. */
     opType: text('op_type').$type<Op['type']>().notNull(),
     /** the op's `kind`, e.g. 'elevation.raise'. History UI labels only. */
     opKind: text('op_kind').notNull(),
@@ -565,6 +611,7 @@ export type NewSectorRow = typeof sectors.$inferInsert;
 export type SectorLock = typeof sectorLocks.$inferSelect;
 export type DefinitionRow = typeof definitions.$inferSelect;
 export type EntityRow = typeof entities.$inferSelect;
+export type LibraryAssetRow = typeof libraryAssets.$inferSelect;
 export type OpRow = typeof ops.$inferSelect;
 export type NewOpRow = typeof ops.$inferInsert;
 export type Snapshot = typeof snapshots.$inferSelect;

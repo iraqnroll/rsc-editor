@@ -21,7 +21,12 @@ import {
   createDb,
   createProject,
   createSession,
+  getDefinition,
   getEntity,
+  getLibraryEntry,
+  putBlob,
+  putDefinition,
+  putLibraryEntries,
   getSector,
   headSeq,
   putMember,
@@ -854,6 +859,94 @@ describe.skipIf(!available)('realtime collaboration', () => {
     // an entity op does not rewrite the sector frame
     const row = await getSector(db, world.projectId, world.left);
     expect(row?.version).toBe(1);
+  });
+
+  /* ------------------------------------------------ project-wide ops -- */
+
+  it('saves a definition edit sent over the socket, and a peer receives it', async () => {
+    const world = await makeWorld();
+    await putDefinition(db, { projectId: world.projectId, kind: 'roofs', index: 0, data: { height: 80, texture: 3 } });
+    const a = await joined(world.alice, world.projectId);
+    const b = await joined(world.bob, world.projectId);
+
+    // No lock: definitions are not sector-scoped.
+    a.send({
+      t: 'op.submit',
+      ops: [{
+        type: 'definition',
+        id: randomUUID(),
+        kind: 'definition.update',
+        defKind: 'roofs',
+        index: 0,
+        from: { height: 80 },
+        to: { height: 96 }
+      }]
+    });
+    const seen = await b.waitFor('op.applied');
+    expect(seen.ops[0]?.op).toMatchObject({ type: 'definition', to: { height: 96 } });
+    expect((await getDefinition(db, world.projectId, 'roofs', 0))?.data).toEqual({ height: 96, texture: 3 });
+
+    // A stale one is refused and changes nothing.
+    a.send({
+      t: 'op.submit',
+      ops: [{
+        type: 'definition',
+        id: randomUUID(),
+        kind: 'definition.update',
+        defKind: 'roofs',
+        index: 0,
+        from: { height: 80 },
+        to: { height: 1 }
+      }]
+    });
+    expect((await a.waitFor('op.rejected')).reason).toBe('stale');
+
+    a.send({ t: 'op.undo' });
+    await b.waitFor('op.applied');
+    expect((await getDefinition(db, world.projectId, 'roofs', 0))?.data).toEqual({ height: 80, texture: 3 });
+  });
+
+  it('applies and undoes a library change sent over the socket', async () => {
+    const world = await makeWorld();
+    const first = await putBlob(db, Uint8Array.from([1, 2, 3]));
+    const second = await putBlob(db, Uint8Array.from([4, 5, 6]));
+    await putLibraryEntries(db, [
+      { projectId: world.projectId, kind: 'model', key: 'crate', sha256: first, meta: {}, updatedBy: null }
+    ]);
+    const a = await joined(world.alice, world.projectId);
+    a.send({
+      t: 'op.submit',
+      ops: [{
+        type: 'asset',
+        id: randomUUID(),
+        kind: 'asset.put',
+        assetKind: 'model',
+        key: 'crate',
+        from: { sha256: first, meta: {} },
+        to: { sha256: second, meta: {} }
+      }]
+    });
+    await a.waitFor('op.applied');
+    expect((await getLibraryEntry(db, world.projectId, 'model', 'crate'))?.sha256).toBe(second);
+
+    a.send({ t: 'op.undo' });
+    await a.waitFor('op.applied');
+    expect((await getLibraryEntry(db, world.projectId, 'model', 'crate'))?.sha256).toBe(first);
+
+    // a blob that was never stored is refused
+    a.send({
+      t: 'op.submit',
+      ops: [{
+        type: 'asset',
+        id: randomUUID(),
+        kind: 'asset.put',
+        assetKind: 'model',
+        key: 'crate',
+        from: { sha256: first, meta: {} },
+        to: { sha256: 'f'.repeat(64), meta: {} }
+      }]
+    });
+    expect((await a.waitFor('op.rejected')).reason).toBe('invalid');
   });
 
   it('refuses an op from a viewer', async () => {

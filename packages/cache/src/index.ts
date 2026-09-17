@@ -17,6 +17,7 @@ export * from './sprite-import.js';
 export * from './model-import.js';
 export * from './library-archives.js';
 export * from './library-refs.js';
+export * from './library-export.js';
 export * from './atlas.js';
 export * from './entity-sprites.js';
 export * from './models-asset.js';

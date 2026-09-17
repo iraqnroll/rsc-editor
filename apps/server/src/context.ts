@@ -4,6 +4,7 @@
  */
 
 import type { Database, ProjectRole, PublicUser, User } from '@rsc-editor/db';
+import type { SequencedOp } from '@rsc-editor/schema';
 import type { ServerConfig } from './config.js';
 
 /** Everything a route handler needs that is not per-request. */
@@ -17,6 +18,18 @@ export interface AppContext {
    * and is re-checked from scratch.
    */
   accessChanged: Set<(userId: string) => void>;
+  /**
+   * Called after ops were sequenced outside the socket (definition and library
+   * routes). The realtime layer broadcasts them as `op.applied`, and the
+   * library refreshes its previews.
+   */
+  opsApplied: Set<(projectId: string, ops: SequencedOp[]) => void>;
+  /**
+   * Awaited after project-wide ops commit and before they are broadcast, so
+   * the asset library can rebuild its previews first: a peer that refetches
+   * on the broadcast must get the new ones.
+   */
+  beforeBroadcast: Set<(projectId: string, ops: readonly SequencedOp[]) => Promise<void>>;
 }
 
 /**

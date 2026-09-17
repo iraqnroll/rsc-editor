@@ -235,6 +235,16 @@ function targetColumns(
       targetDefIndex: null
     };
   }
+  if (op.type === 'asset') {
+    return {
+      targetSectorId: null,
+      targetPlane: null,
+      targetX: null,
+      targetY: null,
+      targetDefKind: null,
+      targetDefIndex: null
+    };
+  }
   return {
     targetSectorId: null,
     targetPlane: null,

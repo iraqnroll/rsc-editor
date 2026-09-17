@@ -96,6 +96,7 @@ import {
   type SqlClient
 } from './locks.js';
 import { applyPresencePatch, initialPresence } from './presence.js';
+import { OpRejected, applyProjectOps, isProjectOp, type ProjectOp } from '../library/project-ops.js';
 import {
   applyDelta,
   checkDelta,
@@ -262,8 +263,8 @@ export class Connection {
    * Reconnecting starts with an empty history -- see the note in
    * `onUndo`.
    */
-  private undoStack: EditOp[] = [];
-  private redoStack: EditOp[] = [];
+  private undoStack: UndoableOp[] = [];
+  private redoStack: UndoableOp[] = [];
 
   private queue: Promise<void> = Promise.resolve();
   private closed = false;
@@ -742,26 +743,23 @@ export class Connection {
       return;
     }
 
-    const editOps: EditOp[] = [];
-    for (const op of ops) {
-      if (op.type === 'definition') {
-        // Definition ops are owned by PATCH /api/projects/:id/definitions/...,
-        // which writes the definition row and appends its op in ONE
-        // transaction. Accepting them here would break that atomicity, so the
-        // socket refuses them outright. See the report.
-        this.reject(ids, 'invalid');
-        return;
-      }
-      editOps.push(op);
+    // Definition and library ops are project-wide and go through their own
+    // transactional path; a batch is one or the other, never both.
+    const global = ops.filter(isProjectOp);
+    const editOps = ops.filter((op): op is EditOp => !isProjectOp(op));
+    if (global.length > 0 && editOps.length > 0) {
+      this.reject(ids, 'invalid');
+      return;
     }
 
-    const outcome = await this.applyBatch(projectId, editOps);
+    const outcome =
+      global.length > 0 ? await this.applyGlobal(projectId, global) : await this.applyBatch(projectId, editOps);
     if (!outcome.ok) {
       this.reject(ids, outcome.reason);
       return;
     }
 
-    this.undoStack.push(...editOps);
+    this.undoStack.push(...(global.length > 0 ? global : editOps));
     // A new edit invalidates the redo branch, as everywhere else.
     this.redoStack.length = 0;
   }
@@ -893,6 +891,25 @@ export class Connection {
     return { ok: true, applied };
   }
 
+  private applyOne(projectId: string, op: UndoableOp) {
+    return isProjectOp(op) ? this.applyGlobal(projectId, [op]) : this.applyBatch(projectId, [op]);
+  }
+
+  /** Definition and library ops: validated and logged in one transaction, then broadcast. */
+  private async applyGlobal(
+    projectId: string,
+    ops: ProjectOp[]
+  ): Promise<{ ok: true; applied: SequencedOp[] } | { ok: false; reason: RejectReason }> {
+    try {
+      // `applyProjectOps` broadcasts through `ctx.opsApplied`.
+      const applied = await applyProjectOps(this.hub.ctx, projectId, this.auth.user.id, ops);
+      return { ok: true, applied };
+    } catch (err) {
+      if (err instanceof OpRejected) return { ok: false, reason: err.reason };
+      throw err;
+    }
+  }
+
   /**
    * Undo, scoped to this user's own ops.
    *
@@ -920,7 +937,7 @@ export class Connection {
     }
 
     const inverse = invertEditOp(last);
-    const outcome = await this.applyBatch(projectId, [inverse]);
+    const outcome = await this.applyOne(projectId, inverse);
     if (!outcome.ok) {
       this.undoStack.push(last);
       this.reject([inverse.id], outcome.reason);
@@ -941,7 +958,7 @@ export class Connection {
 
     // The inverse of the inverse is the original edit, with a fresh op id.
     const replay = invertEditOp(undone);
-    const outcome = await this.applyBatch(projectId, [replay]);
+    const outcome = await this.applyOne(projectId, replay);
     if (!outcome.ok) {
       this.redoStack.push(undone);
       this.reject([replay.id], outcome.reason);
@@ -980,12 +997,14 @@ export class Connection {
  * per project, and reusing the id would make `appendOps` treat the undo as an
  * idempotent resubmit and drop it on the floor.
  */
-function invertEditOp(op: EditOp): EditOp {
+function invertEditOp(op: UndoableOp): UndoableOp {
   const inverted = invert(op);
   /* c8 ignore next */
   if (inverted.type !== op.type) throw new Error('invert changed op type');
-  return { ...(inverted as EditOp), id: randomUUID() };
+  return { ...(inverted as UndoableOp), id: randomUUID() };
 }
+
+type UndoableOp = EditOp | ProjectOp;
 
 /** What the socket accepts: map edits and placements. Definitions go through HTTP. */
 type EditOp = SectorOp | EntityOp;

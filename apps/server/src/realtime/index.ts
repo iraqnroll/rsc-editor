@@ -38,6 +38,7 @@
 
 import fastifyWebsocket from '@fastify/websocket';
 import type { FastifyInstance } from 'fastify';
+import type { SequencedOp } from '@rsc-editor/schema';
 import type { AppContext } from '../context.js';
 import { requireAuth } from '../guards.js';
 import { DEFAULT_REALTIME_CONFIG, Hub, type RealtimeConfig } from './hub.js';
@@ -105,8 +106,13 @@ export function createRealtime(
     const hub = new Hub(ctx, app.log, config, options.sql ?? rawClientOf(ctx.db));
     const onAccessChanged = (userId: string) => hub.disconnectUser(userId);
     ctx.accessChanged.add(onAccessChanged);
+    // Ops sequenced over HTTP reach the room like any other.
+    const onOpsApplied = (projectId: string, ops: SequencedOp[]) =>
+      hub.broadcast(projectId, { t: 'op.applied', ops });
+    ctx.opsApplied.add(onOpsApplied);
     app.addHook('onClose', async () => {
       ctx.accessChanged.delete(onAccessChanged);
+      ctx.opsApplied.delete(onOpsApplied);
     });
 
     app.get(

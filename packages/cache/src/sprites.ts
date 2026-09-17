@@ -479,18 +479,26 @@ export function loadEntitySprites(
 
   // ---------------------------------------------------------------- items --
   let itemSprites = 0;
+  // Every stored sprite, not just the ones items use (the shipped cache has
+  // 450, items reach 434): the definition editor offers them all. A file is
+  // read as a full 30 first; a short last file -- which the client reads by
+  // `GameData.itemSpriteCount` -- falls back to what the items need.
+  const itemSpriteCount = defs.items.reduce((max, item) => Math.max(max, item.sprite + 1), 0);
   if (media && hasEntry(media, 'index.dat')) {
     const index = media.getEntry('index.dat');
     for (let file = 1; ; file++) {
       const entry = `objects${file}.dat`;
       if (!hasEntry(media, entry)) break;
+      const data = media.getEntry(entry);
 
-      const group = parseSpriteGroup(
-        `objects${file}`,
-        media.getEntry(entry),
-        index,
-        ITEM_SPRITES_PER_FILE
-      );
+      let group: SpriteGroup;
+      try {
+        group = parseSpriteGroup(`objects${file}`, data, index, ITEM_SPRITES_PER_FILE);
+      } catch (err) {
+        const left = itemSpriteCount - (file - 1) * ITEM_SPRITES_PER_FILE;
+        if (!(err instanceof RangeError) || left <= 0 || left >= ITEM_SPRITES_PER_FILE) throw err;
+        group = parseSpriteGroup(`objects${file}`, data, index, left);
+      }
 
       for (let frame = 0; frame < group.frames.length; frame++) {
         const id = ITEM_SPRITE_BASE + (file - 1) * ITEM_SPRITES_PER_FILE + frame;

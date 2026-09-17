@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { libraryKeySchema, libraryKindSchema, libraryVersionSchema } from './assets.js';
 import { entityDataSchema } from './entities.js';
 import { sectorCoordSchema, tileIndexSchema, SECTOR_LANES } from './sector.js';
 
@@ -66,11 +67,20 @@ export const sectorOpSchema = z.object({
 });
 export type SectorOp = z.infer<typeof sectorOpSchema>;
 
-/** An edit to one entity/config definition. */
+/**
+ * An edit to one entity/config definition.
+ *
+ * `definition.update` replaces the named fields. `definition.add` creates the
+ * row at `index` (the end of its table) with `to` as its whole data, and
+ * `definition.remove` deletes the LAST row, `from` being its whole data --
+ * tables stay dense, so anything else is a sequence of updates first.
+ */
+export const definitionOpKindSchema = z.enum(['definition.update', 'definition.add', 'definition.remove']);
+
 export const definitionOpSchema = z.object({
   type: z.literal('definition'),
   id: z.string().uuid(),
-  kind: z.literal('definition.update'),
+  kind: definitionOpKindSchema,
   defKind: z.string(),
   index: z.number().int().min(0),
   /** JSON-patch-ish: whole-field replacement, keyed by field name. */
@@ -113,7 +123,29 @@ export const entityOpSchema = z
   );
 export type EntityOp = z.infer<typeof entityOpSchema>;
 
-export const opSchema = z.union([sectorOpSchema, definitionOpSchema, entityOpSchema]);
+/**
+ * Point a library key at different bytes (`asset.put`), or drop it
+ * (`asset.remove`). `from` is null when the key is new, `to` when it goes.
+ * Library-wide, like definitions: no sector lock applies, and it is written
+ * over HTTP in the same transaction as any reference rewrite it needs.
+ */
+export const assetOpSchema = z
+  .object({
+    type: z.literal('asset'),
+    id: z.string().uuid(),
+    kind: z.enum(['asset.put', 'asset.remove']),
+    assetKind: libraryKindSchema,
+    key: libraryKeySchema,
+    from: libraryVersionSchema.nullable(),
+    to: libraryVersionSchema.nullable()
+  })
+  .refine(
+    (op) => (op.kind === 'asset.remove' ? op.from !== null && op.to === null : op.to !== null),
+    'asset op sides do not match its kind'
+  );
+export type AssetOp = z.infer<typeof assetOpSchema>;
+
+export const opSchema = z.union([sectorOpSchema, definitionOpSchema, entityOpSchema, assetOpSchema]);
 export type Op = z.infer<typeof opSchema>;
 
 /** An op as persisted and broadcast, once the server has sequenced it. */
@@ -139,5 +171,10 @@ export function invert(op: Op): Op {
       op.kind === 'entity.add' ? 'entity.remove' : op.kind === 'entity.remove' ? 'entity.add' : op.kind;
     return { ...op, kind, from: op.to, to: op.from };
   }
-  return { ...op, from: op.to, to: op.from };
+  if (op.type === 'asset') {
+    return { ...op, kind: op.from === null ? 'asset.remove' : 'asset.put', from: op.to, to: op.from } as AssetOp;
+  }
+  const kind =
+    op.kind === 'definition.add' ? 'definition.remove' : op.kind === 'definition.remove' ? 'definition.add' : op.kind;
+  return { ...op, kind, from: op.to, to: op.from };
 }

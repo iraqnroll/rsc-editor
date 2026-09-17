@@ -2,32 +2,27 @@ import type { FastifyInstance } from 'fastify';
 import {
   ExportRefused,
   exportWorld,
-  loadConfig,
+  type LibraryExport,
+  type LibraryState,
   type LoadedSector
 } from '@rsc-editor/cache';
 import {
+  getBlob,
   getProject,
   getSnapshot,
-  listDefinitions,
+  libraryIsSeeded,
   listProjectEntities,
   opsSince
 } from '@rsc-editor/db';
-import {
-  configSchema,
-  decodeSectorFrame,
-  definitionSchemas,
-  sectorKey,
-  type DefinitionKind,
-  type RscConfig
-} from '@rsc-editor/schema';
+import { decodeSectorFrame, sectorKey, type LibraryKind } from '@rsc-editor/schema';
 import type { AppContext } from '../context.js';
 import { notFound } from '../errors.js';
 import { projectGuard, requireProject } from '../guards.js';
 import { requiredUuid } from '../validate.js';
-import { rewind } from '../rewind.js';
+import { libraryKey, rewind } from '../rewind.js';
+import { projectConfig } from '../library/service.js';
 import { zipStored } from '../zip.js';
 
-const DEFINITION_KINDS = Object.keys(definitionSchemas) as DefinitionKind[];
 
 /**
  * `GET /api/projects/:projectId/export` -- the project as a cache directory.
@@ -84,23 +79,50 @@ export async function registerExportRoutes(
       );
 
       let result: ReturnType<typeof exportWorld>;
+      let libraryChanged: LibraryExport['changed'] | null = null;
       try {
         const config = await projectConfig(ctx, projectId, archives);
         const placed = new Map(
           (await listProjectEntities(ctx.db, projectId)).map((e) => [e.id, e])
         );
+        let libraryAt: LibraryState[] | undefined;
         if (snapshot) {
           const later = await opsAfter(ctx, projectId, snapshot.seq);
           const byKey = new Map(sectors.map((s) => [sectorKey(s.coord), s]));
-          const problems = rewind(byKey, config, later, placed);
+          // The library as it is now (or as imported, if it was never used),
+          // rewound with everything else.
+          const seeded = await libraryIsSeeded(ctx.db, projectId);
+          const now = seeded
+            ? await app.library.current(projectId)
+            : (await app.library.getOriginals(projectId)).seeded;
+          const versions = new Map(now.map((e) => [libraryKey(e.kind, e.key), { sha256: e.sha256, meta: e.meta }]));
+          const problems = rewind(byKey, config, later, placed, versions);
           if (problems.length > 0) {
             throw new ExportRefused([
               `the log does not rewind cleanly to "${snapshot.name}" (seq ${snapshot.seq}):`,
               ...problems
             ]);
           }
+          libraryAt = [];
+          for (const [k, v] of versions) {
+            const at = k.indexOf(':');
+            const data = await getBlob(ctx.db, v.sha256);
+            if (!data) throw new ExportRefused([`library file ${v.sha256.slice(0, 12)} is missing`]);
+            libraryAt.push({ kind: k.slice(0, at) as LibraryKind, key: k.slice(at + 1), sha256: v.sha256, data, meta: v.meta });
+          }
         }
+
+        // The asset library, written into the archives it changed.
+        const built = await app.library.buildArchives(projectId, config, libraryAt);
+        if (built.problems.length > 0) throw new ExportRefused(built.problems);
+        for (const [name, data] of built.files) archives.set(name, data);
+        libraryChanged = built.changed;
         result = exportWorld({ sectors, config, archives, entities: [...placed.values()] });
+        // Archives the library rewrote pass through exportWorld unchanged, so
+        // the report would call them untouched; they were not.
+        for (const f of result.report.files) {
+          if (built.files.has(f.name)) f.changed = true;
+        }
       } catch (err) {
         if (err instanceof ExportRefused) {
           return reply.code(422).send({
@@ -115,7 +137,9 @@ export async function registerExportRoutes(
       const entries = [...result.files].map(([name, data]) => ({ name, data }));
       entries.push({
         name: 'export-report.json',
-        data: new TextEncoder().encode(`${JSON.stringify(result.report, null, 2)}\n`)
+        data: new TextEncoder().encode(
+          `${JSON.stringify({ ...result.report, library: libraryChanged }, null, 2)}\n`
+        )
       });
 
       const slug = `${project?.slug ?? projectId}${snapshot ? `-${fileSafe(snapshot.name)}` : ''}`;
@@ -126,30 +150,6 @@ export async function registerExportRoutes(
         .send(zipStored(entries));
     }
   );
-}
-
-/**
- * The project's definitions as one config.
- *
- * The model name table is not a stored definition kind -- rsc-config
- * synthesises it while decoding objects -- so it comes from the imported
- * archive. With no archive there is nothing to overlay onto, and `exportWorld`
- * refuses that case itself with a clear message.
- */
-async function projectConfig(
-  ctx: AppContext,
-  projectId: string,
-  archives: ReadonlyMap<string, Uint8Array>
-): Promise<RscConfig> {
-  const out: Record<string, unknown> = {};
-  for (const kind of DEFINITION_KINDS) {
-    const rows = await listDefinitions(ctx.db, projectId, kind);
-    out[kind] = rows.map((r) => r.data);
-  }
-
-  const original = [...archives].find(([name]) => /^config\d+\.jag$/.test(name));
-  out.models = original ? loadConfig(original[1]).models : [];
-  return configSchema.parse(out);
 }
 
 /** Every op after `seq`, in pages; the log can be long. */

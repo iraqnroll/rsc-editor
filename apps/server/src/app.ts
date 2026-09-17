@@ -23,6 +23,7 @@ import { registerCacheAssetRoutes } from './routes/cache-assets.js';
 import { registerDefinitionRoutes } from './routes/definitions.js';
 import { registerExportRoutes } from './routes/export.js';
 import { registerHistoryRoutes } from './routes/history.js';
+import { registerLibraryRoutes } from './routes/library.js';
 import { registerMeRoutes } from './routes/me.js';
 import { registerMemberRoutes } from './routes/members.js';
 import { registerOpRoutes } from './routes/ops.js';
@@ -46,7 +47,13 @@ export async function buildApp(
   options: BuildAppOptions
 ): Promise<FastifyInstance> {
   const config = options.config ?? loadConfig();
-  const ctx: AppContext = { config, db: options.db, accessChanged: new Set() };
+  const ctx: AppContext = {
+    config,
+    db: options.db,
+    accessChanged: new Set(),
+    opsApplied: new Set(),
+    beforeBroadcast: new Set()
+  };
 
   const app = Fastify({
     logger: {
@@ -94,6 +101,7 @@ export async function buildApp(
   await registerExportRoutes(app, ctx);
   await registerHistoryRoutes(app, ctx);
   await registerAccessRoutes(app, ctx);
+  await registerLibraryRoutes(app, ctx);
 
   app.get('/api/health', async () => ({ ok: true }));
 

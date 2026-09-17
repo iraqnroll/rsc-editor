@@ -25,6 +25,7 @@ import { create } from 'zustand';
 import { invert, sectorKey } from '@rsc-editor/schema';
 import type {
   DefinitionKind,
+  DefinitionOp,
   EntityData,
   Lock,
   Op,
@@ -162,6 +163,12 @@ export interface EditorState {
   loading: Record<string, true>;
   /** NPC spawns, items and doors, by sector key then entity id */
   entities: EntityIndex;
+  /**
+   * Bumped whenever the asset library (or a table it previews) changes, by
+   * anyone. The library screen and the scene's model/texture/sprite assets
+   * refetch when it moves.
+   */
+  libraryVersion: number;
   /** the entity the inspector is editing */
   selectedEntity: { sector: SectorCoord; id: string } | null;
 
@@ -284,6 +291,21 @@ function applyDefinitionFields(
   return { ...config, [kind]: nextList } as RscConfig;
 }
 
+/** A definition op against the local config: update, append or drop the last row. */
+function applyDefinitionOp(config: RscConfig, op: DefinitionOp): RscConfig {
+  const kind = op.defKind as DefinitionKind;
+  if (op.kind === 'definition.update') return applyDefinitionFields(config, kind, op.index, op.to);
+  const lists = config as unknown as Record<string, Array<Record<string, unknown>>>;
+  const list = lists[kind];
+  if (!list) return config;
+  if (op.kind === 'definition.add') {
+    if (op.index !== list.length) return config;
+    return { ...config, [kind]: [...list, { ...op.to }] } as RscConfig;
+  }
+  if (op.index !== list.length - 1) return config;
+  return { ...config, [kind]: list.slice(0, -1) } as RscConfig;
+}
+
 /* --------------------------------------------------------------- store -- */
 
 export const useEditor = create<EditorState>()((set, get) => ({
@@ -303,6 +325,7 @@ export const useEditor = create<EditorState>()((set, get) => ({
   loading: {},
   entities: {},
   selectedEntity: null,
+  libraryVersion: 0,
 
   activeSector: null,
   hoverTile: null,
@@ -887,7 +910,7 @@ function lockBlocked(state: EditorState, tx: Transaction): SectorCoord[] {
   const out: SectorCoord[] = [];
   const seen = new Set<string>();
   for (const op of tx.ops) {
-    if (op.type === 'definition') continue;
+    if (op.type === 'definition' || op.type === 'asset') continue;
     const key = sectorKey(op.sector);
     if (seen.has(key)) continue;
     seen.add(key);
@@ -955,6 +978,7 @@ function applyLocally(set: Setter, get: Getter, ops: Op[]): void {
   let config = state.config;
   let touchedSectors = false;
   let entities: EntityIndex | null = null;
+  let library = false;
 
   for (const op of ops) {
     localOpIds.add(op.id);
@@ -971,8 +995,12 @@ function applyLocally(set: Setter, get: Getter, ops: Op[]): void {
     } else if (op.type === 'entity') {
       entities ??= { ...state.entities };
       applyEntityOp(entities, op);
+    } else if (op.type === 'asset') {
+      library = true;
     } else if (config) {
-      config = applyDefinitionFields(config, op.defKind as DefinitionKind, op.index, op.to);
+      config = applyDefinitionOp(config, op);
+      // Texture and animation tables feed the previews the server rebuilds.
+      if (op.defKind === 'textures' || op.defKind === 'animations') library = true;
     }
   }
 
@@ -985,6 +1013,7 @@ function applyLocally(set: Setter, get: Getter, ops: Op[]): void {
     if (sel && !entities[sectorKey(sel.sector)]?.[sel.id]) patch.selectedEntity = null;
   }
   if (config !== state.config) patch.config = config;
+  if (library) patch.libraryVersion = state.libraryVersion + 1;
   if (Object.keys(patch).length > 0) set(patch);
 }
 

@@ -26,7 +26,9 @@ function ctxFor(overrides: Record<string, string>): AppContext {
       ...overrides
     }),
     db: {} as Database,
-    accessChanged: new Set()
+    accessChanged: new Set(),
+    opsApplied: new Set(),
+    beforeBroadcast: new Set()
   };
 }
 

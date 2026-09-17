@@ -27,7 +27,13 @@ const config = loadConfig({
   DISCORD_CLIENT_SECRET: 'secret'
 });
 
-const ctx = { config, db: {} as Database, accessChanged: new Set<(userId: string) => void>() };
+const ctx = {
+  config,
+  db: {} as Database,
+  accessChanged: new Set<(userId: string) => void>(),
+  opsApplied: new Set<never>(),
+  beforeBroadcast: new Set<never>()
+};
 
 const PROJECT_ID = '11111111-1111-1111-1111-111111111111';
 const USER_ID = '22222222-2222-2222-2222-222222222222';
