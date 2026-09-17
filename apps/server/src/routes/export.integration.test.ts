@@ -3,7 +3,12 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
-import { exportWorld, loadConfig as loadCacheConfig, loadLandscape } from '@rsc-editor/cache';
+import {
+  DEFINITION_FILES,
+  exportWorld,
+  loadConfig as loadCacheConfig,
+  loadLandscape
+} from '@rsc-editor/cache';
 import {
   cacheAssets,
   createDb,
@@ -186,7 +191,7 @@ describe.skipIf(!available)('project export', () => {
     expect(res.headers['content-type']).toBe('application/zip');
     expect(res.headers['content-disposition']).toMatch(/attachment; filename=".+-cache\.zip"/);
     expect(zipNames(res.rawPayload).sort()).toEqual(
-      [...ARCHIVES, 'object-locs.json', 'export-report.json'].sort()
+      [...ARCHIVES, 'object-locs.json', 'export-report.json', ...Object.values(DEFINITION_FILES)].sort()
     );
   });
 

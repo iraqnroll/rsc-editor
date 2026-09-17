@@ -8,7 +8,13 @@ import {
   type SectorBuffers
 } from '@rsc-editor/schema';
 import { loadConfig } from './config.js';
-import { ExportRefused, SCENERY_FILE, exportWorld, listPlacements } from './export.js';
+import {
+  DEFINITION_FILES,
+  ExportRefused,
+  SCENERY_FILE,
+  exportWorld,
+  listPlacements
+} from './export.js';
 import { loadLandscape, type LoadedSector } from './landscape.js';
 import { applyScenery, parseSceneryPlacements } from './scenery.js';
 
@@ -68,13 +74,41 @@ describe('exportWorld', () => {
   });
 
   it('writes a whole cache directory, replacing only what it produced', () => {
-    expect([...result.files.keys()].sort()).toEqual([...archives.keys(), SCENERY_FILE].sort());
+    expect([...result.files.keys()].sort()).toEqual(
+      [...archives.keys(), SCENERY_FILE, ...Object.values(DEFINITION_FILES)].sort()
+    );
     const changed = result.report.files.filter((f) => f.changed).map((f) => f.name);
     expect(changed.sort()).toEqual(
-      ['config85.jag', 'land63.jag', 'land63.mem', 'maps63.jag', 'maps63.mem', SCENERY_FILE].sort()
+      [
+        'config85.jag',
+        'land63.jag',
+        'land63.mem',
+        'maps63.jag',
+        'maps63.mem',
+        SCENERY_FILE,
+        ...Object.values(DEFINITION_FILES)
+      ].sort()
     );
     // Untouched archives are passed through as the same bytes.
     expect(result.files.get('models36.jag')).toBe(archives.get('models36.jag'));
+  });
+
+  it('writes the definitions a game server reads, edits included', () => {
+    const read = (name: string) => JSON.parse(new TextDecoder().decode(result.files.get(name)!));
+    expect(read(DEFINITION_FILES.npcs)).toEqual(config.npcs);
+    expect(read(DEFINITION_FILES.items)).toEqual(config.items);
+    expect(read(DEFINITION_FILES.objects)).toEqual(config.objects);
+    expect(read(DEFINITION_FILES.wallObjects)).toEqual(config.wallObjects);
+    expect(read(DEFINITION_FILES.tiles)).toEqual(config.tiles);
+    expect(read(DEFINITION_FILES.animations)).toEqual(config.animations);
+    expect(read(DEFINITION_FILES.spells)).toEqual(config.spells);
+    expect(read(DEFINITION_FILES.prayers)).toEqual(config.prayers);
+
+    // An edit reaches the JSON, not just the archive: this is the whole point.
+    const renamed = { ...config, npcs: config.npcs.map((n, i) => (i === 5 ? { ...n, name: 'Ivan' } : n)) };
+    const out = exportWorld({ sectors: [...world.values()], config: renamed, archives });
+    const npcs = JSON.parse(new TextDecoder().decode(out.files.get(DEFINITION_FILES.npcs)!));
+    expect(npcs[5].name).toBe('Ivan');
   });
 
   it('writes scenery the importer reads back, one entry per object', () => {

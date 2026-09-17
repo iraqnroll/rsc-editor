@@ -52,6 +52,8 @@ import {
  *   goes to 1188. A `.loc` is still written for exactly the sectors that had
  *   one when imported -- the login-screen backdrop -- holding whatever of their
  *   scenery a `.loc` can express. Nothing else grows a `.loc`.
+ * - Definitions again, as `config-*.json`: the same lists a game server reads
+ *   (it never opens the .jag). See {@link DEFINITION_FILES}.
  * - Every other imported archive (models, textures, sounds, media) is passed
  *   through untouched, so the result is a whole cache directory.
  *
@@ -109,6 +111,48 @@ export class ExportRefused extends Error {
 }
 
 export const SCENERY_FILE = 'object-locs.json';
+
+/**
+ * The definition sections a game server reads, as its own JSON files.
+ *
+ * A server does not open `config<n>.jag`: rsc-server and friends read the
+ * decoded lists that ship as `@2003scape/rsc-data/config/*.json`, so an NPC
+ * renamed in the editor kept its old name, examine text and stats in game
+ * until those were replaced too. What `loadConfig` produces is that format
+ * exactly -- verified section by section against stock rsc-data.
+ *
+ * The names carry a `config-` prefix because the spawn lists above already
+ * use `npcs.json`, `items.json` and `wall-objects.json` for something else:
+ * those say WHERE things are, these say WHAT they are.
+ */
+export const DEFINITION_FILES = {
+  npcs: 'config-npcs.json',
+  items: 'config-items.json',
+  objects: 'config-objects.json',
+  wallObjects: 'config-wall-objects.json',
+  tiles: 'config-tiles.json',
+  animations: 'config-animations.json',
+  spells: 'config-spells.json',
+  prayers: 'config-prayers.json'
+} as const;
+
+/** `config` as the JSON files a game server reads. See DEFINITION_FILES. */
+export function definitionFiles(config: RscConfig): Map<string, Uint8Array> {
+  const encoder = new TextEncoder();
+  const out = new Map<string, Uint8Array>();
+  const sections: Array<[string, unknown]> = [
+    [DEFINITION_FILES.npcs, config.npcs],
+    [DEFINITION_FILES.items, config.items],
+    [DEFINITION_FILES.objects, config.objects],
+    [DEFINITION_FILES.wallObjects, config.wallObjects],
+    [DEFINITION_FILES.tiles, config.tiles],
+    [DEFINITION_FILES.animations, config.animations],
+    [DEFINITION_FILES.spells, config.spells],
+    [DEFINITION_FILES.prayers, config.prayers]
+  ];
+  for (const [name, list] of sections) out.set(name, encoder.encode(`${JSON.stringify(list, null, 1)}\n`));
+  return out;
+}
 
 /** How many problems are worth collecting before the answer is plainly "no". */
 const MAX_PROBLEMS = 200;
@@ -233,7 +277,8 @@ export function exportWorld(input: ExportInput): ExportResult {
     [names.mapsMem, landscape.mapsMem],
     [names.config, config],
     [SCENERY_FILE, new TextEncoder().encode(`${JSON.stringify(placements, null, 1)}\n`)],
-    ...spawnFiles
+    ...spawnFiles,
+    ...definitionFiles(input.config)
   ];
   for (const [name, bytes] of replaced) files.set(name, bytes);
 
