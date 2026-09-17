@@ -128,5 +128,9 @@ suite (it builds an empty one), and an exported cache loaded in a real client.
 (DECISIONS §19): NPC and Item tools, a server-door option on Walls, imported with
 `--spawns`, exported as the game server's three lists.
 
+**The asset library** (models, textures, NPC and item sprites) lives beside
+the definitions (DECISIONS §20): browse, upload, replace, reorder and delete from
+the Assets screen, references rewritten server-side, archives patched on export.
+
 **The `.hei` format only holds even elevation and colour values** (DECISIONS
 §15). Anything that writes those lanes must go through `clampLane`.

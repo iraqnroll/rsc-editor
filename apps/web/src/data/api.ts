@@ -289,6 +289,14 @@ export interface EditorApi {
   createProject(input: { name: string; description?: string }): Promise<ProjectSummary>;
   /** Choose which project the next `connect()` joins. */
   useProject(projectId: string): void;
+
+  /**
+   * The open project's asset library URL prefix (`/api/projects/<id>/library`),
+   * or null where there is no library (the mock backend, or no project yet).
+   */
+  libraryPath(): string | null;
+  /** Forget the cached model, texture atlas and sprite assets; the library changed. */
+  invalidateLibraryAssets(): void;
 }
 
 let singleton: EditorApi | null = null;

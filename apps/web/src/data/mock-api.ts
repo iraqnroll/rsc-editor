@@ -756,7 +756,14 @@ export function createMockApi(): EditorApi {
 
     useProject(): void {
       // One project only; switching is meaningless in the mock.
-    }
+    },
+
+    libraryPath(): string | null {
+      // The asset library needs the live backend's archives.
+      return null;
+    },
+
+    invalidateLibraryAssets(): void {}
   };
 
   return api;

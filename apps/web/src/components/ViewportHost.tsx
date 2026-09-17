@@ -36,6 +36,7 @@ export function ViewportHost() {
   const setViewCentre = useEditor((s) => s.setViewCentre);
   const ensureSector = useEditor((s) => s.ensureSector);
   const entities = useEditor((s) => s.entities);
+  const libraryVersion = useEditor((s) => s.libraryVersion);
   const selectedEntity = useEditor((s) => s.selectedEntity);
 
   const viewportSectors = useMemo(() => {
@@ -109,6 +110,7 @@ export function ViewportHost() {
         showSectorBorders={showSectorBorders}
         showLockTint={showLockTint}
         entities={viewportEntities}
+        libraryVersion={libraryVersion}
         painting={activeTool !== 'select'}
         regionDrag={regionDrag}
         onPick={(tile, mods) => applyGesture(tile, mods)}

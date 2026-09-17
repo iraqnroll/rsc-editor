@@ -178,6 +178,54 @@ test('an NPC one editor places, the other can select and edit', async ({ browser
   await expect(b.getByText('Selected npc')).toHaveCount(0);
 });
 
+test('the asset library: an upload one editor makes appears for the other', async ({ browser, baseURL }) => {
+  const { alice, bob } = await setUp(baseURL!);
+  const a = await openEditor(browser, alice);
+  const b = await openEditor(browser, bob);
+
+  const openAssets = async (page: Page, tab: string) => {
+    await page.getByRole('button', { name: 'Assets', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Assets' });
+    await dialog.getByRole('tab', { name: tab }).click();
+    return dialog;
+  };
+  const da = await openAssets(a, 'Item sprites');
+  const db = await openAssets(b, 'Item sprites');
+  await expect(da.getByText('Nothing matches.')).toBeVisible();
+
+  // A 48x32 PNG, solid colour, made in the page.
+  const png = await a.evaluate(async () => {
+    const canvas = new OffscreenCanvas(48, 32);
+    const g = canvas.getContext('2d')!;
+    g.fillStyle = '#c03020';
+    g.fillRect(4, 4, 40, 24);
+    const blob = await canvas.convertToBlob({ type: 'image/png' });
+    return Array.from(new Uint8Array(await blob.arrayBuffer()));
+  });
+  await da.getByLabel('Add sprite 0…').setInputFiles({ name: 'red.png', mimeType: 'image/png', buffer: Buffer.from(png) });
+  await expect(da.getByText('Added sprite 0.')).toBeVisible();
+  await expect(da.getByText('#0', { exact: true })).toBeVisible();
+  // Bob's open screen follows without a reload.
+  await expect(db.getByText('#0', { exact: true })).toBeVisible();
+
+  // A model from OBJ, on the other tab.
+  await da.getByRole('tab', { name: 'Models' }).click();
+  await da.getByLabel('New model name').fill('e2ebox');
+  await da.getByLabel('Add model…').setInputFiles([
+    { name: 'box.obj', mimeType: 'text/plain', buffer: Buffer.from('v 0 0 0\nv 1 0 0\nv 1 1 0\nusemtl red\nf 1 2 3\n') },
+    { name: 'box.mtl', mimeType: 'text/plain', buffer: Buffer.from('newmtl red\nKd 1 0 0\n') }
+  ]);
+  await expect(da.getByText('Added e2ebox.')).toBeVisible();
+  await expect(da.getByText('1 faces · 3 verts')).toBeVisible();
+
+  // Deleting an unused sprite works from the card.
+  await da.getByRole('tab', { name: 'Item sprites' }).click();
+  a.once('dialog', (dialog) => void dialog.accept());
+  await da.getByRole('button', { name: 'Delete' }).first().click();
+  await expect(da.getByText('Deleted sprite 0.')).toBeVisible();
+  await expect(db.getByText('Nothing matches.')).toBeVisible();
+});
+
 test('two editors share a sector through locks, live ops and undo', async ({ browser, baseURL }) => {
   const { alice, bob } = await setUp(baseURL!);
 

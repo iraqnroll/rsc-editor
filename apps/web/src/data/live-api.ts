@@ -1295,6 +1295,19 @@ export function createLiveApi(options: LiveApiOptions = {}): EditorApi {
       return toSummary(body.project);
     },
 
+    libraryPath(): string | null {
+      return projectId ? `/api/projects/${encodeURIComponent(projectId)}/library` : null;
+    },
+
+    invalidateLibraryAssets(): void {
+      atlas = undefined;
+      atlasInFlight = null;
+      sprites = undefined;
+      spritesInFlight = null;
+      models = undefined;
+      modelsInFlight = null;
+    },
+
     useProject(id: string): void {
       projectId = id;
       writeStoredProject(id);

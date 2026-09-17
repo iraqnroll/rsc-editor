@@ -79,6 +79,9 @@ export interface ViewportProps {
    * ADDED for entity placement; optional like the rest.
    */
   entities?: ViewportEntity[];
+
+  /** Bumped when the asset library changes; the scene reloads its textures and models. */
+  libraryVersion?: number;
 }
 
 export interface ViewportEntity {

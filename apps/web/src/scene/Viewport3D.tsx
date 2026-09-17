@@ -89,6 +89,7 @@ import {
   type SectorSource
 } from './sector-geometry.js';
 import { loadSceneryModels, type ResolvedModels } from './scenery-models.js';
+import { refreshLibraryAssets } from './library-refresh.js';
 import type { ViewportProps } from './viewport-props.js';
 
 // The vertex colours are final sRGB values, not linear working-space colours.
@@ -1149,22 +1150,31 @@ export function Viewport3D(props: ViewportProps) {
    * deliberately does not memoise a too-early miss, so this second call is the
    * one that gets the real sheet. Resolving to the same result is a no-op.
    */
+  const libraryVersion = props.libraryVersion ?? 0;
+  const seenLibrary = useRef(libraryVersion);
   useEffect(() => {
     let alive = true;
+    // A library change replaces the atlas outright; otherwise a server sheet,
+    // once had, is not swapped for a later (possibly bundled) answer.
+    const replace = seenLibrary.current !== libraryVersion;
+    if (replace) {
+      seenLibrary.current = libraryVersion;
+      refreshLibraryAssets();
+    }
     loadAtlas().then(
       (resolved) => {
         if (!alive) return;
-        setAtlas((current) => (current?.source === 'server' ? current : resolved));
+        setAtlas((current) => (!replace && current?.source === 'server' ? current : resolved));
       },
       (err: unknown) => alive && setAtlasError(err instanceof Error ? err.message : String(err))
     );
     return () => {
       alive = false;
     };
-  }, [config]);
+  }, [config, libraryVersion]);
 
   /**
-   * The `.ob3` models, once per session.
+   * The `.ob3` models, once per session (and again after a library change).
    *
    * Keyed on `config` for the same reason the atlas is: the scene mounts before
    * a project is open, and the asset lives under the project. A miss is a normal
@@ -1174,14 +1184,15 @@ export function Viewport3D(props: ViewportProps) {
    */
   useEffect(() => {
     let alive = true;
+    const replace = libraryVersion > 0;
     loadSceneryModels().then(
-      (resolved) => alive && setModels((current) => current ?? resolved),
+      (resolved) => alive && setModels((current) => (replace ? resolved : (current ?? resolved))),
       () => alive && setModels(null)
     );
     return () => {
       alive = false;
     };
-  }, [config]);
+  }, [config, libraryVersion]);
 
   /* sectors -> mesh queue */
   const activeSectors = useMemo(() => {

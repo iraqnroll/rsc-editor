@@ -35,9 +35,11 @@ export interface ModelThumbnailProps {
   size?: number;
   /** the `direction` lane's 0-7 facing, if previewing a specific placement */
   direction?: number;
+  /** change it to redraw after the model itself changed */
+  version?: number;
 }
 
-export function ModelThumbnail({ modelName, size = 56, direction = 0 }: ModelThumbnailProps) {
+export function ModelThumbnail({ modelName, size = 56, direction = 0, version = 0 }: ModelThumbnailProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [result, setResult] = useState<ThumbnailResult | null>(null);
 
@@ -58,7 +60,7 @@ export function ModelThumbnail({ modelName, size = 56, direction = 0 }: ModelThu
     return () => {
       alive = false;
     };
-  }, [modelName, size, direction]);
+  }, [modelName, size, direction, version]);
 
   useEffect(() => {
     const canvas = canvasRef.current;

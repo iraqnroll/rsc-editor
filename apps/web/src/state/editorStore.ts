@@ -1013,7 +1013,12 @@ function applyLocally(set: Setter, get: Getter, ops: Op[]): void {
     if (sel && !entities[sectorKey(sel.sector)]?.[sel.id]) patch.selectedEntity = null;
   }
   if (config !== state.config) patch.config = config;
-  if (library) patch.libraryVersion = state.libraryVersion + 1;
+  if (library) {
+    patch.libraryVersion = state.libraryVersion + 1;
+    // The previews were rebuilt before this op was broadcast; refetch them.
+    state.api.invalidateLibraryAssets();
+    resetEntitySpriteCache();
+  }
   if (Object.keys(patch).length > 0) set(patch);
 }
 

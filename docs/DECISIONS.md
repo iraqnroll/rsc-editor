@@ -802,3 +802,60 @@ the project owner, CLAUDE.md rule 4), not squeezed into a lane.
 - **Doors** are drawn as a frame on their edge. The map under a real door is a
   hidden placeholder wall (section 18); the Walls tool's "server door" option
   places the entity, and the plain tool the placeholder.
+
+## 20. The asset library: keys over content-addressed bytes, written back by patching
+
+Models, texture images, NPC sprite sets and item sprites can be browsed,
+added, replaced, renamed, reordered, downloaded and deleted from the Assets
+screen. Not edited: the editor converts files, it does not paint them. Schema
+change approved by the project owner (CLAUDE.md rule 4).
+
+- **Storage.** `asset_blobs` holds bytes by sha256 and is never rewritten;
+  `library_assets` maps (project, kind, key) to a hash. Replacing an asset is
+  repointing a key, so undo and snapshot export can point it back. Keys are
+  lowercase for named kinds, because the client finds `.jag` entries by a
+  case-insensitive hash; item sprites are keyed by position.
+- **Seeding is lazy and deterministic.** A project's library is filled from its
+  imported archives on first use. Because seeding the same archives always
+  gives the same entries, the export seeds the ORIGINAL archives again and
+  diffs: only archives with a difference are rewritten, and only their changed
+  entries.
+- **Archives are patched, not rebuilt.** Changed sprites get new headers
+  appended to the shared `index.dat`; untouched ones keep their bytes, and
+  entries nothing names (they cannot even be listed -- keys are one-way hashes)
+  survive. When the 16-bit index would overflow, textures and NPC sprites fall
+  back to a full rebuild, since every frame count there is known. media58's UI
+  sprites have unknown frame counts, so only its `objects<n>.dat` are touched.
+  The sprite encoder is the reader's exact inverse: textures17 and entity24
+  rebuild byte for byte.
+- **`.jag` compression is ambiguous.** An entry counts as compressed only when
+  its compressed size differs from its real size, so an entry whose bzip2 output
+  is exactly as long as its input reads back as garbage -- in the archiver and
+  in the client. `Spellcharge1.ob3` in models36.jag is one. `packArchive`
+  verifies every entry and falls back to whole-archive compression; the
+  landscape export uses it too.
+- **References follow.** Positional assets are referenced by index (texture n in
+  walls, tiles, roofs and model faces; item sprite n; animation n in NPCs'
+  12 slots), models by name (objects, and 20 animated models the 204 client
+  loads itself). A move or removal is a mapping; the server turns it into
+  definition updates and model replacements in the same batch, and refuses a
+  removal anything still uses.
+- **One path for project-wide ops.** Definition and asset ops are validated
+  against stored state and applied and logged in one transaction by
+  `applyProjectOps`, whether they come from a library route or the socket
+  (edits, undo, redo). Before this, the socket refused definition ops and the
+  definition editor's changes never reached the database. Definition ops gained
+  `definition.add` / `definition.remove` (the last row only; tables stay dense).
+- **Previews before broadcast.** The model, texture atlas and sprite sheet
+  previews are rebuilt in `ctx.beforeBroadcast`, before the ops go out, so a
+  peer that refetches on `op.applied` gets the new ones.
+- **OBJ.** One unit is one tile; OBJ = (-x, -y, z), the editor's half-turn,
+  which keeps orientation, so a counter-clockwise face shows its front fill.
+  Back-only faces are written reversed and two-sided faces with different fills
+  twice; all 408 shipped models draw identically after a round trip, though not
+  byte-identically -- the `.ob3` download is.
+- **Client limits (204).** Item sprites 48x32, at most 1000 (450 shipped);
+  textures 64 or 128 square, about 780 slots; NPC sprites share 2000 sprite
+  slots with 62 shipped names, so about a dozen more full sets fit. Sprites hold
+  254 colours plus the transparency key; item sprites share one palette per
+  file of 30.

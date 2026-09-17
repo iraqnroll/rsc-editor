@@ -1382,3 +1382,132 @@ input[type="color"] {
 .access__actions {
   text-align: right;
 }
+
+/* Assets screen: the project's models, textures and sprites. */
+.modal.modal--assets {
+  width: min(1180px, calc(100vw - 32px));
+  height: calc(100vh - 64px);
+  max-height: none;
+  display: flex;
+  flex-direction: column;
+}
+.assets__body {
+  overflow: auto;
+  padding: 0 12px 16px;
+}
+.assets__intro {
+  margin: 8px 0 0;
+}
+.assets__notice {
+  margin: 8px 12px 0;
+}
+.assets__heading {
+  margin: 14px 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg-1);
+}
+.assets__bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 0;
+}
+.assets__inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+  color: var(--fg-2);
+}
+.assets__bar input[type="search"],
+.assets__bar input[type="text"] {
+  width: 180px;
+}
+.assets__bar select {
+  width: auto;
+}
+.assets__inline input[type="number"] {
+  width: 64px;
+}
+.assets__table-wrap {
+  max-height: 260px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+.assets__table td {
+  vertical-align: middle;
+}
+.assets__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 8px;
+}
+.assets__grid--wide {
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+}
+.assets__grid--small {
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+}
+.asset {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 8px 6px;
+  background: var(--bg-2, var(--bg-1));
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  min-width: 0;
+}
+.asset__thumb {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background:
+    repeating-conic-gradient(#20242c 0% 25%, #171a20 0% 50%) 0 0 / 12px 12px;
+  border-radius: 3px;
+  flex: none;
+}
+.asset__thumb img {
+  image-rendering: pixelated;
+}
+.asset__thumb--missing {
+  outline: 1px dashed var(--danger);
+}
+.asset__crop {
+  display: block;
+  background-repeat: no-repeat;
+  background-position: 0 0;
+  image-rendering: pixelated;
+}
+.asset__name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+}
+.asset__meta,
+.asset__uses {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--fg-2);
+}
+.asset__uses--none {
+  color: var(--fg-3, var(--fg-2));
+  font-style: italic;
+}
+.asset__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 3px;
+  margin-top: 3px;
+}
