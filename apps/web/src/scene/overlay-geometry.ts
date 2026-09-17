@@ -248,3 +248,89 @@ export function sectorTintTransform(sx: number, sy: number): {
     size: SECTOR_WIDTH * TILE_SIZE
   };
 }
+
+/**
+ * Markers for server-side placements, which the client never draws from the
+ * map: a pin for an NPC spawn, a ground square for an item, and a standing
+ * frame on the edge a door occupies. All line pairs, like everything here.
+ */
+export interface EntityMarker {
+  kind: 'npc' | 'item' | 'door';
+  wx: number;
+  wy: number;
+  direction?: number;
+  height?: number;
+}
+
+const PIN_HEIGHT = 320;
+const PIN_HEAD = 40;
+const ITEM_HALF = 36;
+
+export function buildEntityMarkers(heights: WorldHeights, markers: readonly EntityMarker[]): Float32Array {
+  const out: number[] = [];
+  const seg = (ax: number, ay: number, az: number, bx: number, by: number, bz: number) => {
+    out.push(ax, ay, az, bx, by, bz);
+  };
+
+  for (const m of markers) {
+    if (m.kind === 'door') {
+      // The same corners `World#method422` stands a wall between.
+      const [a, b] =
+        m.direction === 1
+          ? [[m.wx, m.wy], [m.wx, m.wy + 1]]
+          : m.direction === 2
+            ? [[m.wx, m.wy], [m.wx + 1, m.wy + 1]]
+            : m.direction === 3
+              ? [[m.wx + 1, m.wy], [m.wx, m.wy + 1]]
+              : [[m.wx, m.wy], [m.wx + 1, m.wy]];
+      const h = m.height ?? 192;
+      const ax = tileRenderX(a![0]!);
+      const az = a![1]! * TILE_SIZE;
+      const bx = tileRenderX(b![0]!);
+      const bz = b![1]! * TILE_SIZE;
+      const ay = heights.corner(a![0]!, a![1]!) + OVERLAY_LIFT;
+      const by = heights.corner(b![0]!, b![1]!) + OVERLAY_LIFT;
+      seg(ax, ay, az, bx, by, bz);
+      seg(ax, ay + h, az, bx, by + h, bz);
+      seg(ax, ay, az, ax, ay + h, az);
+      seg(bx, by, bz, bx, by + h, bz);
+      // a cross, so a door reads as a thing and not as a thin frame
+      seg(ax, ay, az, bx, by + h, bz);
+      seg(bx, by, bz, ax, ay + h, az);
+      continue;
+    }
+
+    const x = tileRenderX(m.wx + 0.5);
+    const z = (m.wy + 0.5) * TILE_SIZE;
+    const y = heights.at(x, z) + OVERLAY_LIFT;
+
+    if (m.kind === 'npc') {
+      seg(x, y, z, x, y + PIN_HEIGHT, z);
+      const top = y + PIN_HEIGHT;
+      // a diamond head
+      seg(x - PIN_HEAD, top, z, x, top + PIN_HEAD, z);
+      seg(x, top + PIN_HEAD, z, x + PIN_HEAD, top, z);
+      seg(x + PIN_HEAD, top, z, x, top - PIN_HEAD, z);
+      seg(x, top - PIN_HEAD, z, x - PIN_HEAD, top, z);
+      seg(x, top, z - PIN_HEAD, x, top + PIN_HEAD, z);
+      seg(x, top + PIN_HEAD, z, x, top, z + PIN_HEAD);
+      seg(x, top, z + PIN_HEAD, x, top - PIN_HEAD, z);
+      seg(x, top - PIN_HEAD, z, x, top, z - PIN_HEAD);
+    } else {
+      const lift = y + ITEM_HALF / 2;
+      const c = [
+        [x - ITEM_HALF, z - ITEM_HALF],
+        [x + ITEM_HALF, z - ITEM_HALF],
+        [x + ITEM_HALF, z + ITEM_HALF],
+        [x - ITEM_HALF, z + ITEM_HALF]
+      ];
+      for (let k = 0; k < 4; k++) {
+        const p = c[k]!;
+        const q = c[(k + 1) % 4]!;
+        seg(p[0]!, lift, p[1]!, q[0]!, lift, q[1]!);
+        seg(p[0]!, lift, p[1]!, x, lift + ITEM_HALF * 2, z);
+      }
+    }
+  }
+  return new Float32Array(out);
+}

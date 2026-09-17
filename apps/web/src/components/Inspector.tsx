@@ -10,6 +10,7 @@ import { isSpawnTile } from '../data/spawn.js';
 import { readDiagonalLane } from '../ops/builders.js';
 import { DefinitionEditor } from '../defs/DefinitionEditor.js';
 import { HistoryPanel } from './HistoryPanel.js';
+import { EntitiesOnTile, SelectedEntity } from './EntityInspector.js';
 import { Readout, Section } from './controls.js';
 import { terrainBand, terrainColour } from '../data/terrain-palette.js';
 
@@ -35,7 +36,9 @@ export function Inspector() {
 
       {tab === 'inspect' && (
         <div className="pane__scroll">
+          <SelectedEntity />
           <TileInspector />
+          <EntitiesOnTile />
           <SectorInspector />
         </div>
       )}

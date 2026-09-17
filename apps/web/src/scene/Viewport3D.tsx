@@ -71,6 +71,7 @@ import {
 import { PlaneSectorCache, planeSectorCoords } from './plane-sectors.js';
 import {
   buildBrushOutline,
+  buildEntityMarkers,
   buildRectOutline,
   buildSectorBorder,
   buildTileGrid,
@@ -146,6 +147,9 @@ const MESH_BUDGET = 1;
  * on its own.
  */
 const GHOST_OPACITY = 0.72;
+
+/** Server-side placement markers: NPC pins, item squares, door frames. */
+const ENTITY_COLOURS = { npc: '#ffd84a', item: '#4de1ff', door: '#ff8a3d' } as const;
 
 /** How far the pointer must travel after a press before painting follows it. */
 const PAINT_DRAG_THRESHOLD_PX = 5;
@@ -780,7 +784,8 @@ function Overlays(props: SceneProps) {
     showSectorBorders,
     showLockTint,
     painting,
-    version
+    version,
+    entities
   } = props;
 
   // One height reader per render. It memoises a LandscapeView per sector, so
@@ -826,6 +831,30 @@ function Overlays(props: SceneProps) {
       buildBrushOutline(heights, hoverTile.wx, hoverTile.wy, brushRadius, brushShape)
     );
   }, [hoverTile, plane, brushRadius, brushShape, heights]);
+
+  // Server-side placements: one line buffer per kind, plus the selection on
+  // top of them. Only the plane being edited, like the other overlays.
+  const entityGeometries = useMemo(() => {
+    const onPlane = (entities ?? []).filter((e) => e.plane === plane);
+    const byKind = (kind: 'npc' | 'item' | 'door') =>
+      lineGeometry(buildEntityMarkers(heights, onPlane.filter((e) => e.kind === kind && !e.selected)));
+    const selected = onPlane.filter((e) => e.selected);
+    const wander = selected.find((e) => e.wander)?.wander;
+    return {
+      npc: byKind('npc'),
+      item: byKind('item'),
+      door: byKind('door'),
+      selected: lineGeometry(buildEntityMarkers(heights, selected)),
+      wander: wander
+        ? lineGeometry(buildRectOutline(heights, wander.x0, wander.y0, wander.x1, wander.y1))
+        : null
+    };
+  }, [entities, plane, heights]);
+  useEffect(() => {
+    return () => {
+      for (const g of Object.values(entityGeometries)) g?.dispose();
+    };
+  }, [entityGeometries]);
 
   useDisposeOnChange(gridGeometry);
   useDisposeOnChange(selectionGeometry);
@@ -888,6 +917,20 @@ function Overlays(props: SceneProps) {
       {selectionGeometry && (
         <lineSegments geometry={selectionGeometry}>
           <lineBasicMaterial color="#4c9aff" toneMapped={false} />
+        </lineSegments>
+      )}
+
+      {(['npc', 'item', 'door'] as const).map((kind) => (
+        <lineSegments key={`entities-${kind}`} geometry={entityGeometries[kind]}>
+          <lineBasicMaterial color={ENTITY_COLOURS[kind]} toneMapped={false} />
+        </lineSegments>
+      ))}
+      <lineSegments geometry={entityGeometries.selected}>
+        <lineBasicMaterial color="#ffffff" toneMapped={false} depthTest={false} />
+      </lineSegments>
+      {entityGeometries.wander && (
+        <lineSegments geometry={entityGeometries.wander}>
+          <lineBasicMaterial color={ENTITY_COLOURS.npc} toneMapped={false} />
         </lineSegments>
       )}
 

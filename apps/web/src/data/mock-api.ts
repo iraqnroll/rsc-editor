@@ -607,7 +607,7 @@ export function createMockApi(): EditorApi {
     async submitOps(ops: Op[]): Promise<OpSubmitResult> {
       const unheld = ops
         .filter((op) => {
-          if (op.type !== 'sector') return false;
+          if (op.type === 'definition') return false;
           const lock = locks.get(sectorKey(op.sector));
           return !lock || lock.userId !== YOU.userId;
         })

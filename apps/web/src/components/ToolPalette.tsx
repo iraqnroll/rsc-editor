@@ -77,6 +77,10 @@ function ToolOptions({ tool }: { tool: ToolId }) {
       return <SceneryOptions />;
     case 'region':
       return <RegionOptions />;
+    case 'npc':
+      return <NpcOptions />;
+    case 'item':
+      return <ItemOptions />;
   }
 }
 
@@ -259,6 +263,18 @@ function WallOptions() {
         onChange={(edge) => update('wall', { edge })}
       />
       <Toggle label="Erase mode" checked={s.erase} onChange={(erase) => update('wall', { erase })} />
+      <Toggle
+        label="Server door (spawned by the game server)"
+        checked={s.door}
+        onChange={(door) => update('wall', { door })}
+      />
+      {s.door && (
+        <p className="hint">
+          Places a door entity on the edge instead of writing the map. Pair it with a hidden
+          placeholder wall (Doorframe) so the client has something under it. Clicking an existing
+          door selects it; <span className="kbd">Alt</span> removes it.
+        </p>
+      )}
       <DefPicker
         kind="wallObjects"
         label="Wall object"
@@ -481,6 +497,69 @@ function OverlayToggles() {
         checked={showLockTint}
         onChange={() => toggle('showLockTint')}
       />
+    </Section>
+  );
+}
+
+function NpcOptions() {
+  const s = useEditor((st) => st.toolSettings.npc);
+  const update = useEditor((st) => st.updateToolSettings);
+  return (
+    <Section title="NPCs">
+      <Segmented
+        label="Mode"
+        value={s.mode}
+        options={['place', 'remove']}
+        onChange={(mode) => update('npc', { mode })}
+      />
+      <DefPicker kind="npcs" label="NPC" value={s.npcId} onChange={(npcId) => update('npc', { npcId })} />
+      <Slider
+        label="Wander radius"
+        value={s.wanderRadius}
+        min={0}
+        max={32}
+        suffix=" tiles"
+        onChange={(wanderRadius) => update('npc', { wanderRadius })}
+      />
+      <p className="hint">
+        Click to place a spawn. Clicking an existing one selects it, so its wander box can be
+        edited in the inspector; <span className="kbd">Shift</span> places another on the same
+        tile, <span className="kbd">Alt</span> removes. Spawns are the game server&apos;s, exported
+        as <code>npcs.json</code>.
+      </p>
+    </Section>
+  );
+}
+
+function ItemOptions() {
+  const s = useEditor((st) => st.toolSettings.item);
+  const update = useEditor((st) => st.updateToolSettings);
+  return (
+    <Section title="Ground items">
+      <Segmented
+        label="Mode"
+        value={s.mode}
+        options={['place', 'remove']}
+        onChange={(mode) => update('item', { mode })}
+      />
+      <DefPicker kind="items" label="Item" value={s.itemId} onChange={(itemId) => update('item', { itemId })} />
+      <NumberField
+        label="Amount"
+        value={s.amount}
+        min={1}
+        onChange={(amount) => update('item', { amount: Math.max(1, amount) })}
+      />
+      <NumberField
+        label="Respawn (seconds)"
+        value={s.respawnSeconds}
+        min={0}
+        onChange={(respawnSeconds) => update('item', { respawnSeconds: Math.max(0, respawnSeconds) })}
+      />
+      <p className="hint">
+        Click to place; clicking an existing item selects it, <span className="kbd">Shift</span>{' '}
+        stacks another, <span className="kbd">Alt</span> removes. Exported as{' '}
+        <code>items.json</code>.
+      </p>
     </Section>
   );
 }

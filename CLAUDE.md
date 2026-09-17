@@ -124,5 +124,9 @@ Not yet verified anywhere: the Discord OAuth **callback** (needs a real Discord
 app), the definition forms in a browser, a real-cache project in the e2e
 suite (it builds an empty one), and an exported cache loaded in a real client.
 
+**NPCs, ground items and doors** are per-sector entities beside the lanes
+(DECISIONS §19): NPC and Item tools, a server-door option on Walls, imported with
+`--spawns`, exported as the game server's three lists.
+
 **The `.hei` format only holds even elevation and colour values** (DECISIONS
 §15). Anything that writes those lanes must go through `clampLane`.

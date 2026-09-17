@@ -80,7 +80,10 @@ bash /opt/rsc-editor/deploy/import.sh \
 ```
 
 `--scenery` is optional (the placement list is not part of the cache; see
-`docs/DECISIONS.md` §12). `bash deploy/import.sh --help` lists the rest.
+`docs/DECISIONS.md` §12). So is `--spawns <dir>`, which places the game
+server's NPCs, ground items and doors from an rsc-data `locations/` directory
+(§19); with it, an export also carries `npcs.json`, `items.json` and
+`wall-objects.json`. `bash deploy/import.sh --help` lists the rest.
 Admins see every project, so no `--owner` is needed.
 
 ## 5. Let people in

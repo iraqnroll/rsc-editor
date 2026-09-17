@@ -102,7 +102,7 @@ test('every editing tool writes an op that a peer receives', async ({ browser, b
   await a.getByRole('button', { name: 'Claim', exact: true }).click();
   await expect(status(a).getByText('you hold this sector')).toBeVisible();
 
-  for (const tool of ['Elevation', 'Paint', 'Walls', 'Roof', 'Scenery', 'Region']) {
+  for (const tool of ['Elevation', 'Paint', 'Walls', 'Roof', 'Scenery', 'Region', 'NPCs', 'Items']) {
     await test.step(tool, async () => {
       const head = await seq(a);
       await a.getByRole('button', { name: new RegExp(`${tool}$`) }).first().click();
@@ -143,6 +143,39 @@ test('a shaky click edits once, and a drag edits each tile once', async ({ brows
   await a.mouse.up();
   await expect.poll(() => seq(a)).toBeGreaterThan(head);
   expect(await settledSeq(a)).toBe(head + 1);
+});
+
+test('an NPC one editor places, the other can select and edit', async ({ browser, baseURL }) => {
+  const { alice, bob } = await setUp(baseURL!);
+  const a = await openEditor(browser, alice);
+  const b = await openEditor(browser, bob);
+  await a.getByRole('button', { name: 'Claim', exact: true }).click();
+  await expect(status(a).getByText('you hold this sector')).toBeVisible();
+
+  const click = async (page: Page) => {
+    const box = (await page.locator('.pane--center canvas').first().boundingBox())!;
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  };
+
+  await a.getByRole('button', { name: /NPCs$/ }).first().click();
+  const head = await settledSeq(a);
+  await click(a);
+  await expect.poll(() => seq(b)).toBe(head + 1);
+
+  // Bob, read-only, can still select it and see what it is...
+  await b.getByRole('button', { name: /Select$/ }).first().click();
+  await click(b);
+  await expect(b.getByText('Selected npc')).toBeVisible();
+
+  // ...and Alice can edit it; Bob's inspector follows.
+  await click(a); // clicking an existing spawn selects it
+  await expect(a.getByText('Selected npc')).toBeVisible();
+  await a.getByRole('spinbutton', { name: 'Wander max x' }).fill('999');
+  await a.getByRole('spinbutton', { name: 'Wander max x' }).press('Tab');
+  await expect(b.getByRole('spinbutton', { name: 'Wander max x' })).toHaveValue('999');
+
+  await a.getByRole('button', { name: 'Delete', exact: true }).click();
+  await expect(b.getByText('Selected npc')).toHaveCount(0);
 });
 
 test('two editors share a sector through locks, live ops and undo', async ({ browser, baseURL }) => {

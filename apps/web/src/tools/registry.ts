@@ -22,7 +22,9 @@ export const TOOL_IDS = [
   'wall',
   'roof',
   'scenery',
-  'region'
+  'region',
+  'npc',
+  'item'
 ] as const;
 export type ToolId = (typeof TOOL_IDS)[number];
 
@@ -93,6 +95,22 @@ export const TOOLS: readonly ToolMeta[] = [
     hotkey: '7',
     blurb: 'Rectangle select, fill, copy and paste.',
     mutates: true
+  },
+  {
+    id: 'npc',
+    label: 'NPCs',
+    glyph: '☺',
+    hotkey: '8',
+    blurb: 'Place and remove NPC spawns, with the box they wander in. Server-side.',
+    mutates: true
+  },
+  {
+    id: 'item',
+    label: 'Items',
+    glyph: '◆',
+    hotkey: '9',
+    blurb: 'Place and remove ground items and their respawn time. Server-side.',
+    mutates: true
   }
 ];
 
@@ -122,6 +140,11 @@ export interface WallSettings {
   edge: WallEdge;
   wallId: number;
   erase: boolean;
+  /**
+   * Place a door the game SERVER spawns, rather than writing the wall lane.
+   * Doors in RSC are server entities over a hidden placeholder in the map.
+   */
+  door: boolean;
 }
 
 export interface RoofSettings {
@@ -135,6 +158,21 @@ export interface ScenerySettings {
   mode: 'place' | 'rotate' | 'remove';
   objectId: number;
   direction: number;
+}
+
+export interface NpcSettings {
+  /** place, or remove every NPC on the clicked tile */
+  mode: 'place' | 'remove';
+  npcId: number;
+  /** half-width of the wander box a new spawn gets, in tiles */
+  wanderRadius: number;
+}
+
+export interface ItemSettings {
+  mode: 'place' | 'remove';
+  itemId: number;
+  amount: number;
+  respawnSeconds: number;
 }
 
 export interface RegionSettings {
@@ -152,14 +190,18 @@ export interface ToolSettings {
   roof: RoofSettings;
   scenery: ScenerySettings;
   region: RegionSettings;
+  npc: NpcSettings;
+  item: ItemSettings;
 }
 
 export const DEFAULT_TOOL_SETTINGS: ToolSettings = {
   elevation: { mode: 'raise', radius: 3, falloff: 'smooth', shape: 'circle', strength: 0.5 },
   paint: { target: 'colour', colourIndex: 80, overlayIndex: 1, radius: 1, shape: 'circle' },
-  wall: { edge: 'horizontal', wallId: 0, erase: false },
+  wall: { edge: 'horizontal', wallId: 0, erase: false, door: false },
   roof: { roofId: 1, radius: 0, shape: 'square', erase: false },
   scenery: { mode: 'place', objectId: 0, direction: 0 },
+  npc: { mode: 'place', npcId: 0, wanderRadius: 5 },
+  item: { mode: 'place', itemId: 0, amount: 1, respawnSeconds: 60 },
   region: {
     mode: 'select',
     fillLane: 'colour',

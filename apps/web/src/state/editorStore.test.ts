@@ -8,6 +8,7 @@ import { SECTOR_WIDTH, emptySectorBuffers, sectorKey } from '@rsc-editor/schema'
 import type { Lock, SectorCoord } from '@rsc-editor/schema';
 import { useEditor } from './editorStore.js';
 import { buildElevationOp } from '../ops/builders.js';
+import { buildEntityAdd, entitiesAt } from '../ops/entities.js';
 
 const ME = '00000000-0000-4000-8000-000000000001';
 const THEM = '00000000-0000-4000-8000-000000000002';
@@ -293,3 +294,47 @@ describe('choosing a project', () => {
     expect(state.sectors).toEqual({});
   });
 });
+
+describe('entities', () => {
+  beforeEach(() => {
+    seed({ [sectorKey(A)]: lock(A, ME, 'you') });
+    useEditor.setState({
+      entities: {},
+      selectedEntity: null,
+      // earlier tests leave a narrower stub installed
+      api: { submitOps: async () => ({ ok: true, seq: 1 }) } as never
+    });
+  });
+
+  const npc = (tile: { plane: number; wx: number; wy: number }) =>
+    buildEntityAdd(
+      tile,
+      (i) => ({ kind: 'npc', i, npcId: 1, wander: { minX: 0, maxX: 1, minY: 0, maxY: 1 } }),
+      () => true
+    );
+
+  it('places, undoes and redoes a spawn like any other edit', () => {
+    const tile = { plane: 0, wx: 50 * 48 + 2, wy: 50 * 48 + 2 };
+    useEditor.getState().commit(npc(tile), 'Place NPC');
+    expect(entitiesAt(useEditor.getState().entities, tile)).toHaveLength(1);
+    expect(useEditor.getState().undoStack.at(-1)?.label).toBe('Place NPC');
+
+    const [placed] = entitiesAt(useEditor.getState().entities, tile);
+    useEditor.getState().selectEntity({ sector: placed!.sector, id: placed!.id });
+    useEditor.getState().undo();
+    expect(entitiesAt(useEditor.getState().entities, tile)).toEqual([]);
+    // a removed entity cannot stay selected
+    expect(useEditor.getState().selectedEntity).toBeNull();
+
+    useEditor.getState().redo();
+    expect(entitiesAt(useEditor.getState().entities, tile)).toHaveLength(1);
+  });
+
+  it('holds back a placement in a sector you do not hold', () => {
+    const tile = { plane: 0, wx: 51 * 48 + 2, wy: 50 * 48 + 2 };
+    useEditor.getState().commit(npc(tile));
+    expect(entitiesAt(useEditor.getState().entities, tile)).toEqual([]);
+    expect(useEditor.getState().notice?.kind).toBe('lock-required');
+  });
+});
+

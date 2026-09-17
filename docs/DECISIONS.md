@@ -767,3 +767,38 @@ disguising as a visible wall.
 
 Walls placed before this fix are stored one lower than intended. They cannot
 be told apart from imported walls by value, so they are not migrated.
+
+## 19. NPCs, ground items and doors are entities beside the lanes
+
+RuneScape Classic's server, not its cache, places NPCs, ground items and
+doors: rsc-server reads rsc-data's `locations/npcs.json`, `items.json` and
+`wall-objects.json`. They are therefore stored beside the sector lanes, as
+`EntityData` in `packages/schema/src/entities.ts` (schema change approved by
+the project owner, CLAUDE.md rule 4), not squeezed into a lane.
+
+- **Addressed like a lane write.** An entity is a sector plus a tile index,
+  so it belongs to exactly one sector and that sector's lock covers it (rule 6).
+  An NPC's wander box is a range in game coordinates and may reach past its
+  sector; it bounds movement and writes nothing. Four shipped NPCs spawn outside
+  their own box, so the box is not required to contain the spawn.
+- **One op, both sides.** `entity.add` / `update` / `remove` carry `from` and
+  `to`; undo swaps them (and add <-> remove). The hub applies an entity op only
+  if the stored entity is exactly `from`, in the same sector, compared with
+  `sameEntityData` because Postgres `jsonb` does not keep key order.
+- **Storage.** An `entities` table holds current state (migration 0003); the op
+  log is the history, and snapshot export rewinds entities with everything else.
+  A sector's entities travel as a `sector.entities` JSON message after its
+  binary frame.
+- **Import.** `import-cache --spawns <locations dir>` is opt-in, like
+  `--scenery`, and places onto whatever sectors the project has once the
+  landscape is written -- with `--no-landscape`, the ones made in the editor.
+  Ids are derived from project, list and row, so a re-import updates in place.
+  All 5514 shipped rows land on the 204 world.
+- **Export.** When a project has any entities, the export writes all three
+  lists in rsc-data's layout (amount 1 omitted, one row per line) and reads them
+  back as part of the gate. A project with none writes none, so loading its
+  export leaves the server's own lists alone. A few shipped NPC rows order their
+  keys differently from the rest; values, not key order, are compared.
+- **Doors** are drawn as a frame on their edge. The map under a real door is a
+  hidden placeholder wall (section 18); the Walls tool's "server door" option
+  places the entity, and the plain tool the placeholder.

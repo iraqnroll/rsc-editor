@@ -9,7 +9,7 @@
  */
 
 import { parseSectorKey } from '@rsc-editor/schema';
-import type { Lane } from '@rsc-editor/schema';
+import type { Lane, SectorCoord } from '@rsc-editor/schema';
 import {
   buildElevationOp,
   buildPaintOp,
@@ -26,6 +26,13 @@ import {
   type BuildResult
 } from '../ops/builders.js';
 import type { WorldTile } from '../ops/coords.js';
+import {
+  DOOR_DIRECTION_BY_EDGE,
+  buildEntityAdd,
+  buildEntityRemove,
+  entitiesAt,
+  wanderAround
+} from '../ops/entities.js';
 import { useEditor } from './editorStore.js';
 
 export interface GestureModifiers {
@@ -40,14 +47,20 @@ export function applyGesture(tile: WorldTile, mods: GestureModifiers): void {
   if (!mods.continued) useEditor.getState().startStroke();
   const state = useEditor.getState();
   const read = state.readSector;
+  const loaded = (coord: SectorCoord) => read(coord) !== undefined;
   const s = state.toolSettings;
 
   switch (state.activeTool) {
     case 'select': {
-      // Read-only: selecting a tile selects its sector.
+      // Read-only: selecting a tile selects its sector, and whatever NPC, item
+      // or door stands on it (or nothing, which clears the selection).
       const sx = Math.floor(tile.wx / 48);
       const sy = Math.floor(tile.wy / 48);
       state.setActiveSector({ plane: tile.plane, x: sx, y: sy });
+      if (!mods.continued) {
+        const first = entitiesAt(state.entities, tile)[0];
+        state.selectEntity(first ? { sector: first.sector, id: first.id } : null);
+      }
       return;
     }
 
@@ -81,7 +94,69 @@ export function applyGesture(tile: WorldTile, mods: GestureModifiers): void {
 
     case 'wall': {
       const erase = s.wall.erase || mods.alt;
+      if (s.wall.door) {
+        // Server doors: one per edge. Dragging would stack a door on every
+        // tile crossed, which is almost never meant, so a door is a click.
+        if (mods.continued) return;
+        const direction = DOOR_DIRECTION_BY_EDGE[s.wall.edge];
+        const here = entitiesAt(state.entities, tile, 'door').filter(
+          (e) => e.data.kind === 'door' && e.data.direction === direction
+        );
+        if (erase) {
+          state.commit(buildEntityRemove(here), 'Remove door');
+        } else if (here.length > 0) {
+          state.selectEntity({ sector: here[0]!.sector, id: here[0]!.id });
+        } else {
+          state.commit(
+            buildEntityAdd(tile, (i) => ({ kind: 'door', i, wallId: s.wall.wallId, direction }), loaded),
+            'Place door'
+          );
+        }
+        return;
+      }
       state.commit(buildWallOp(tile, s.wall.edge, erase ? null : s.wall.wallId, read));
+      return;
+    }
+
+    case 'npc':
+    case 'item': {
+      if (mods.continued) return;
+      const kind = state.activeTool === 'npc' ? 'npc' : 'item';
+      const here = entitiesAt(state.entities, tile, kind);
+      const remove = mods.alt || s[state.activeTool].mode === 'remove';
+      if (remove) {
+        state.commit(buildEntityRemove(here), kind === 'npc' ? 'Remove NPC' : 'Remove item');
+        return;
+      }
+      // Clicking an existing one selects it for the inspector; shift places
+      // another on the same tile (the shipped lists do stack items).
+      if (here.length > 0 && !mods.shift) {
+        state.selectEntity({ sector: here[0]!.sector, id: here[0]!.id });
+        return;
+      }
+      if (kind === 'npc') {
+        const wander = wanderAround(tile, s.npc.wanderRadius);
+        if (!wander) return;
+        state.commit(
+          buildEntityAdd(tile, (i) => ({ kind: 'npc', i, npcId: s.npc.npcId, wander }), loaded),
+          'Place NPC'
+        );
+      } else {
+        state.commit(
+          buildEntityAdd(
+            tile,
+            (i) => ({
+              kind: 'item',
+              i,
+              itemId: s.item.itemId,
+              amount: Math.max(1, Math.floor(s.item.amount)),
+              respawnMs: Math.max(0, Math.round(s.item.respawnSeconds * 1000))
+            }),
+            loaded
+          ),
+          'Place item'
+        );
+      }
       return;
     }
 

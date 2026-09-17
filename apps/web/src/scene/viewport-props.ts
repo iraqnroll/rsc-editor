@@ -73,4 +73,25 @@ export interface ViewportProps {
    * rather than inventing fills.
    */
   config?: RscConfig | null;
+
+  /**
+   * NPC spawns, ground items and server doors to mark, in world tiles.
+   * ADDED for entity placement; optional like the rest.
+   */
+  entities?: ViewportEntity[];
+}
+
+export interface ViewportEntity {
+  id: string;
+  kind: 'npc' | 'item' | 'door';
+  plane: number;
+  wx: number;
+  wy: number;
+  /** doors: 0 horizontal, 1 vertical, 2 "/", 3 "\" */
+  direction?: number;
+  /** doors: the wall object's height, in render units */
+  height?: number;
+  selected: boolean;
+  /** NPCs: the wander box in world tiles, inclusive */
+  wander?: RegionRect;
 }

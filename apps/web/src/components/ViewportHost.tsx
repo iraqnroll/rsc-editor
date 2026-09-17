@@ -7,11 +7,13 @@
  */
 
 import { useCallback, useMemo } from 'react';
-import { sectorKey } from '@rsc-editor/schema';
+import { SECTOR_WIDTH, parseSectorKey, sectorKey } from '@rsc-editor/schema';
 import type { SectorCoord } from '@rsc-editor/schema';
 import { useEditor, lockStateFor } from '../state/editorStore.js';
 import { applyGesture } from '../state/gesture.js';
 import { Viewport, type ViewportLock, type ViewportSector } from '../scene/Viewport.js';
+import type { ViewportEntity } from '../scene/viewport-props.js';
+import { gameToWorldTile } from '../ops/entities.js';
 import { NoticeBanner } from './NoticeBanner.js';
 
 export function ViewportHost() {
@@ -33,6 +35,8 @@ export function ViewportHost() {
   const setSelection = useEditor((s) => s.setSelection);
   const setViewCentre = useEditor((s) => s.setViewCentre);
   const ensureSector = useEditor((s) => s.ensureSector);
+  const entities = useEditor((s) => s.entities);
+  const selectedEntity = useEditor((s) => s.selectedEntity);
 
   const viewportSectors = useMemo(() => {
     const out: Record<string, ViewportSector> = {};
@@ -41,6 +45,30 @@ export function ViewportHost() {
     }
     return out;
   }, [sectors]);
+
+  const viewportEntities = useMemo(() => {
+    const out: ViewportEntity[] = [];
+    for (const [key, inSector] of Object.entries(entities)) {
+      const sector = parseSectorKey(key);
+      for (const [id, data] of Object.entries(inSector)) {
+        const wx = sector.x * SECTOR_WIDTH + Math.floor(data.i / SECTOR_WIDTH);
+        const wy = sector.y * SECTOR_WIDTH + (data.i % SECTOR_WIDTH);
+        const selected = selectedEntity?.id === id;
+        const entity: ViewportEntity = { id, kind: data.kind, plane: sector.plane, wx, wy, selected };
+        if (data.kind === 'door') {
+          entity.direction = data.direction;
+          entity.height = config?.wallObjects[data.wallId]?.height ?? 192;
+        }
+        if (data.kind === 'npc' && selected) {
+          const a = gameToWorldTile(data.wander.minX, data.wander.minY, sector.plane);
+          const b = gameToWorldTile(data.wander.maxX, data.wander.maxY, sector.plane);
+          entity.wander = { plane: sector.plane, x0: a.wx, y0: a.wy, x1: b.wx, y1: b.wy };
+        }
+        out.push(entity);
+      }
+    }
+    return out;
+  }, [entities, selectedEntity, config]);
 
   const lockFor = useCallback(
     (coord: SectorCoord): ViewportLock => {
@@ -80,6 +108,7 @@ export function ViewportHost() {
         showGrid={showGrid}
         showSectorBorders={showSectorBorders}
         showLockTint={showLockTint}
+        entities={viewportEntities}
         painting={activeTool !== 'select'}
         regionDrag={regionDrag}
         onPick={(tile, mods) => applyGesture(tile, mods)}
