@@ -22,6 +22,14 @@ import {
 import { getDefinition, putDefinition, putDefinitionIfVersion } from './definitions.js';
 import { createSession, resolveSession } from './sessions.js';
 import { appendOps, appendOpsInTx, headSeq, opsSince } from './ops.js';
+import {
+  deleteEntity,
+  getEntity,
+  listProjectEntities,
+  listSectorEntities,
+  putEntities,
+  putEntity
+} from './entities.js';
 
 /**
  * Integration tests against a real Postgres.
@@ -286,6 +294,68 @@ describe.skipIf(!available)('database integration', () => {
   });
 
   /* ---------------------------------------------------------- the op log -- */
+
+  describe('entities', () => {
+    async function withSector(coord: SectorCoord) {
+      const { userId, projectId } = await freshProject();
+      const row = await putSector(db, {
+        projectId,
+        coord,
+        payload: new Uint8Array(
+          encodeSectorFrame({ coord, members: false, buffers: emptySectorBuffers() })
+        ),
+        members: false,
+        updatedBy: userId
+      });
+      return { userId, projectId, sectorId: row.id };
+    }
+
+    it('stores, updates, lists with coordinates, and deletes', async () => {
+      const coord = { plane: 0, x: 50, y: 50 };
+      const { userId, projectId, sectorId } = await withSector(coord);
+      const id = randomUUID();
+      await putEntity(db, {
+        id,
+        projectId,
+        sectorId,
+        data: { kind: 'item', i: 5, itemId: 10, amount: 1, respawnMs: 5000 },
+        updatedBy: userId
+      });
+      await putEntity(db, {
+        id,
+        projectId,
+        sectorId,
+        data: { kind: 'item', i: 5, itemId: 10, amount: 3, respawnMs: 5000 },
+        updatedBy: userId
+      });
+
+      expect((await getEntity(db, projectId, id))?.data).toMatchObject({ amount: 3 });
+      expect(await listSectorEntities(db, sectorId)).toHaveLength(1);
+      expect(await listProjectEntities(db, projectId, ['item'])).toEqual([
+        { id, sector: coord, data: { kind: 'item', i: 5, itemId: 10, amount: 3, respawnMs: 5000 } }
+      ]);
+      expect(await listProjectEntities(db, projectId, ['npc'])).toEqual([]);
+
+      await deleteEntity(db, projectId, id);
+      expect(await getEntity(db, projectId, id)).toBeUndefined();
+    });
+
+    it('bulk-upserts without duplicating an id', async () => {
+      const { userId, projectId, sectorId } = await withSector({ plane: 0, x: 51, y: 50 });
+      const rows = Array.from({ length: 7000 }, (_, n) => ({
+        id: randomUUID(),
+        projectId,
+        sectorId,
+        data: { kind: 'door' as const, i: n % 2304, wallId: 1, direction: n % 4 },
+        updatedBy: userId
+      }));
+      await putEntities(db, rows);
+      await putEntities(db, rows.slice(0, 10).map((r) => ({ ...r, data: { ...r.data, wallId: 2 } })));
+      const listed = await listProjectEntities(db, projectId);
+      expect(listed).toHaveLength(7000);
+      expect(listed.filter((e) => e.data.kind === 'door' && e.data.wallId === 2)).toHaveLength(10);
+    });
+  });
 
   describe('op log', () => {
     it('assigns contiguous seqs and replays them in order', async () => {

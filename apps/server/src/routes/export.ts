@@ -5,7 +5,13 @@ import {
   loadConfig,
   type LoadedSector
 } from '@rsc-editor/cache';
-import { getProject, getSnapshot, listDefinitions, opsSince } from '@rsc-editor/db';
+import {
+  getProject,
+  getSnapshot,
+  listDefinitions,
+  listProjectEntities,
+  opsSince
+} from '@rsc-editor/db';
 import {
   configSchema,
   decodeSectorFrame,
@@ -83,7 +89,8 @@ export async function registerExportRoutes(
         if (snapshot) {
           const later = await opsAfter(ctx, projectId, snapshot.seq);
           const byKey = new Map(sectors.map((s) => [sectorKey(s.coord), s]));
-          const problems = rewind(byKey, config, later);
+          const placed = await listProjectEntities(ctx.db, projectId);
+          const problems = rewind(byKey, config, later, new Map(placed.map((e) => [e.id, e])));
           if (problems.length > 0) {
             throw new ExportRefused([
               `the log does not rewind cleanly to "${snapshot.name}" (seq ${snapshot.seq}):`,

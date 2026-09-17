@@ -137,7 +137,8 @@ export function ProjectHistory() {
         {entries.length === 0 && <div className="empty">No edits in this project yet.</div>}
         {entries.map((entry) => {
           const op = entry.op;
-          const where = op.type === 'sector' ? sectorKey(op.sector) : `${op.defKind}[${op.index}]`;
+          const where =
+            op.type === 'definition' ? `${op.defKind}[${op.index}]` : sectorKey(op.sector);
           return (
             <button
               key={entry.seq}

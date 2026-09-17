@@ -57,6 +57,10 @@ import {
   getSector,
   headSeq as readHeadSeq,
   putSector,
+  deleteEntity,
+  getEntity,
+  listSectorEntities,
+  putEntity,
   roleAtLeast,
   type ProjectRole,
   type SectorRow
@@ -69,6 +73,8 @@ import {
   parseSectorKey,
   sectorKey,
   type ClientMessage,
+  type EntityData,
+  type EntityOp,
   type Op,
   type Presence,
   type SectorCoord,
@@ -255,8 +261,8 @@ export class Connection {
    * Reconnecting starts with an empty history -- see the note in
    * `onUndo`.
    */
-  private undoStack: SectorOp[] = [];
-  private redoStack: SectorOp[] = [];
+  private undoStack: EditOp[] = [];
+  private redoStack: EditOp[] = [];
 
   private queue: Promise<void> = Promise.resolve();
   private closed = false;
@@ -706,6 +712,14 @@ export class Connection {
       // tells it which coordinates exist.
       if (!row) continue;
       this.sendFrame(row.payload);
+      // Placements follow their frame, so a client never draws an entity on a
+      // sector it has not received.
+      const placed = await listSectorEntities(this.hub.ctx.db, row.id);
+      this.send({
+        t: 'sector.entities',
+        sector: coord,
+        entities: placed.map((e) => ({ id: e.id, sector: coord, data: e.data }))
+      });
     }
   }
 
@@ -727,9 +741,9 @@ export class Connection {
       return;
     }
 
-    const sectorOps: SectorOp[] = [];
+    const editOps: EditOp[] = [];
     for (const op of ops) {
-      if (op.type !== 'sector') {
+      if (op.type === 'definition') {
         // Definition ops are owned by PATCH /api/projects/:id/definitions/...,
         // which writes the definition row and appends its op in ONE
         // transaction. Accepting them here would break that atomicity, so the
@@ -737,16 +751,16 @@ export class Connection {
         this.reject(ids, 'invalid');
         return;
       }
-      sectorOps.push(op);
+      editOps.push(op);
     }
 
-    const outcome = await this.applyBatch(projectId, sectorOps);
+    const outcome = await this.applyBatch(projectId, editOps);
     if (!outcome.ok) {
       this.reject(ids, outcome.reason);
       return;
     }
 
-    this.undoStack.push(...sectorOps);
+    this.undoStack.push(...editOps);
     // A new edit invalidates the redo branch, as everywhere else.
     this.redoStack.length = 0;
   }
@@ -762,7 +776,7 @@ export class Connection {
    */
   private async applyBatch(
     projectId: string,
-    ops: SectorOp[]
+    ops: EditOp[]
   ): Promise<
     { ok: true; applied: SequencedOp[] } | { ok: false; reason: RejectReason }
   > {
@@ -791,13 +805,31 @@ export class Connection {
       frames.set(key, { row, frame: openFrame(row.payload) });
     }
 
-    // Validate then apply, op by op, into a scratch copy of each frame. Op by
-    // op rather than all-validate-then-all-apply so that a later op in the same
-    // batch legitimately sees the earlier one's result.
+    // Validate then apply, op by op, into a scratch copy of each frame (and of
+    // each entity). Op by op rather than all-validate-then-all-apply so that a
+    // later op in the same batch legitimately sees the earlier one's result.
+    const dirtyFrames = new Set<string>();
+    const scratch = new Map<string, { sectorId: string; data: EntityData } | null>();
     for (const op of ops) {
-      const entry = frames.get(sectorKey(op.sector));
+      const key = sectorKey(op.sector);
+      const entry = frames.get(key);
       if (!entry) return { ok: false, reason: 'no-lock' };
 
+      if (op.type === 'entity') {
+        if (!scratch.has(op.entity)) {
+          const row = await getEntity(db, projectId, op.entity);
+          scratch.set(op.entity, row ? { sectorId: row.sectorId, data: row.data } : null);
+        }
+        const current = scratch.get(op.entity) ?? null;
+        // The entity must be where, and what, the author saw. An add must be
+        // new; an entity never changes sector (that is a remove and an add).
+        const expected = op.from === null ? null : { sectorId: entry.row.id, data: op.from };
+        if (!sameEntityState(current, expected)) return { ok: false, reason: 'stale' };
+        scratch.set(op.entity, op.to === null ? null : { sectorId: entry.row.id, data: op.to });
+        continue;
+      }
+
+      dirtyFrames.add(key);
       for (const delta of op.changes) {
         const bad = checkDelta(entry.frame.buffers, delta);
         if (bad) return { ok: false, reason: bad };
@@ -823,7 +855,8 @@ export class Connection {
     // the log and is repaired by replaying `opsSince(version)`. The reverse
     // (state ahead of history) would not be repairable, which is why the write
     // goes second.
-    for (const entry of frames.values()) {
+    for (const [key, entry] of frames) {
+      if (!dirtyFrames.has(key)) continue;
       await putSector(db, {
         projectId,
         coord: {
@@ -835,6 +868,22 @@ export class Connection {
         members: entry.row.members,
         updatedBy: this.auth.user.id
       });
+    }
+
+    // Entities last, from the batch's final state. Skipped when `appendOps`
+    // dropped the whole batch as a resubmit: its effects are already stored.
+    if (applied.length > 0) {
+      for (const [id, state] of scratch) {
+        if (state === null) await deleteEntity(db, projectId, id);
+        else
+          await putEntity(db, {
+            id,
+            projectId,
+            sectorId: state.sectorId,
+            data: state.data,
+            updatedBy: this.auth.user.id
+          });
+      }
     }
 
     if (applied.length > 0) {
@@ -869,7 +918,7 @@ export class Connection {
       return;
     }
 
-    const inverse = invertSectorOp(last);
+    const inverse = invertEditOp(last);
     const outcome = await this.applyBatch(projectId, [inverse]);
     if (!outcome.ok) {
       this.undoStack.push(last);
@@ -890,7 +939,7 @@ export class Connection {
     }
 
     // The inverse of the inverse is the original edit, with a fresh op id.
-    const replay = invertSectorOp(undone);
+    const replay = invertEditOp(undone);
     const outcome = await this.applyBatch(projectId, [replay]);
     if (!outcome.ok) {
       this.redoStack.push(undone);
@@ -930,9 +979,35 @@ export class Connection {
  * per project, and reusing the id would make `appendOps` treat the undo as an
  * idempotent resubmit and drop it on the floor.
  */
-function invertSectorOp(op: SectorOp): SectorOp {
+function invertEditOp(op: EditOp): EditOp {
   const inverted = invert(op);
   /* c8 ignore next */
-  if (inverted.type !== 'sector') throw new Error('invert changed op type');
-  return { ...inverted, id: randomUUID() };
+  if (inverted.type !== op.type) throw new Error('invert changed op type');
+  return { ...(inverted as EditOp), id: randomUUID() };
+}
+
+/** What the socket accepts: map edits and placements. Definitions go through HTTP. */
+type EditOp = SectorOp | EntityOp;
+
+/**
+ * Entity state equality. `data` comes back from jsonb with its keys reordered,
+ * so it is compared field by field rather than as a string.
+ */
+function sameEntityState(
+  a: { sectorId: string; data: EntityData } | null,
+  b: { sectorId: string; data: EntityData } | null
+): boolean {
+  if (a === null || b === null) return a === b;
+  return a.sectorId === b.sectorId && canonical(a.data) === canonical(b.data);
+}
+
+function canonical(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
+  if (value && typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, v]) => v !== undefined)
+      .sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0));
+    return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonical(v)}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
 }

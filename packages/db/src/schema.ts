@@ -41,7 +41,7 @@ import {
   uniqueIndex,
   uuid
 } from 'drizzle-orm/pg-core';
-import type { DefinitionKind, Op } from '@rsc-editor/schema';
+import type { DefinitionKind, EntityData, EntityKind, Op } from '@rsc-editor/schema';
 
 /**
  * `bytea`. Drizzle has no built-in for it.
@@ -410,6 +410,44 @@ export const definitions = pgTable(
 );
 
 // ---------------------------------------------------------------------------
+// server-side placements
+// ---------------------------------------------------------------------------
+
+/**
+ * NPC spawns, ground items and doors: what the game server places, and the
+ * cache does not hold (`EntityData` in @rsc-editor/schema).
+ *
+ * One row per live entity; a removed entity's row is deleted, and its history
+ * is the op log. `id` is the entity id the ops refer to, so it is supplied by
+ * the client that created it rather than defaulted. The sector FK cascades: a
+ * sector that goes takes its placements with it.
+ */
+export const entities = pgTable(
+  'entities',
+  {
+    id: uuid('id').primaryKey(),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    sectorId: uuid('sector_id')
+      .notNull()
+      .references(() => sectors.id, { onDelete: 'cascade' }),
+    /** mirrors `data.kind`, for "every door in this project" without jsonb */
+    kind: text('kind').$type<EntityKind>().notNull(),
+    data: jsonb('data').$type<EntityData>().notNull(),
+    updatedAt: updatedAt(),
+    updatedBy: uuid('updated_by').references(() => users.id, {
+      onDelete: 'set null'
+    })
+  },
+  (t) => [
+    // subscribe streams a sector's entities; export streams a kind
+    index('entities_sector_idx').on(t.sectorId),
+    index('entities_project_kind_idx').on(t.projectId, t.kind)
+  ]
+);
+
+// ---------------------------------------------------------------------------
 // op log
 // ---------------------------------------------------------------------------
 
@@ -434,13 +472,13 @@ export const ops = pgTable(
     actorId: uuid('actor_id')
       .notNull()
       .references(() => users.id, { onDelete: 'restrict' }),
-    /** 'sector' | 'definition' -- the op discriminator. */
+    /** 'sector' | 'definition' | 'entity' -- the op discriminator. */
     opType: text('op_type').$type<Op['type']>().notNull(),
     /** the op's `kind`, e.g. 'elevation.raise'. History UI labels only. */
     opKind: text('op_kind').notNull(),
 
     // --- target, denormalised out of the payload so it can be indexed ---
-    /** set for sector ops; null for definition ops. */
+    /** set for sector and entity ops; null for definition ops. */
     targetSectorId: uuid('target_sector_id').references(() => sectors.id, {
       onDelete: 'set null'
     }),
@@ -526,6 +564,7 @@ export type SectorRow = typeof sectors.$inferSelect;
 export type NewSectorRow = typeof sectors.$inferInsert;
 export type SectorLock = typeof sectorLocks.$inferSelect;
 export type DefinitionRow = typeof definitions.$inferSelect;
+export type EntityRow = typeof entities.$inferSelect;
 export type OpRow = typeof ops.$inferSelect;
 export type NewOpRow = typeof ops.$inferInsert;
 export type Snapshot = typeof snapshots.$inferSelect;

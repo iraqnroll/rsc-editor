@@ -1,5 +1,5 @@
 import type { LoadedSector } from '@rsc-editor/cache';
-import { sectorKey, type RscConfig, type SequencedOp } from '@rsc-editor/schema';
+import { sectorKey, type Entity, type RscConfig, type SequencedOp } from '@rsc-editor/schema';
 
 /**
  * Current state -> the state at an earlier seq, by inverting the ops after it.
@@ -11,12 +11,14 @@ import { sectorKey, type RscConfig, type SequencedOp } from '@rsc-editor/schema'
  * a hand edit in the database -- and the rewound state would be a guess. Those
  * are returned as problems, and the export that asked refuses.
  *
- * Mutates `sectors` and `config` in place. `ops` may be in any order.
+ * Mutates `sectors`, `config` and `entities` (keyed by entity id) in place.
+ * `ops` may be in any order.
  */
 export function rewind(
   sectors: ReadonlyMap<string, LoadedSector>,
   config: RscConfig,
-  ops: readonly SequencedOp[]
+  ops: readonly SequencedOp[],
+  entities: Map<string, Entity> = new Map()
 ): string[] {
   const problems: string[] = [];
   const newestFirst = [...ops].sort((a, b) => b.seq - a.seq);
@@ -45,6 +47,20 @@ export function rewind(
       continue;
     }
 
+    if (op.type === 'entity') {
+      const current = entities.get(op.entity);
+      const now = current ? canonical(current.data) : null;
+      const said = op.to ? canonical(op.to) : null;
+      const where = current ? sectorKey(current.sector) : null;
+      if (now !== said || (current && where !== sectorKey(op.sector))) {
+        problems.push(`seq ${seq}: entity ${op.entity} is not what the log says it was set to`);
+        continue;
+      }
+      if (op.from === null) entities.delete(op.entity);
+      else entities.set(op.entity, { id: op.entity, sector: op.sector, data: op.from });
+      continue;
+    }
+
     const table = (config as unknown as Record<string, Array<Record<string, unknown>>>)[op.defKind];
     const current = table?.[op.index];
     if (!table || !current) {
@@ -64,4 +80,16 @@ export function rewind(
   }
 
   return problems;
+}
+
+/** Key-order-independent JSON, because jsonb does not keep key order. */
+function canonical(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
+  if (value && typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, v]) => v !== undefined)
+      .sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0));
+    return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonical(v)}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
 }

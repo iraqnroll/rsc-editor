@@ -9,7 +9,8 @@ import {
   tileIndex
 } from './sector.js';
 import { SECTOR_FRAME_BYTES, decodeSectorFrame, encodeSectorFrame } from './wire.js';
-import { invert, type SectorOp } from './ops.js';
+import { invert, opSchema, type SectorOp } from './ops.js';
+import { entityDataSchema, entityGamePosition, sectorTileAtGame } from './entities.js';
 import { clientMessageSchema, serverMessageSchema } from './protocol.js';
 
 /**
@@ -162,5 +163,49 @@ describe('protocol validation', () => {
       reason: 'held'
     });
     expect(parsed.success).toBe(true);
+  });
+});
+
+describe('entities', () => {
+  const npc = { kind: 'npc', i: 5, npcId: 2, wander: { minX: 0, maxX: 4, minY: 0, maxY: 4 } } as const;
+  const base = {
+    type: 'entity',
+    id: '00000000-0000-4000-8000-000000000001',
+    sector: { plane: 0, x: 50, y: 50 },
+    entity: '00000000-0000-4000-8000-000000000002'
+  } as const;
+
+  it('accepts only sides that match the kind', () => {
+    expect(opSchema.safeParse({ ...base, kind: 'entity.add', from: null, to: npc }).success).toBe(true);
+    expect(opSchema.safeParse({ ...base, kind: 'entity.add', from: npc, to: npc }).success).toBe(false);
+    expect(opSchema.safeParse({ ...base, kind: 'entity.remove', from: npc, to: null }).success).toBe(true);
+    expect(opSchema.safeParse({ ...base, kind: 'entity.update', from: npc, to: null }).success).toBe(false);
+    const item = { kind: 'item', i: 5, itemId: 1, amount: 1, respawnMs: 0 } as const;
+    expect(opSchema.safeParse({ ...base, kind: 'entity.update', from: npc, to: item }).success).toBe(false);
+  });
+
+  it('rejects an inverted wander box and a door direction out of range', () => {
+    expect(entityDataSchema.safeParse({ ...npc, wander: { minX: 5, maxX: 4, minY: 0, maxY: 0 } }).success).toBe(false);
+    expect(entityDataSchema.safeParse({ kind: 'door', i: 0, wallId: 1, direction: 4 }).success).toBe(false);
+  });
+
+  it('inverts an add into a remove and back', () => {
+    const add = { ...base, kind: 'entity.add', from: null, to: npc } as const;
+    const inverse = invert(add);
+    expect(inverse).toMatchObject({ kind: 'entity.remove', from: npc, to: null });
+    expect(invert(inverse)).toEqual(add);
+  });
+
+  it('maps sector tiles to game coordinates and back', () => {
+    // Lumbridge's player spawn, 120,648, is sector 0/50/50 tile (24, 24).
+    expect(entityGamePosition({ plane: 0, x: 50, y: 50 }, 24 * 48 + 24)).toEqual({ x: 120, y: 648 });
+    for (const [x, y] of [[0, 0], [120, 648], [300, 944 + 700], [815, 3743]]) {
+      const at = sectorTileAtGame(x!, y!);
+      expect(at).not.toBeNull();
+      expect(entityGamePosition(at!.sector, at!.i)).toEqual({ x, y });
+    }
+    expect(sectorTileAtGame(-1, 0)).toBeNull();
+    expect(sectorTileAtGame(0, 944 * 4)).toBeNull();
+    expect(sectorTileAtGame(816, 0)).toBeNull();
   });
 });

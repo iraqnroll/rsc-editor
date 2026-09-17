@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { entityDataSchema } from './entities.js';
 import { sectorCoordSchema, tileIndexSchema, SECTOR_LANES } from './sector.js';
 
 /**
@@ -78,10 +79,41 @@ export const definitionOpSchema = z.object({
 });
 export type DefinitionOp = z.infer<typeof definitionOpSchema>;
 
-export const opSchema = z.discriminatedUnion('type', [
-  sectorOpSchema,
-  definitionOpSchema
-]);
+/**
+ * Add, change or remove one server-side placement (NPC, item, door).
+ *
+ * Carries both sides like every other op: `from` is null for an add, `to` is
+ * null for a remove. The server applies it only if the entity's current state
+ * is `from`, so a stale client cannot overwrite a peer's change. The entity
+ * stays in `sector` for its whole life; moving it to another sector is a
+ * remove there and an add here, each under its own lock.
+ */
+export const entityOpKindSchema = z.enum(['entity.add', 'entity.update', 'entity.remove']);
+export type EntityOpKind = z.infer<typeof entityOpKindSchema>;
+
+export const entityOpSchema = z
+  .object({
+    type: z.literal('entity'),
+    id: z.string().uuid(),
+    sector: sectorCoordSchema,
+    kind: entityOpKindSchema,
+    /** the entity's own id, stable across its edits */
+    entity: z.string().uuid(),
+    from: entityDataSchema.nullable(),
+    to: entityDataSchema.nullable()
+  })
+  .refine(
+    (op) =>
+      op.kind === 'entity.add'
+        ? op.from === null && op.to !== null
+        : op.kind === 'entity.remove'
+          ? op.from !== null && op.to === null
+          : op.from !== null && op.to !== null && op.from.kind === op.to.kind,
+    'entity op sides do not match its kind'
+  );
+export type EntityOp = z.infer<typeof entityOpSchema>;
+
+export const opSchema = z.union([sectorOpSchema, definitionOpSchema, entityOpSchema]);
 export type Op = z.infer<typeof opSchema>;
 
 /** An op as persisted and broadcast, once the server has sequenced it. */
@@ -101,6 +133,11 @@ export function invert(op: Op): Op {
       ...op,
       changes: op.changes.map((c) => ({ ...c, from: c.to, to: c.from }))
     };
+  }
+  if (op.type === 'entity') {
+    const kind =
+      op.kind === 'entity.add' ? 'entity.remove' : op.kind === 'entity.remove' ? 'entity.add' : op.kind;
+    return { ...op, kind, from: op.to, to: op.from };
   }
   return { ...op, from: op.to, to: op.from };
 }

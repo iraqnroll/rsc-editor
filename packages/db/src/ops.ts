@@ -225,7 +225,7 @@ function targetColumns(
   | 'targetDefKind'
   | 'targetDefIndex'
 > {
-  if (op.type === 'sector') {
+  if (op.type === 'sector' || op.type === 'entity') {
     return {
       targetSectorId: sectorIds?.get(sectorKey(op.sector)) ?? null,
       targetPlane: op.sector.plane,

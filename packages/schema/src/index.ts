@@ -10,6 +10,7 @@
 export * from './constants.js';
 export * from './sector.js';
 export * from './wire.js';
+export * from './entities.js';
 export * from './ops.js';
 export * from './protocol.js';
 export * from './definitions.js';

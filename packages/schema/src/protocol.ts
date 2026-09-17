@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { sectorCoordSchema } from './sector.js';
+import { entitySchema } from './entities.js';
 import { opSchema, sequencedOpSchema } from './ops.js';
 
 /**
@@ -83,6 +84,17 @@ export const serverMessageSchema = z.discriminatedUnion('t', [
     reason: z.enum(['held', 'forbidden', 'not-a-member'])
   }),
   z.object({ t: z.literal('lock.released'), sector: sectorCoordSchema }),
+
+  /**
+   * The server-side placements (NPCs, items, doors) of one subscribed sector.
+   * Sent after its binary frame on subscribe; later changes arrive as entity
+   * ops in `op.applied`.
+   */
+  z.object({
+    t: z.literal('sector.entities'),
+    sector: sectorCoordSchema,
+    entities: z.array(entitySchema)
+  }),
 
   /** ops applied and sequenced -- broadcast to everyone in the project */
   z.object({ t: z.literal('op.applied'), ops: z.array(sequencedOpSchema) }),

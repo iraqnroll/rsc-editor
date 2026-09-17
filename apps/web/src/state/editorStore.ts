@@ -948,7 +948,7 @@ function applyLocally(set: Setter, get: Getter, ops: Op[]): void {
       // typed arrays themselves are reused (the mesher reads them by view).
       sectors[key] = { ...loaded, rev: loaded.rev + 1 };
       touchedSectors = true;
-    } else if (config) {
+    } else if (op.type === 'definition' && config) {
       config = applyDefinitionFields(config, op.defKind as DefinitionKind, op.index, op.to);
     }
   }

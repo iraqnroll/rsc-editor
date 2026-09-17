@@ -21,6 +21,7 @@ import {
   createDb,
   createProject,
   createSession,
+  getEntity,
   getSector,
   headSeq,
   putMember,
@@ -36,6 +37,7 @@ import {
   encodeSectorFrame,
   serverMessageSchema,
   type ClientMessage,
+  type EntityOp,
   type SectorCoord,
   type SectorOp,
   type ServerMessage
@@ -767,6 +769,93 @@ describe.skipIf(!available)('realtime collaboration', () => {
     expect(decodeSectorFrame(afterBytes.buffer).buffers.elevation[12]).toBe(64);
   });
 
+  /* -------------------------------------------------------------- entities -- */
+
+  const npcAt = (i: number, npcId = 3) =>
+    ({ kind: 'npc', i, npcId, wander: { minX: 100, maxX: 110, minY: 600, maxY: 610 } }) as const;
+
+  function entityOp(
+    sector: SectorCoord,
+    kind: EntityOp['kind'],
+    entity: string,
+    from: EntityOp['from'],
+    to: EntityOp['to']
+  ): EntityOp {
+    return { type: 'entity', id: randomUUID(), sector, kind, entity, from, to };
+  }
+
+  it('places, edits and undoes an entity, and a peer sees each step', async () => {
+    const world = await makeWorld();
+    const a = await joined(world.alice, world.projectId);
+    const b = await joined(world.bob, world.projectId);
+    a.send({ t: 'lock.claim', sector: world.left });
+    await a.waitFor('lock.granted');
+    await b.waitFor('lock.granted');
+
+    const id = randomUUID();
+    a.send({ t: 'op.submit', ops: [entityOp(world.left, 'entity.add', id, null, npcAt(40))] });
+    const added = await b.waitFor('op.applied');
+    expect(added.ops[0]?.op).toMatchObject({ type: 'entity', entity: id, kind: 'entity.add' });
+    expect((await getEntity(db, world.projectId, id))?.data).toEqual(npcAt(40));
+
+    a.send({
+      t: 'op.submit',
+      ops: [entityOp(world.left, 'entity.update', id, npcAt(40), npcAt(41, 9))]
+    });
+    await b.waitFor('op.applied');
+    expect((await getEntity(db, world.projectId, id))?.data).toEqual(npcAt(41, 9));
+
+    // a subscriber gets the placement after the frame
+    b.send({ t: 'sector.subscribe', sectors: [world.left] });
+    const listed = await b.waitFor('sector.entities');
+    expect(listed.entities).toEqual([{ id, sector: world.left, data: npcAt(41, 9) }]);
+
+    a.send({ t: 'op.undo' });
+    const undone = await b.waitFor('op.applied');
+    expect(undone.ops[0]?.op).toMatchObject({ kind: 'entity.update', from: npcAt(41, 9), to: npcAt(40) });
+    a.send({ t: 'op.undo' });
+    const removed = await b.waitFor('op.applied');
+    expect(removed.ops[0]?.op).toMatchObject({ kind: 'entity.remove', to: null });
+    expect(await getEntity(db, world.projectId, id)).toBeUndefined();
+
+    a.send({ t: 'op.redo' });
+    await b.waitFor('op.applied');
+    expect((await getEntity(db, world.projectId, id))?.data).toEqual(npcAt(40));
+  });
+
+  it('rejects an entity op without the lock, a stale one, and a duplicate add', async () => {
+    const world = await makeWorld();
+    const a = await joined(world.alice, world.projectId);
+    const b = await joined(world.bob, world.projectId);
+    a.send({ t: 'lock.claim', sector: world.left });
+    await a.waitFor('lock.granted');
+
+    const id = randomUUID();
+    b.send({ t: 'op.submit', ops: [entityOp(world.left, 'entity.add', id, null, npcAt(1))] });
+    expect((await b.waitFor('op.rejected')).reason).toBe('no-lock');
+
+    a.send({ t: 'op.submit', ops: [entityOp(world.left, 'entity.add', id, null, npcAt(1))] });
+    await a.waitFor('op.applied');
+
+    // someone else's view of the entity is out of date
+    a.send({ t: 'op.submit', ops: [entityOp(world.left, 'entity.remove', id, npcAt(2), null)] });
+    expect((await a.waitFor('op.rejected')).reason).toBe('stale');
+
+    a.send({ t: 'op.submit', ops: [entityOp(world.left, 'entity.add', id, null, npcAt(1))] });
+    expect((await a.waitFor('op.rejected')).reason).toBe('stale');
+
+    // the entity lives in its sector: an op naming another sector is stale
+    a.send({ t: 'lock.claim', sector: world.right });
+    await a.waitFor('lock.granted', (m) => m.lock.sector.x === world.right.x);
+    a.send({ t: 'op.submit', ops: [entityOp(world.right, 'entity.remove', id, npcAt(1), null)] });
+    expect((await a.waitFor('op.rejected')).reason).toBe('stale');
+
+    expect(await headSeq(db, world.projectId)).toBe(1);
+    // an entity op does not rewrite the sector frame
+    const row = await getSector(db, world.projectId, world.left);
+    expect(row?.version).toBe(1);
+  });
+
   it('refuses an op from a viewer', async () => {
     const world = await makeWorld();
     const viewer = await login('viewer');
@@ -793,10 +882,13 @@ describe.skipIf(!available)('realtime collaboration', () => {
     const stored = await getSector(db, world.projectId, world.left);
     expect(frame.equals(Buffer.from(stored!.payload))).toBe(true);
 
-    // it decodes to the sector we asked for, and arrived as bytes only
+    // it decodes to the sector we asked for; the lanes arrived as bytes only,
+    // and the one JSON message is its (empty) list of placements
     const decoded = decodeSectorFrame(asArrayBuffer(frame));
     expect(decoded.coord).toEqual(world.left);
-    expect(await a.quiet()).toEqual([]);
+    expect(await a.quiet()).toEqual([
+      { t: 'sector.entities', sector: world.left, entities: [] }
+    ]);
   });
 
   /* ------------------------------------------------------------ protocol -- */
