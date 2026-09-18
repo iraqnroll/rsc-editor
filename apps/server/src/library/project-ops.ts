@@ -33,6 +33,7 @@ import {
   type SequencedOp
 } from '@rsc-editor/schema';
 import { MAX_SPRITE_SETS, spriteSetCount } from '@rsc-editor/cache';
+import { textProblem } from '../archive-text.js';
 import type { AppContext } from '../context.js';
 
 export type ProjectOp = DefinitionOp | AssetOp;
@@ -126,11 +127,15 @@ export async function checkSpriteSetRoom(tx: Executor, projectId: string): Promi
 }
 
 function parseOrReject(kind: DefinitionKind, data: unknown): Record<string, unknown> {
+  let parsed: Record<string, unknown>;
   try {
-    return parseDefinition(kind, data);
+    parsed = parseDefinition(kind, data);
   } catch (err) {
     throw new OpRejected('invalid', `${kind}: ${(err as Error).message}`);
   }
+  const problem = textProblem(parsed);
+  if (problem) throw new OpRejected('invalid', `${kind}: ${problem}`);
+  return parsed;
 }
 
 async function applyDefinition(tx: Executor, projectId: string, actorId: string, op: DefinitionOp): Promise<void> {

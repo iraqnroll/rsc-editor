@@ -18,6 +18,7 @@ import { DefinitionPreview } from './DefinitionPreview.js';
 import { EntitySprite } from './EntitySprite.js';
 import { SchemaForm } from './SchemaForm.js';
 import { introspectObject } from './zod-introspect.js';
+import { ADDABLE_KINDS, duplicateDefinition } from '../data/definitions.js';
 
 const KINDS = Object.keys(definitionSchemas) as DefinitionKind[];
 
@@ -32,6 +33,10 @@ export function DefinitionEditor() {
   const [index, setIndex] = useState(0);
   const [query, setQuery] = useState('');
   const [draft, setDraft] = useState<Record<string, unknown> | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [addError, setAddError] = useState<string | null>(null);
+  /** set when a copy was just made, so the list can move to it once it arrives */
+  const [goTo, setGoTo] = useState<number | null>(null);
 
   const list = useMemo(() => {
     if (!config) return [] as Array<Record<string, unknown>>;
@@ -61,7 +66,37 @@ export function DefinitionEditor() {
   // A pending draft belongs to one (kind, index); switching either discards it.
   useEffect(() => {
     setDraft(null);
+    setAddError(null);
   }, [kind, index]);
+
+  // The copy reaches this editor through the op broadcast; select it then.
+  useEffect(() => {
+    if (goTo !== null && list.length > goTo) {
+      setQuery('');
+      setIndex(goTo);
+      setGoTo(null);
+    }
+  }, [goTo, list.length]);
+
+  /**
+   * A new definition that is a copy of this one -- the same model, sprite or
+   * sprites, its own id -- named "<name> (copy)" so it is easy to find. The
+   * map and spawns keep using the original until you point them at the copy.
+   */
+  async function duplicate(): Promise<void> {
+    if (!selected) return;
+    setAdding(true);
+    setAddError(null);
+    try {
+      const name = typeof selected.name === 'string' ? `${selected.name} (copy)` : undefined;
+      const at = await duplicateDefinition(kind, index, name ? { name } : {});
+      setGoTo(at);
+    } catch (err) {
+      setAddError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setAdding(false);
+    }
+  }
 
   const changed = useMemo(() => {
     if (!draft || !selected) return {} as Record<string, unknown>;
@@ -130,7 +165,23 @@ export function DefinitionEditor() {
         {kind} #{index}
         <span className="spacer" />
         {dirtyKeys.length > 0 && <span style={{ color: 'var(--warn)' }}>{dirtyKeys.length} changed</span>}
+        {ADDABLE_KINDS.includes(kind) && selected && (
+          <button
+            type="button"
+            className="btn btn--sm"
+            disabled={adding || dirtyKeys.length > 0}
+            title={
+              dirtyKeys.length > 0
+                ? 'Save or revert your changes first'
+                : `A new ${kind.replace(/s$/, '')} at the end of the table, copying this one: same model / sprites, its own id, name and description`
+            }
+            onClick={() => void duplicate()}
+          >
+            {adding ? 'Copying…' : 'Duplicate as new'}
+          </button>
+        )}
       </div>
+      {addError && <p className="hint" style={{ color: 'var(--danger, #e5484d)', padding: '4px 8px' }}>{addError}</p>}
 
       <div className="pane__scroll">
         {selected ? (
