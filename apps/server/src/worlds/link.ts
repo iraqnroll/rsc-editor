@@ -48,10 +48,17 @@ export class WorldLink {
   lastError: string | null = 'not connected yet';
   up = false;
 
+  private readonly upListeners: Array<() => void> = [];
+
   constructor(
     readonly config: WorldConfig,
     private readonly onEvent: (world: string, event: WorldEvent) => void = () => {}
   ) {}
+
+  /** Called on every (re)connect, e.g. to catch up on what was missed. */
+  onUp(listener: () => void): void {
+    this.upListeners.push(listener);
+  }
 
   start(): void {
     this.connect();
@@ -67,6 +74,7 @@ export class WorldLink {
       this.up = true;
       this.lastError = null;
       this.retryMs = RETRY_MIN_MS;
+      for (const listener of this.upListeners) listener();
     });
     socket.on('data', (chunk: string) => this.receive(chunk));
     socket.on('error', (err) => {

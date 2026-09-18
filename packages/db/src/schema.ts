@@ -610,6 +610,69 @@ export type SectorRow = typeof sectors.$inferSelect;
 export type NewSectorRow = typeof sectors.$inferInsert;
 export type SectorLock = typeof sectorLocks.$inferSelect;
 export type DefinitionRow = typeof definitions.$inferSelect;
+/* ---------------------------------------------------------------- audit -- */
+
+/**
+ * Every action an admin took through the editor on something other than a
+ * map: a world (kick, broadcast, restart), a publish, the access list.
+ * Append-only -- no route updates or deletes a row -- and kept for good. Map
+ * edits have their own permanent record, the op log.
+ */
+export const adminAudit = pgTable(
+  'admin_audit',
+  {
+    id: bigint('id', { mode: 'number' }).primaryKey().generatedAlwaysAsIdentity(),
+    at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
+    actorId: uuid('actor_id').references(() => users.id, { onDelete: 'set null' }),
+    /** kept as written: the account may be renamed or removed later */
+    actorName: text('actor_name').notNull(),
+    /** 'world.kick', 'world.broadcast', 'world.restart', 'publish', 'access.revoke', ... */
+    action: text('action').notNull(),
+    worldId: text('world_id'),
+    /** the player, project or account acted on */
+    target: text('target'),
+    details: jsonb('details').$type<Record<string, unknown>>().notNull().default({}),
+    /** 'ok', or why it failed */
+    result: text('result').notNull()
+  },
+  (t) => [
+    index('admin_audit_at_idx').on(t.at),
+    index('admin_audit_target_idx').on(t.target, t.at),
+    index('admin_audit_actor_idx').on(t.actorName, t.at)
+  ]
+);
+
+/**
+ * What happened in the game worlds, as each world reported it over its
+ * control socket: logins, chat, private messages, drops, pickups, deaths,
+ * commands. `seq` is the world's own number for the event, so a replay after
+ * a disconnect cannot store one twice. Kept per type for as long as
+ * GAME_EVENT_RETENTION says, then deleted.
+ */
+export const gameEvents = pgTable(
+  'game_events',
+  {
+    id: bigint('id', { mode: 'number' }).primaryKey().generatedAlwaysAsIdentity(),
+    worldId: text('world_id').notNull(),
+    seq: bigint('seq', { mode: 'number' }).notNull(),
+    at: timestamp('at', { withTimezone: true }).notNull(),
+    type: text('type').notNull(),
+    player: text('player'),
+    /** the other party: a PM's recipient, a killer, a kicked player */
+    other: text('other'),
+    details: jsonb('details').$type<Record<string, unknown>>().notNull().default({})
+  },
+  (t) => [
+    uniqueIndex('game_events_world_seq_idx').on(t.worldId, t.seq),
+    index('game_events_player_idx').on(t.player, t.at),
+    index('game_events_other_idx').on(t.other, t.at),
+    index('game_events_type_idx').on(t.type, t.at),
+    index('game_events_at_idx').on(t.at)
+  ]
+);
+
+export type AdminAuditRow = typeof adminAudit.$inferSelect;
+export type GameEventRow = typeof gameEvents.$inferSelect;
 export type EntityRow = typeof entities.$inferSelect;
 export type LibraryAssetRow = typeof libraryAssets.$inferSelect;
 export type OpRow = typeof ops.$inferSelect;

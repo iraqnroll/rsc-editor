@@ -21,6 +21,10 @@ RestartSec=3
 # SIGTERM logs every player out, which saves them; give that time.
 TimeoutStopSec=30
 NoNewPrivileges=true
+# Game events wait here until the editor has stored them
+# (rsc-server/src/admin/events.js); /var/lib/rsc-game-events.
+StateDirectory=rsc-game-events
+StateDirectoryMode=0750
 
 [Install]
 WantedBy=multi-user.target

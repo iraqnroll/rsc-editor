@@ -11,6 +11,7 @@ import { projectGuard, requireAuth, requireGlobalAdmin, requireProject } from '.
 import { requiredUuid } from '../validate.js';
 import { zipStored } from '../zip.js';
 import { buildExport, refusal } from './export.js';
+import { params } from '../audit.js';
 
 /**
  * Publish: put a project's cache on this install's game server.
@@ -77,7 +78,19 @@ export async function registerPublishRoutes(app: FastifyInstance, ctx: AppContex
 
   app.post(
     '/api/projects/:projectId/publish',
-    { preHandler: projectGuard(ctx, 'editor') },
+    {
+      preHandler: projectGuard(ctx, 'editor'),
+      config: {
+        audit: {
+          action: 'publish',
+          target: async (request) => {
+            const id = params('projectId')(request);
+            const project = id ? await getProject(ctx.db, id).catch(() => null) : null;
+            return project?.name ?? id;
+          }
+        }
+      }
+    },
     async (request, reply) => {
       const auth = requireGlobalAdmin(request);
       const access = requireProject(request);

@@ -69,6 +69,27 @@ export interface ServerConfig {
    * deploy/game/install.sh). null: no Worlds screen.
    */
   worldsFile: string | null;
+  /**
+   * Days to keep each kind of game event, from GAME_EVENT_RETENTION
+   * ("chat=90,pm=90,drop=30,pickup=30,*=365"). `*` is every other kind; 0
+   * keeps none. Personal data (chat, PMs) should not outlive its use.
+   */
+  eventRetentionDays: Record<string, number>;
+}
+
+export const DEFAULT_EVENT_RETENTION = 'chat=90,pm=90,drop=30,pickup=30,*=365';
+
+export function parseRetention(value: string, problems: string[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const part of value.split(',').map((p) => p.trim()).filter(Boolean)) {
+    const match = /^([a-z*][a-z-]*|\*)=(\d{1,5})$/.exec(part);
+    if (!match) {
+      problems.push(`GAME_EVENT_RETENTION: "${part}" is not kind=days`);
+      continue;
+    }
+    out[match[1]!] = Number(match[2]);
+  }
+  return out;
 }
 
 export class ConfigError extends Error {
@@ -196,6 +217,7 @@ export function loadConfig(env: Env = process.env): ServerConfig {
   }
   const gameUrl = env.GAME_URL?.trim() ? url(env.GAME_URL.trim(), 'GAME_URL', problems) : null;
   const worldsFile = env.WORLDS_FILE?.trim() || null;
+  const eventRetentionDays = parseRetention(env.GAME_EVENT_RETENTION ?? DEFAULT_EVENT_RETENTION, problems);
   if (worldsFile && !worldsFile.startsWith('/')) problems.push('WORLDS_FILE must be an absolute path');
 
   if (problems.length > 0) throw new ConfigError(problems);
@@ -216,7 +238,8 @@ export function loadConfig(env: Env = process.env): ServerConfig {
     publish: publishDir
       ? { dir: stripTrailingSlash(publishDir), gameUrl: gameUrl ? stripTrailingSlash(gameUrl) : null }
       : null,
-    worldsFile
+    worldsFile,
+    eventRetentionDays
   };
 }
 

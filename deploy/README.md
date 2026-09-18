@@ -160,6 +160,22 @@ say who the client is; narrow `trusted_proxies` to your front proxy if the
 LAN is not yours. Raise `playersPerIP` in `/etc/rsc-game/data-server.json`
 if several people share one address.
 
+**Events** (a tab in Worlds) is what happened in the game: logins and
+logouts with addresses, chat, private messages, drops, pickups (with whose
+item it was), deaths, `::` commands tried, and admin actions. Search by
+player — clicking a name gives that player's timeline, as either party — by
+type, text and date. Each world writes events to
+`/var/lib/rsc-game-events/world-1.jsonl` first and forgets them only once the
+editor has stored them, so an editor restart loses nothing. They are kept for
+`GAME_EVENT_RETENTION` (chat and PMs 90 days, drops and pickups 30, the rest
+a year, by default), then deleted. Trades are not logged: trading is a stub
+in rsc-server (`model/trade.js`) and never completes.
+
+**Admin log** (the other tab) is every admin action outside the map — world
+actions, publishes, Access changes — with who, what, whom, and whether it
+worked, including attempts by people who were not allowed. It is
+append-only in the database itself and kept for good.
+
 Staff ranks are set with the data server's script while the player is
 logged out:
 

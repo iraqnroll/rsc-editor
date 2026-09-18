@@ -18,6 +18,7 @@ import { isHttpError } from './errors.js';
 import { registerDevLogin } from './auth/dev-login.js';
 import { registerDiscordAuth } from './auth/discord.js';
 import { registerSessionAuth } from './auth/session.js';
+import { registerAudit } from './audit.js';
 import { registerAccessRoutes } from './routes/access.js';
 import { registerCacheAssetRoutes } from './routes/cache-assets.js';
 import { registerDefinitionRoutes } from './routes/definitions.js';
@@ -81,6 +82,8 @@ export async function buildApp(
   registerErrorHandler(app);
 
   await registerSessionAuth(app, ctx);
+  // Before any route: a hook only reaches routes registered after it.
+  registerAudit(app, ctx);
   await registerDiscordAuth(app, ctx);
 
   // An authentication bypass, gated on NODE_ENV + RSC_DEV_LOGIN + a loopback

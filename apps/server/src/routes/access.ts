@@ -16,6 +16,7 @@ import { badRequest, conflict, notFound } from '../errors.js';
 import { authGuard, requireGlobalAdmin } from '../guards.js';
 import { asObject, requiredString, requiredUuid } from '../validate.js';
 import { isUniqueViolation } from './projects.js';
+import { body, bodyFields, params, type AuditSpec } from '../audit.js';
 
 /**
  * Who may sign in, and what each person can open. Instance admins only.
@@ -35,6 +36,17 @@ export async function registerAccessRoutes(
   ctx: AppContext
 ): Promise<void> {
   const guard = { preHandler: authGuard() };
+  // Who an access change is about, by name: ids mean nothing in a log.
+  const userNamed = async (request: FastifyRequest) => {
+    const id = (request.params as Record<string, unknown>).userId;
+    if (typeof id !== 'string') return null;
+    const user = await getUserById(ctx.db, id).catch(() => null);
+    return user?.username ?? id;
+  };
+  const audited = (action: string, extra: Omit<AuditSpec, 'action'> = {}) => ({
+    ...guard,
+    config: { audit: { action, ...extra } }
+  });
   const changed = (userId: string) => {
     for (const hook of ctx.accessChanged) hook(userId);
   };
@@ -49,7 +61,7 @@ export async function registerAccessRoutes(
   });
 
   /** Body: `{ username }` -- a Discord username, with or without the `@`. */
-  app.post('/api/admin/access/users', guard, async (request, reply) => {
+  app.post('/api/admin/access/users', audited('access.invite', { target: body('username') }), async (request, reply) => {
     requireGlobalAdmin(request);
     const username = requiredString(asObject(request.body), 'username', { min: 2, max: 32 });
     if (!/^@?[a-z0-9_.]{2,32}$/i.test(username)) {
@@ -65,7 +77,10 @@ export async function registerAccessRoutes(
   });
 
   /** Body: `{ allowed?, admin? }`. Nobody can revoke or demote themselves. */
-  app.patch('/api/admin/access/users/:userId', guard, async (request) => {
+  app.patch(
+    '/api/admin/access/users/:userId',
+    audited('access.update', { target: userNamed, details: bodyFields('allowed', 'admin') }),
+    async (request) => {
     const auth = requireGlobalAdmin(request);
     const userId = userParam(request);
     const body = asObject(request.body);
@@ -89,10 +104,11 @@ export async function registerAccessRoutes(
       changed(userId);
     }
     return { id: user.id, allowed: user.allowed, globalRole: user.globalRole };
-  });
+    }
+  );
 
   /** Only an unclaimed invite can be deleted; a real account is revoked instead. */
-  app.delete('/api/admin/access/users/:userId', guard, async (request, reply) => {
+  app.delete('/api/admin/access/users/:userId', audited('access.remove-invite', { target: userNamed }), async (request, reply) => {
     requireGlobalAdmin(request);
     const userId = userParam(request);
     if (!(await deleteInvite(ctx.db, userId))) {
@@ -102,7 +118,13 @@ export async function registerAccessRoutes(
   });
 
   /** Body: `{ role }` -- `viewer`, `editor` or `owner`. */
-  app.put('/api/admin/access/users/:userId/projects/:projectId', guard, async (request) => {
+  app.put(
+    '/api/admin/access/users/:userId/projects/:projectId',
+    audited('access.project-role', {
+      target: userNamed,
+      details: (request) => ({ projectId: params('projectId')(request), ...bodyFields('role')(request) })
+    }),
+    async (request) => {
     requireGlobalAdmin(request);
     const userId = userParam(request);
     const projectId = requiredUuid((request.params as Record<string, unknown>).projectId, 'projectId');
@@ -117,16 +139,24 @@ export async function registerAccessRoutes(
     }
     changed(userId);
     return { userId, projectId, role };
-  });
+    }
+  );
 
-  app.delete('/api/admin/access/users/:userId/projects/:projectId', guard, async (request, reply) => {
+  app.delete(
+    '/api/admin/access/users/:userId/projects/:projectId',
+    audited('access.project-remove', {
+      target: userNamed,
+      details: (request) => ({ projectId: params('projectId')(request) })
+    }),
+    async (request, reply) => {
     requireGlobalAdmin(request);
     const userId = userParam(request);
     const projectId = requiredUuid((request.params as Record<string, unknown>).projectId, 'projectId');
     await removeMember(ctx.db, projectId, userId);
     changed(userId);
     return reply.code(204).send();
-  });
+    }
+  );
 }
 
 function userParam(request: FastifyRequest): string {

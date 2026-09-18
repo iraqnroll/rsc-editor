@@ -131,6 +131,7 @@ node -e '
   const server = JSON.parse(fs.readFileSync(file));
   server.adminSocket = "/run/rsc-game/world-1.sock";
   server.adminSocketMode = "660";
+  server.eventSpool = "/var/lib/rsc-game-events/world-1.jsonl";
   fs.writeFileSync(file, JSON.stringify(server, null, 4) + "\n");
 ' "$ETC/server.json"
 # The worlds the editor can see. One for now; each entry is a control socket.

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
-import { createDb, createSession, setUserAccess, upsertUserFromDiscord, type DbHandle } from '@rsc-editor/db';
+import { createDb, createSession, listGameEvents, setUserAccess, storeGameEvents, upsertUserFromDiscord, type DbHandle } from '@rsc-editor/db';
 import { buildApp } from '../app.js';
 import { loadConfig } from '../config.js';
 import { FakeWorld } from '../worlds/fake-world.js';
@@ -29,7 +29,19 @@ const available = await reachable(URL);
 
 describe.skipIf(!available)('worlds', () => {
   const dir = mkdtempSync(join(tmpdir(), 'rsc-worlds-'));
+  // A world's event log, as rsc-server keeps it: pending until acknowledged.
+  let pending: Array<{ seq: number; at: string; type: string; player: string | null; other: string | null; details: Record<string, unknown> }> = [];
+  let seq = 1_000;
+  const emit = (type: string, player: string | null, details: Record<string, unknown> = {}, other: string | null = null) =>
+    pending.push({ seq: ++seq, at: new Date().toISOString(), type, player, other, details });
   const world = new FakeWorld({
+    eventsSince: ({ seq: after, limit }) => ({
+      events: pending.filter((e) => e.seq > Number(after)).slice(0, Number(limit) || 1000)
+    }),
+    ackEvents: ({ seq: upTo }) => {
+      pending = pending.filter((e) => e.seq > Number(upTo));
+      return { remaining: pending.length };
+    },
     status: () => ({ worldId: 1, members: false, players: 1, capacity: 1250, uptimeSeconds: 5, memoryMB: 100, shutdown: null }),
     players: () => [{ username: 'bob', rank: 0 }],
     broadcast: ({ message }) => ({ sent: 1, message }),
@@ -129,11 +141,62 @@ describe.skipIf(!available)('worlds', () => {
     expect((await post('/api/worlds/nope/kick', { username: 'bob' })).statusCode).toBe(404);
   });
 
+  it('collects the world\'s events, and the world forgets only what was stored', async () => {
+    const cookie = await login(true);
+    emit('login', 'Bob', { ip: '203.0.113.7' });
+    emit('chat', 'bob', { message: 'selling lobsters' });
+    emit('pm', 'bob', { message: 'meet me in varrock' }, 'alice');
+    world.event({ nudge: true });
+
+    let found: Array<{ type: string; player: string; other: string | null }> = [];
+    await until(async () => {
+      found = (await app.inject({ method: 'GET', url: '/api/audit/events?player=bob&world=main', headers: { cookie } })).json().events;
+      return found.length === 3;
+    });
+    expect(found.map((e) => e.type)).toEqual(['pm', 'chat', 'login']);
+    await until(async () => pending.length === 0);
+
+    const chat = (await app.inject({ method: 'GET', url: '/api/audit/events?types=chat&text=LOBSTER', headers: { cookie } })).json();
+    expect(chat.events.map((e: { details: { message: string } }) => e.details.message)).toContain('selling lobsters');
+    const alice = (await app.inject({ method: 'GET', url: '/api/audit/events?player=alice&world=main', headers: { cookie } })).json();
+    expect(alice.events.map((e: { type: string }) => e.type)).toEqual(['pm']);
+  });
+
+  it('after storing but not acknowledging, the next sync acknowledges and stores nothing twice', async () => {
+    // As if the editor stored these, then died before telling the world.
+    emit('drop', 'carol', { item: 10 });
+    emit('pickup', 'dave', { item: 10 }, 'carol');
+    await storeGameEvents(handle.db, 'main', pending);
+    world.event({ nudge: true });
+    await until(async () => pending.length === 0);
+    const carol = await listGameEvents(handle.db, { worldId: 'main', player: 'carol' });
+    expect(carol.map((e) => e.type).sort()).toEqual(['drop', 'pickup']);
+  });
+
+  it('records every admin action with who, what, and how it went', async () => {
+    const cookie = await login(true);
+    const target = `mallory${Date.now() % 100000}`;
+    await app.inject({ method: 'POST', url: '/api/worlds/main/kick', headers: { cookie }, payload: { username: target } });
+    const actions = (await app.inject({ method: 'GET', url: `/api/audit/admin?who=${target}`, headers: { cookie } })).json().actions;
+    expect(actions[0]).toMatchObject({
+      action: 'world.kick',
+      worldId: 'main',
+      target,
+      result: `failed (422): ${target} is not online`
+    });
+  });
+
   it('is for admins only', async () => {
     const cookie = await login(false);
     expect((await app.inject({ method: 'GET', url: '/api/worlds', headers: { cookie } })).statusCode).toBe(403);
     const kick = await app.inject({ method: 'POST', url: '/api/worlds/main/kick', headers: { cookie }, payload: { username: 'bob' } });
     expect(kick.statusCode).toBe(403);
-    expect(world.received.filter((r) => r.cmd === 'kick')).toHaveLength(2);
+    const events = await app.inject({ method: 'GET', url: '/api/audit/events', headers: { cookie } });
+    expect(events.statusCode).toBe(403);
+    // A non-admin trying is itself worth recording.
+    const admin = await login(true);
+    const tried = (await app.inject({ method: 'GET', url: '/api/audit/admin?action=world.kick', headers: { cookie: admin } })).json().actions;
+    expect(tried.some((a: { result: string }) => a.result === 'forbidden')).toBe(true);
+    expect(world.received.filter((r) => r.cmd === 'kick')).toHaveLength(3);
   });
 });

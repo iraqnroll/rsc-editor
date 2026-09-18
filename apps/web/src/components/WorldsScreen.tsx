@@ -10,6 +10,7 @@ import {
   type WorldSummary
 } from '../data/worlds.js';
 import { isApiHttpError } from '../data/http.js';
+import { AdminLogPanel, EventsPanel } from './AuditPanels.js';
 
 /**
  * The game worlds: are they up, who is on, and the few things an admin does
@@ -43,6 +44,8 @@ export function WorldsScreen({ onClose }: { onClose: () => void }) {
   const [text, setText] = useState('');
   const [seconds, setSeconds] = useState(60);
   const [reason, setReason] = useState('');
+  const [tab, setTab] = useState<'world' | 'events' | 'admin'>('world');
+  const [retention, setRetention] = useState<Record<string, number> | null>(null);
 
   const world = worlds?.find((w) => w.id === selected) ?? null;
 
@@ -51,6 +54,7 @@ export function WorldsScreen({ onClose }: { onClose: () => void }) {
       const body = await listWorlds();
       setWorlds(body.worlds);
       setConfigError(body.configError);
+      setRetention(body.retentionDays ?? null);
       setSelected((current) => current ?? body.worlds[0]?.id ?? null);
     } catch (err) {
       setError(message(err));
@@ -114,6 +118,26 @@ export function WorldsScreen({ onClose }: { onClose: () => void }) {
       >
         <div className="panel__header">
           Worlds
+          <div className="tabs worlds__tabs" role="tablist" aria-label="Worlds view">
+            {(
+              [
+                ['world', 'World'],
+                ['events', 'Events'],
+                ['admin', 'Admin log']
+              ] as const
+            ).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                role="tab"
+                aria-selected={tab === id}
+                className="tab"
+                onClick={() => setTab(id)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
           <span className="spacer" />
           <button type="button" className="btn btn--sm btn--ghost" onClick={onClose}>
             close
@@ -121,6 +145,24 @@ export function WorldsScreen({ onClose }: { onClose: () => void }) {
         </div>
 
         {configError && <p className="hint worlds__error">Worlds file: {configError}</p>}
+
+        {tab === 'events' && (
+          <>
+            {retention && (
+              <p className="hint audit__scope">
+                Kept for:{' '}
+                {Object.entries(retention)
+                  .map(([type, days]) => `${type === '*' ? 'everything else' : type} ${days} days`)
+                  .join(', ')}
+                . Chat and private messages are personal data: tell your players they are logged.
+              </p>
+            )}
+            <EventsPanel worlds={worlds ?? []} />
+          </>
+        )}
+        {tab === 'admin' && <AdminLogPanel />}
+        {tab === 'world' && (
+        <>
         {worlds && worlds.length === 0 && !configError && (
           <p className="hint access__intro">
             No game worlds are configured on this server. deploy/game/install.sh sets them up.
@@ -144,6 +186,15 @@ export function WorldsScreen({ onClose }: { onClose: () => void }) {
                   ? `${w.status.players} / ${w.status.capacity} online · up ${duration(w.status.uptimeSeconds)} · ${w.status.memoryMB} MB`
                   : `down${w.error ? ` — ${w.error}` : ''}`}
               </span>
+              {w.events && (
+                <span className="worlds__meta">
+                  {w.events.error
+                    ? `events: ${w.events.error}`
+                    : w.events.lastSync
+                      ? `events collected ${new Date(w.events.lastSync).toLocaleTimeString()}`
+                      : 'events: nothing new yet'}
+                </span>
+              )}
             </button>
           ))}
         </div>
@@ -279,6 +330,8 @@ export function WorldsScreen({ onClose }: { onClose: () => void }) {
               </table>
             </div>
           </>
+        )}
+        </>
         )}
       </div>
     </div>
