@@ -25,4 +25,5 @@ export * from './config.js';
 export * from './models.js';
 export * from './colour.js';
 export * from './sprites.js';
+export * from './ui-sprites.js';
 export * from './textures.js';

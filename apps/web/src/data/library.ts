@@ -130,12 +130,14 @@ export async function deleteDefinition(kind: LibraryTable, index: number): Promi
 }
 
 /** Where to download an asset from, as a same-origin path. */
-export function assetFileUrl(kind: LibraryKind, key: string, format: 'ob3' | 'obj' | 'png'): string {
+export type AssetFormat = 'ob3' | 'obj' | 'png' | 'tga';
+
+export function assetFileUrl(kind: LibraryKind, key: string, format: AssetFormat): string {
   return `${base()}/${kind}/${enc(key)}/file?format=${format}`;
 }
 
 /** Download to the user's disk, keeping the server's file name. */
-export async function downloadAsset(kind: LibraryKind, key: string, format: 'ob3' | 'obj' | 'png'): Promise<void> {
+export async function downloadAsset(kind: LibraryKind, key: string, format: AssetFormat): Promise<void> {
   const response = await apiFetch(assetFileUrl(kind, key, format));
   const disposition = response.headers.get('content-disposition') ?? '';
   const name = /filename="([^"]+)"/.exec(disposition)?.[1] ?? `${key}.${format}`;

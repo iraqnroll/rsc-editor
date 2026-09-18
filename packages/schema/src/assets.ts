@@ -8,6 +8,9 @@ import { z } from 'zod';
  *   textureImage key = sprite name       (texture definitions refer by name)
  *   spriteSet    key = animation name    (animation definitions refer by name)
  *   itemSprite   key = position, decimal (items refer by index)
+ *   uiSprite     key = entry name        (a fixed list the client loads:
+ *                                         media<n>.jag's interface sprites,
+ *                                         and `logo` for jagex.jag's logo.tga)
  *
  * The bytes are stored once per content hash; an entry is a key pointing at
  * one. Replacing an asset is pointing its key at another hash, so the old
@@ -15,7 +18,7 @@ import { z } from 'zod';
  * (CLAUDE.md rule 4); see docs/DECISIONS.md section 20.
  */
 
-export const LIBRARY_KINDS = ['model', 'textureImage', 'spriteSet', 'itemSprite'] as const;
+export const LIBRARY_KINDS = ['model', 'textureImage', 'spriteSet', 'itemSprite', 'uiSprite'] as const;
 export const libraryKindSchema = z.enum(LIBRARY_KINDS);
 export type LibraryKind = z.infer<typeof libraryKindSchema>;
 
@@ -25,6 +28,7 @@ export const sha256Schema = z.string().regex(/^[0-9a-f]{64}$/);
  * Per-kind facts the bytes do not carry or that are cheap to list:
  *   spriteSet: `members` (free or members archive), `frames` per group
  *   textureImage / itemSprite: `width`, `height`
+ *   uiSprite: `width`, `height`, `frames`, `archive` ('media' or 'jagex')
  *   model: `vertices`, `faces`
  */
 export const libraryMetaSchema = z.record(z.union([z.number(), z.boolean(), z.string()]));

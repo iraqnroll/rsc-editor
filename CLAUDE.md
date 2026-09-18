@@ -130,7 +130,8 @@ title screen; play past login has not been checked by the editor's tests.
 (DECISIONS §19): NPC and Item tools, a server-door option on Walls, imported with
 `--spawns`, exported as the game server's three lists.
 
-**The asset library** (models, textures, NPC and item sprites) lives beside
+**The asset library** (models, textures, NPC and item sprites, and the
+client's interface sprites and logos) lives beside
 the definitions (DECISIONS §20): browse, upload, replace, reorder and delete from
 the Assets screen, references rewritten server-side, archives patched on export.
 

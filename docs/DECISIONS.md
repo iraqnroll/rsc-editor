@@ -834,8 +834,8 @@ change approved by the project owner (CLAUDE.md rule 4).
   appended to the shared `index.dat`; untouched ones keep their bytes, and
   entries nothing names (they cannot even be listed -- keys are one-way hashes)
   survive. When the 16-bit index would overflow, textures and NPC sprites fall
-  back to a full rebuild, since every frame count there is known. media58's UI
-  sprites have unknown frame counts, so only its `objects<n>.dat` are touched.
+  back to a full rebuild, since every frame count there is known. media58 is
+  only ever patched: its interface sprites are listed nowhere in the cache.
   The sprite encoder is the reader's exact inverse: textures17 and entity24
   rebuild byte for byte.
 - **`.jag` compression is ambiguous.** An entry counts as compressed only when
@@ -873,3 +873,16 @@ change approved by the project owner (CLAUDE.md rule 4).
   whole batch, and again by the export. Animations that reuse a name are free. Sprites hold
   254 colours plus the transparency key; item sprites share one palette per
   file of 30.
+- **Interface sprites (`uiSprite`).** The client asks for media58's interface
+  sprites by name with frame counts written in its code (`loadMedia`), so
+  `UI_SPRITES` in `ui-sprites.ts` is that list; `projectile`'s count comes from
+  the config and is measured as the count that consumes the entry exactly. They
+  are replace-only, and keep their size except the title logo (`runescape`,
+  centred, up to 512x185). jagex.jag's `logo.tga` is the same kind under key
+  `logo`, stored as the TGA itself: 256-colour, colour-mapped, bottom row first,
+  palette at byte 18 and pixels at 786 -- the Java client reads those offsets
+  without parsing the header, so exactly that layout is written. Libraries
+  seeded before the kind existed get it on next use (`LATE_KINDS`), and the
+  export never reads a missing interface sprite as a removal. Both logos,
+  replaced, verified drawn by rsc-client 204.
+

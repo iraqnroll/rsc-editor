@@ -7,6 +7,7 @@ import {
   type SpriteFrame,
   type SpriteGroup
 } from './sprites.js';
+import { LOADING_LOGO_ENTRY } from './ui-sprites.js';
 
 /**
  * Writing the asset library back into the cache's archives.
@@ -211,15 +212,34 @@ export function splitItemSpriteFiles(files: readonly SpriteGroup[]): SpriteGroup
   return out;
 }
 
-/** media<n>.jag with its item sprite files replaced by `sprites`, in order. */
-export function patchMediaArchive(original: Uint8Array, sprites: readonly SpriteGroup[]): Uint8Array {
-  const archive = open(original);
-  let stale = 0;
-  for (let k = 1; has(archive, `objects${k}.dat`); k++) stale = k;
-  const files = itemSpriteFiles(sprites);
+/**
+ * media<n>.jag with its item sprite files replaced by `sprites`, in order
+ * (null leaves them alone), and interface sprites (`ui`, named by entry)
+ * replaced.
+ */
+export function patchMediaArchive(
+  original: Uint8Array,
+  sprites: readonly SpriteGroup[] | null,
+  ui: readonly SpriteGroup[] = []
+): Uint8Array {
+  const put: SpriteGroup[] = [...ui];
   const remove: string[] = [];
-  for (let k = files.length + 1; k <= stale; k++) remove.push(`objects${k}`);
-  return patchSpriteArchive('media', original, files, remove);
+  if (sprites) {
+    const archive = open(original);
+    let stale = 0;
+    for (let k = 1; has(archive, `objects${k}.dat`); k++) stale = k;
+    const files = itemSpriteFiles(sprites);
+    for (let k = files.length + 1; k <= stale; k++) remove.push(`objects${k}`);
+    put.push(...files);
+  }
+  return patchSpriteArchive('media', original, put, remove);
+}
+
+/** jagex.jag with its loading logo replaced. */
+export function patchJagexArchive(original: Uint8Array, tga: Uint8Array): Uint8Array {
+  const archive = open(original);
+  archive.putEntry(LOADING_LOGO_ENTRY, Buffer.from(tga));
+  return packArchive(archive);
 }
 
 /**

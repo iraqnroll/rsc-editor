@@ -23,12 +23,17 @@ import {
   animationUsers,
   decodeOb3,
   decodePng,
+  decodeTga,
   encodeOb3,
   encodePng,
   imageMeta,
   imageToItemSprite,
+  imageToLoadingLogo,
   imageToTexture,
+  isUiSpriteKey,
   itemSpriteUsers,
+  LOADING_LOGO_KEY,
+  loadingLogoMeta,
   modelToObj,
   modelUsers,
   moveMapping,
@@ -45,11 +50,17 @@ import {
   spriteGroupToImages,
   spriteSetMeta,
   spriteSetToSheet,
+  spriteGroupToStrip,
   spriteSetUsers,
+  stripToUiSprite,
   textureImageUsers,
   textureUsers,
+  TITLE_LOGO_KEY,
   unpackSpriteGroups,
   unpackSpriteSet,
+  uiSpriteLabel,
+  uiSpriteMeta,
+  UI_SPRITES,
   type AssetUse,
   type FieldPatch,
   type Mapping,
@@ -136,6 +147,11 @@ export async function registerLibraryRoutes(app: FastifyInstance, ctx: AppContex
         usedBy: usersOf(config, kind, r.key)
       }));
       if (kind === 'itemSprite') entries.sort((a, b) => Number(a.key) - Number(b.key));
+      if (kind === 'uiSprite') {
+        // Logos first, then the client's own order.
+        const order = [TITLE_LOGO_KEY, LOADING_LOGO_KEY, ...UI_SPRITES.map((s) => s.name).filter((n) => n !== TITLE_LOGO_KEY)];
+        entries.sort((a, b) => order.indexOf(a.key) - order.indexOf(b.key));
+      }
       return { kind, entries };
     });
 
@@ -154,6 +170,10 @@ export async function registerLibraryRoutes(app: FastifyInstance, ctx: AppContex
         const data = (await getBlob(ctx.db, entry.sha256))!;
         const filename = (ext: string) => `${kind === 'itemSprite' ? `item-sprite-${key}` : key}.${ext}`;
 
+        if (kind === 'uiSprite' && key === LOADING_LOGO_KEY && format === 'tga') {
+          return send(reply, data, 'image/x-tga', 'logo.tga');
+        }
+
         if (kind === 'model') {
           if (format === 'obj') {
             const { obj, mtl } = modelToObj(decodeOb3(data, key));
@@ -170,7 +190,11 @@ export async function registerLibraryRoutes(app: FastifyInstance, ctx: AppContex
         const png =
           kind === 'spriteSet'
             ? spriteSetToSheet(unpackSpriteSet(data))
-            : spriteGroupToImages(unpackSpriteGroups(data)[0]!)[0]!;
+            : kind === 'uiSprite'
+              ? key === LOADING_LOGO_KEY
+                ? decodeTga(data)
+                : spriteGroupToStrip(unpackSpriteGroups(data)[0]!)
+              : spriteGroupToImages(unpackSpriteGroups(data)[0]!)[0]!;
         const bytes = encodePng(png.data, png.width, png.height);
         const inline = format === 'preview';
         reply.header('cache-control', 'private, no-cache');
@@ -231,6 +255,25 @@ export async function registerLibraryRoutes(app: FastifyInstance, ctx: AppContex
               if (note.reduced) warnings.push(`reduced from ${note.colours} colours to 254`);
               data = packSpriteGroups([group]);
               meta = imageMeta(group);
+            } else if (kind === 'uiSprite') {
+              // A fixed list: replaced, never added.
+              if (!existing) throw notFound(`the client has no interface sprite "${key}"`);
+              if (key === LOADING_LOGO_KEY) {
+                const { tga, note } = imageToLoadingLogo(rgba);
+                if (note.reduced) warnings.push(`reduced from ${note.colours} colours to 256`);
+                data = tga;
+                meta = loadingLogoMeta(tga);
+              } else {
+                const was = {
+                  width: Number(existing.meta.width),
+                  height: Number(existing.meta.height),
+                  frames: Number(existing.meta.frames)
+                };
+                const { group, note } = stripToUiSprite(key, rgba, was);
+                if (note.reduced) warnings.push(`reduced from ${note.colours} colours to 254`);
+                data = packSpriteGroups([group]);
+                meta = uiSpriteMeta(group);
+              }
             } else {
               const rows = Number(query.rows ?? 1);
               if (rows !== 1 && rows !== 2 && rows !== 3) throw badRequest('rows must be 1, 2 or 3');
@@ -288,6 +331,9 @@ export async function registerLibraryRoutes(app: FastifyInstance, ctx: AppContex
         const { projectId } = requireProject(request);
         const kind = parseLibraryKind(request.params);
         const key = parseKey(request.params);
+        if (kind === 'uiSprite') {
+          throw conflict('the client loads every interface sprite by name; replace it instead', 'in_use');
+        }
         const { config } = await ctxFor(projectId);
         const users = usersOf(config, kind, key);
         if (users.length > 0) throw inUse(kind, key, users);
@@ -519,6 +565,10 @@ function normaliseKey(kind: LibraryKind, key: string): string {
     if (!/^\d+$/.test(key)) throw badRequest('an item sprite key is its position');
     return String(Number(key));
   }
+  if (kind === 'uiSprite') {
+    if (!isUiSpriteKey(key)) throw notFound(`the client has no interface sprite "${key}"`);
+    return key;
+  }
   const lower = key.toLowerCase();
   const pattern = kind === 'model' ? MODEL_NAME : IMAGE_NAME;
   if (!pattern.test(lower)) throw badRequest('a name is 1-40 of a-z, 0-9, _ and -');
@@ -535,6 +585,8 @@ function usersOf(config: RscConfig, kind: LibraryKind, key: string): AssetUse[] 
       return spriteSetUsers(config, key);
     case 'itemSprite':
       return itemSpriteUsers(config, Number(key));
+    case 'uiSprite':
+      return [{ kind: 'client', at: key, label: uiSpriteLabel(key) }];
   }
 }
 

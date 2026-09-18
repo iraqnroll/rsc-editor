@@ -21,6 +21,7 @@ import {
   cacheAssets,
   libraryIsSeeded,
   listDefinitions,
+  listLibrary,
   loadLibrary,
   putBlobs,
   putLibraryEntries,
@@ -31,6 +32,7 @@ import {
   configSchema,
   definitionSchemas,
   type DefinitionKind,
+  type LibraryKind,
   type RscConfig,
   type SequencedOp
 } from '@rsc-editor/schema';
@@ -44,6 +46,14 @@ import {
 } from '../routes/cache-assets.js';
 
 const DEFINITION_KINDS = Object.keys(definitionSchemas) as DefinitionKind[];
+
+/**
+ * Kinds added to the library after projects had already been seeded. A
+ * project seeded before one existed gets that kind's seed entries on next use;
+ * they are a fixed list the client loads, so "none at all" can only mean
+ * "never seeded", never "all deleted".
+ */
+const LATE_KINDS: readonly LibraryKind[] = ['uiSprite'];
 
 export interface Originals {
   /** every imported file, by name */
@@ -136,13 +146,26 @@ export class LibraryService {
     return value;
   }
 
-  /** Fill the library from the imported cache the first time it is used. */
+  /**
+   * Fill the library from the imported cache the first time it is used, and
+   * with any {@link LATE_KINDS} a library seeded earlier does not have.
+   */
   async ensureSeeded(projectId: string): Promise<void> {
-    if (await libraryIsSeeded(this.ctx.db, projectId)) return;
+    let kinds: readonly LibraryKind[] | null = null;
+    if (await libraryIsSeeded(this.ctx.db, projectId)) {
+      const missing: LibraryKind[] = [];
+      for (const kind of LATE_KINDS) {
+        if ((await listLibrary(this.ctx.db, projectId, kind)).length === 0) missing.push(kind);
+      }
+      if (missing.length === 0) return;
+      kinds = missing;
+    }
+    const only = kinds;
     let pending = this.seeding.get(projectId);
     if (!pending) {
       pending = (async () => {
-        const { seeded } = await this.getOriginals(projectId);
+        const all = (await this.getOriginals(projectId)).seeded;
+        const seeded = only ? all.filter((e) => only.includes(e.kind)) : all;
         if (seeded.length === 0) return;
         await this.ctx.db.transaction(async (tx) => {
           await putBlobs(tx, seeded.map((e) => e.data));

@@ -6,6 +6,7 @@ import type { FastifyInstance } from 'fastify';
 import {
   cacheArchives,
   decodePng,
+  decodeTga,
   encodePng,
   loadConfig as loadCacheConfig,
   loadLandscape,
@@ -20,7 +21,9 @@ import {
   createProject,
   createSession,
   definitions,
+  deleteLibraryEntry,
   getDefinition,
+  listLibrary,
   putSector,
   upsertUserFromDiscord,
   type Database,
@@ -238,6 +241,36 @@ describe.skipIf(!available)('asset library', () => {
     for (const i of usingZero) expect((await definition('items', i)).sprite).toBe(449);
   }, 60_000);
 
+  it('replaces the title and loading logos, and nothing else about interface sprites', async () => {
+    // A library seeded before interface sprites existed gets them on next use.
+    await api('GET', '/uiSprite');
+    for (const e of await listLibrary(db, projectId, 'uiSprite')) await deleteLibraryEntry(db, projectId, 'uiSprite', e.key);
+    expect(await listLibrary(db, projectId, 'uiSprite')).toHaveLength(0);
+    const listed = await api('GET', '/uiSprite');
+    expect(listed.statusCode).toBe(200);
+    const { entries } = listed.json() as { entries: Array<{ key: string; meta: Record<string, unknown> }> };
+    expect(entries.map((e) => e.key).slice(0, 2)).toEqual(['runescape', 'logo']);
+    expect(entries).toHaveLength(15);
+    expect(entries.find((e) => e.key === 'icon')!.meta).toMatchObject({ width: 16, height: 16, frames: 8 });
+
+    const title = await api('PUT', '/uiSprite/runescape', png(300, 90, [12, 34, 56]), 'image/png');
+    expect(title.statusCode, title.body).toBe(200);
+    const loading = await api('PUT', '/uiSprite/logo', png(281, 85, [65, 43, 21]), 'image/png');
+    expect(loading.statusCode, loading.body).toBe(200);
+
+    const back = await api('GET', '/uiSprite/runescape/file?format=png');
+    const image = decodePng(new Uint8Array(back.rawPayload));
+    expect([image.width, image.height]).toEqual([300, 90]);
+    const tga = await api('GET', '/uiSprite/logo/file?format=tga');
+    expect(tga.headers['content-type']).toBe('image/x-tga');
+    expect(tga.rawPayload.length).toBe(18 + 768 + 281 * 85);
+
+    expect((await api('PUT', '/uiSprite/compass', png(40, 40, [1, 1, 1]), 'image/png')).statusCode).toBe(400);
+    expect((await api('PUT', '/uiSprite/logo', png(300, 85, [1, 1, 1]), 'image/png')).statusCode).toBe(400);
+    expect((await api('PUT', '/uiSprite/newthing', png(10, 10, [1, 1, 1]), 'image/png')).statusCode).toBe(404);
+    expect((await api('DELETE', '/uiSprite/compass')).statusCode).toBe(409);
+  }, 60_000);
+
   it('adds, moves and deletes texture definitions; walls, tiles, roofs and models follow', async () => {
     const tex0Walls = original.wallObjects.flatMap((w, i) => (w.textureFront === 0 || w.textureBack === 0 ? [i] : []));
     expect(tex0Walls.length).toBeGreaterThan(0);
@@ -317,9 +350,11 @@ describe.skipIf(!available)('asset library', () => {
     };
     expect(report.library.textureImage).toEqual({ added: 0, replaced: 1, removed: 0 });
     expect(report.library.itemSprite).toMatchObject({ replaced: expect.any(Number) });
+    expect(report.library.uiSprite).toEqual({ added: 0, replaced: 2, removed: 0 });
     const changed = report.files.filter((f) => f.changed).map((f) => f.name);
     expect(changed).toContain('textures17.jag');
     expect(changed).toContain('media58.jag');
+    expect(changed).toContain('jagex.jag');
     expect(changed).not.toContain('entity24.jag');
     expect(zipEntry(zip, 'entity24.jag')?.equals(Buffer.from(read('entity24.jag')))).toBe(true);
 
@@ -330,6 +365,10 @@ describe.skipIf(!available)('asset library', () => {
     const image = spriteGroupToImages(unpackSpriteGroups(wall.data)[0]!)[0]!;
     expect(Array.from(image.data.subarray(0, 3))).toEqual([200, 16, 16]);
     expect(loadModels(files.get('models36.jag')!, ['tree2']).models.has('tree2')).toBe(true);
+    const title = reseeded.find((e) => e.kind === 'uiSprite' && e.key === 'runescape')!;
+    expect(title.meta).toMatchObject({ width: 300, height: 90 });
+    const logo = decodeTga(reseeded.find((e) => e.kind === 'uiSprite' && e.key === 'logo')!.data);
+    expect(Array.from(logo.data.subarray(0, 3))).toEqual([65, 43, 21]);
   }, 120_000);
 
   it('is read-only for viewers', async () => {

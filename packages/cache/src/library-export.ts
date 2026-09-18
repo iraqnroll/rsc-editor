@@ -3,6 +3,7 @@ import type { LibraryKind, LibraryMeta, RscConfig } from '@rsc-editor/schema';
 import { decodeOb3, modelEntryName } from './models.js';
 import {
   SpriteIndexFull,
+  patchJagexArchive,
   patchMediaArchive,
   patchModelsArchive,
   patchSpriteArchive,
@@ -24,6 +25,7 @@ import {
   ANIMATION_FIGHT_FRAMES,
   type SpriteGroup
 } from './sprites.js';
+import { LOADING_LOGO_KEY, decodeTga, readLoadingLogo, readUiSprites } from './ui-sprites.js';
 
 /**
  * The asset library <-> a cache directory.
@@ -50,6 +52,7 @@ export interface CacheArchives {
   entityJag?: { name: string; data: Uint8Array };
   entityMem?: { name: string; data: Uint8Array };
   media?: { name: string; data: Uint8Array };
+  jagex?: { name: string; data: Uint8Array };
 }
 
 /** Pick the (newest) archive of each role out of a cache directory's files. */
@@ -71,6 +74,7 @@ export function cacheArchives(files: ReadonlyMap<string, Uint8Array>): CacheArch
   set('entityJag', newest(/^entity(\d+)\.jag$/));
   set('entityMem', newest(/^entity(\d+)\.mem$/));
   set('media', newest(/^media(\d+)\.jag$/));
+  set('jagex', newest(/^jagex(\d*)\.jag$/));
   return out;
 }
 
@@ -120,6 +124,15 @@ export function imageMeta(group: SpriteGroup): LibraryMeta {
   return { width: group.fullWidth, height: group.fullHeight };
 }
 
+export function uiSpriteMeta(group: SpriteGroup): LibraryMeta {
+  return { width: group.fullWidth, height: group.fullHeight, frames: group.frames.length, archive: 'media' };
+}
+
+export function loadingLogoMeta(tga: Uint8Array): LibraryMeta {
+  const image = decodeTga(tga);
+  return { width: image.width, height: image.height, frames: 1, archive: 'jagex' };
+}
+
 /** Everything an imported cache holds, as library entries. */
 export function seedLibrary(archives: CacheArchives, config: RscConfig): SeedEntry[] {
   const out: SeedEntry[] = [];
@@ -163,6 +176,14 @@ export function seedLibrary(archives: CacheArchives, config: RscConfig): SeedEnt
     sprites.forEach((group, i) => {
       out.push({ kind: 'itemSprite', key: String(i), data: packSpriteGroups([group]), meta: imageMeta(group) });
     });
+    for (const group of readUiSprites(archives.media.data)) {
+      out.push({ kind: 'uiSprite', key: group.name, data: packSpriteGroups([group]), meta: uiSpriteMeta(group) });
+    }
+  }
+
+  if (archives.jagex) {
+    const tga = readLoadingLogo(archives.jagex.data);
+    if (tga) out.push({ kind: 'uiSprite', key: LOADING_LOGO_KEY, data: tga, meta: loadingLogoMeta(tga) });
   }
 
   return out;
@@ -203,7 +224,8 @@ export function exportLibrary(
       model: { added: 0, replaced: 0, removed: 0 },
       textureImage: { added: 0, replaced: 0, removed: 0 },
       spriteSet: { added: 0, replaced: 0, removed: 0 },
-      itemSprite: { added: 0, replaced: 0, removed: 0 }
+      itemSprite: { added: 0, replaced: 0, removed: 0 },
+      uiSprite: { added: 0, replaced: 0, removed: 0 }
     },
     problems: []
   };
@@ -316,21 +338,32 @@ export function exportLibrary(
     write(archives.entityMem, perArchive.mem, true);
   }
 
-  // ---------------------------------------------------------- item sprites --
+  // ------------------------------------------- item and interface sprites --
   const items = diff('itemSprite');
+  // Interface sprites are a fixed list the client asks for by name: they are
+  // only ever replaced. One missing from `current` is a library seeded before
+  // they were part of it, not a removal, so only puts count.
+  const ui = diff('uiSprite');
+  out.changed.uiSprite.removed = 0;
+  const uiMedia = ui.put.filter((e) => e.key !== LOADING_LOGO_KEY);
+  const logo = ui.put.find((e) => e.key === LOADING_LOGO_KEY);
+
+  let itemGroups: SpriteGroup[] | null = null;
   if (items.put.length || items.removed.length) {
-    if (!archives.media) out.problems.push('the project has no media archive for item sprites');
+    const ordered = [...items.after.values()].sort((a, b) => Number(a.key) - Number(b.key));
+    if (ordered.some((e, i) => Number(e.key) !== i)) out.problems.push('item sprite positions have a gap');
+    else itemGroups = ordered.map((e) => unpackSpriteGroups(e.data)[0]!);
+  }
+  if (itemGroups || uiMedia.length) {
+    if (!archives.media) out.problems.push('the project has no media archive for item and interface sprites');
     else {
-      const ordered = [...items.after.values()].sort((a, b) => Number(a.key) - Number(b.key));
-      if (ordered.some((e, i) => Number(e.key) !== i)) {
-        out.problems.push('item sprite positions have a gap');
-      } else {
-        out.files.set(
-          archives.media.name,
-          patchMediaArchive(archives.media.data, ordered.map((e) => unpackSpriteGroups(e.data)[0]!))
-        );
-      }
+      const groups = uiMedia.map((e) => ({ ...unpackSpriteGroups(e.data)[0]!, name: e.key }));
+      out.files.set(archives.media.name, patchMediaArchive(archives.media.data, itemGroups, groups));
     }
+  }
+  if (logo) {
+    if (!archives.jagex) out.problems.push('the project has no jagex.jag for the loading logo');
+    else out.files.set(archives.jagex.name, patchJagexArchive(archives.jagex.data, logo.data));
   }
 
   // A project with no library at all (never imported) has nothing to check;

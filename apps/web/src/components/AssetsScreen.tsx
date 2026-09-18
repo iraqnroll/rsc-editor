@@ -21,8 +21,8 @@ import { ModelThumbnail } from '../scene/ModelThumbnail.js';
 import { useEditor } from '../state/editorStore.js';
 
 /**
- * The asset library: the project's models, texture images, NPC sprites and
- * item sprites, with what uses each one.
+ * The asset library: the project's models, texture images, NPC sprites, item
+ * sprites and the client's interface pictures, with what uses each one.
  *
  * Browse, download, add, replace, rename, reorder and delete -- not edit. Every
  * change goes to the server, which rewrites whatever referred to the asset
@@ -31,7 +31,7 @@ import { useEditor } from '../state/editorStore.js';
  * still in use. Everyone with the project open sees the result.
  */
 
-type Tab = 'models' | 'textures' | 'npcs' | 'items';
+type Tab = 'models' | 'textures' | 'npcs' | 'items' | 'interface';
 
 /**
  * Distinct NPC sprite-set names the 204 client can load: 27 sprite slots each
@@ -44,7 +44,8 @@ const TABS: Array<[Tab, string]> = [
   ['models', 'Models'],
   ['textures', 'Textures'],
   ['npcs', 'NPC sprites'],
-  ['items', 'Item sprites']
+  ['items', 'Item sprites'],
+  ['interface', 'Interface']
 ];
 
 export function AssetsButton() {
@@ -130,6 +131,7 @@ export function AssetsScreen({ onClose }: { onClose: () => void }) {
             {tab === 'textures' && <TexturesTab act={act} />}
             {tab === 'npcs' && <NpcSpritesTab act={act} />}
             {tab === 'items' && <ItemSpritesTab act={act} />}
+            {tab === 'interface' && <InterfaceTab act={act} />}
           </div>
         )}
       </div>
@@ -547,6 +549,62 @@ function ItemSpritesTab({ act }: { act: Act }) {
   );
 }
 
+/* ------------------------------------------------------- interface sprites -- */
+
+/** Sprites the client draws by its own size; the rest must keep theirs. */
+const RESIZABLE = new Set(['runescape', 'logo']);
+
+function InterfaceTab({ act }: { act: Act }) {
+  const { items, error, reload } = useLibrary('uiSprite');
+
+  async function upload(files: FileList | null, key: string) {
+    const main = files?.[0];
+    if (!main) return;
+    if (await act(async () => summary(key, await uploadAsset('uiSprite', key, { main })))) reload();
+  }
+
+  return (
+    <>
+      <p className="hint assets__intro">
+        The pictures the client loads by name: the <b>title screen logo</b>, the <b>loading screen
+        logo</b>, and the game&apos;s interface. They can be replaced but not added or removed. The
+        client draws most of them at fixed places, so a replacement keeps the original size; one
+        with several frames is a PNG of the frames side by side, as its download is. The title logo
+        can be up to 512×185 and is centred; the loading logo up to 281×88, drawn on black, with 256
+        colours and no transparency.
+      </p>
+      <Status items={items} error={error} count={items?.length ?? 0} />
+      <div className="assets__grid assets__grid--wide">
+        {(items ?? []).map((m) => {
+          const frames = Number(m.meta.frames) || 1;
+          const size = `${m.meta.width}×${m.meta.height}`;
+          return (
+            <div key={m.key} className="asset">
+              <ImageThumb kind="uiSprite" item={m} size={RESIZABLE.has(m.key) ? 160 : 96} />
+              <div className="asset__name">{m.usedBy[0]?.label ?? m.key}</div>
+              <div className="asset__meta">
+                {m.key === 'logo' ? 'logo.tga' : `${m.key}.dat`} · {frames > 1 ? `${frames} × ${size}` : size}
+                {RESIZABLE.has(m.key) ? '' : ' · fixed size'}
+              </div>
+              <div className="asset__actions">
+                <FilePick label="Replace" accept=".png" onPick={(f) => upload(f, m.key)} />
+                <button type="button" className="btn btn--sm" onClick={() => act(() => downloadAsset('uiSprite', m.key, 'png'))}>
+                  .png
+                </button>
+                {m.key === 'logo' && (
+                  <button type="button" className="btn btn--sm" onClick={() => act(() => downloadAsset('uiSprite', m.key, 'tga'))}>
+                    .tga
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </>
+  );
+}
+
 /* ------------------------------------------------------------- building blocks -- */
 
 function DefinitionTable<T extends object>({
@@ -675,7 +733,9 @@ function ImageThumb({
     };
   }, [kind, item]);
   if (!item) return <span className="asset__thumb asset__thumb--missing" style={{ width: size, height: size }} title="missing" />;
-  const width = Number(item.meta.width) || size;
+  // Interface sprites preview as their frames side by side.
+  const frames = kind === 'uiSprite' ? Number(item.meta.frames) || 1 : 1;
+  const width = (Number(item.meta.width) || size) * frames;
   const height = Number(item.meta.height) || size;
   const scale = Math.min(size / width, size / height);
   return (
