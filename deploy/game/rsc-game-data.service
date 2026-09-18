@@ -1,0 +1,26 @@
+# The 2003scape data server: accounts, saves, friends. rsc-server talks to it
+# over a unix socket. Installed by deploy/game/install.sh.
+[Unit]
+Description=RSC game data server
+After=network.target
+
+[Service]
+Type=simple
+User=rscgame
+Group=rscgame
+WorkingDirectory=/opt/rsc-game/rsc-data-server
+# /run/rsc-game holds the socket; both services run as rscgame and share it.
+RuntimeDirectory=rsc-game
+RuntimeDirectoryPreserve=yes
+# Accounts live outside the checkout, so a reinstall never touches them.
+StateDirectory=rsc-game-accounts
+StateDirectoryMode=0750
+# A socket left by a killed run makes the server fail to bind.
+ExecStartPre=/bin/rm -f /run/rsc-game/data-server.sock
+ExecStart=/usr/bin/node src/bin.js -c /etc/rsc-game/data-server.json -v info
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

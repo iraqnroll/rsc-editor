@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
@@ -17,6 +18,7 @@ import {
   definitions,
   putMember,
   putSector,
+  setUserAccess,
   upsertUserFromDiscord,
   type Database,
   type DbHandle
@@ -252,6 +254,114 @@ describe.skipIf(!available)('project export', () => {
       headers: { cookie: viewer.cookie }
     });
     expect(res.statusCode).toBe(403);
+  });
+
+  describe('publish', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'rsc-publish-'));
+    let publishing: FastifyInstance;
+
+    beforeAll(async () => {
+      publishing = await buildApp({
+        config: { ...config, publish: { dir, gameUrl: 'https://game.example.com' } },
+        db
+      });
+      await publishing.ready();
+    });
+
+    afterAll(async () => {
+      await publishing?.close();
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    const clear = () => {
+      rmSync(join(dir, 'inbox'), { recursive: true, force: true });
+      rmSync(join(dir, 'status.json'), { force: true });
+    };
+
+    async function admin() {
+      const project = await seeded({ archives: true });
+      await setUserAccess(db, project.userId, { globalRole: 'admin' });
+      return project;
+    }
+
+    it('queues exactly what Export would hand you, zip first, then the request', async () => {
+      clear();
+      const { projectId, cookie } = await admin();
+      const res = await publishing.inject({
+        method: 'POST',
+        url: `/api/projects/${projectId}/publish`,
+        headers: { cookie }
+      });
+      expect(res.statusCode).toBe(202);
+
+      const zip = readFileSync(join(dir, 'inbox/cache.zip'));
+      expect(zipNames(zip).sort()).toEqual(
+        [...ARCHIVES, 'object-locs.json', 'export-report.json', ...Object.values(DEFINITION_FILES)].sort()
+      );
+      const request = JSON.parse(readFileSync(join(dir, 'inbox/request.json'), 'utf8'));
+      expect(request).toMatchObject({ id: res.json().queued.id, projectId });
+      // Nothing half-written is left beside them.
+      expect(existsSync(join(dir, 'inbox/cache.zip.tmp'))).toBe(false);
+      expect(existsSync(join(dir, 'inbox/request.json.tmp'))).toBe(false);
+
+      // A second click while the first waits is refused, not queued over it.
+      const again = await publishing.inject({
+        method: 'POST',
+        url: `/api/projects/${projectId}/publish`,
+        headers: { cookie }
+      });
+      expect(again.statusCode).toBe(409);
+
+      const status = await publishing.inject({ method: 'GET', url: '/api/publish', headers: { cookie } });
+      expect(status.json()).toMatchObject({
+        enabled: true,
+        gameUrl: 'https://game.example.com',
+        queued: { id: request.id }
+      });
+    });
+
+    it('reports what the game server wrote back, and refuses while it installs', async () => {
+      clear();
+      const { projectId, cookie } = await admin();
+      writeFileSync(join(dir, 'status.json'), JSON.stringify({ id: 'x', state: 'running' }));
+      const busy = await publishing.inject({
+        method: 'POST',
+        url: `/api/projects/${projectId}/publish`,
+        headers: { cookie }
+      });
+      expect(busy.statusCode).toBe(409);
+
+      writeFileSync(join(dir, 'status.json'), JSON.stringify({ id: 'x', state: 'done', message: 'live' }));
+      const res = await publishing.inject({ method: 'GET', url: '/api/publish', headers: { cookie } });
+      expect(res.json()).toMatchObject({ queued: null, status: { id: 'x', state: 'done' } });
+    });
+
+    it('is for admins: an owner who is not one gets 403 and no button', async () => {
+      clear();
+      const { projectId, cookie } = await seeded({ archives: true });
+      const res = await publishing.inject({
+        method: 'POST',
+        url: `/api/projects/${projectId}/publish`,
+        headers: { cookie }
+      });
+      expect(res.statusCode).toBe(403);
+      expect(existsSync(join(dir, 'inbox/request.json'))).toBe(false);
+
+      const status = await publishing.inject({ method: 'GET', url: '/api/publish', headers: { cookie } });
+      expect(status.json()).toMatchObject({ enabled: false, gameUrl: 'https://game.example.com', queued: null });
+    });
+
+    it('does not exist on an install without a game server', async () => {
+      const { projectId, cookie } = await admin();
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/projects/${projectId}/publish`,
+        headers: { cookie }
+      });
+      expect(res.statusCode).toBe(404);
+      const status = await app.inject({ method: 'GET', url: '/api/publish', headers: { cookie } });
+      expect(status.json()).toEqual({ enabled: false, gameUrl: null, queued: null, status: null });
+    });
   });
 
   it('matches exportWorld called directly on the same state', () => {

@@ -1,0 +1,11 @@
+# Starts rsc-game-publish.service whenever the editor drops a publish request.
+# Installed by deploy/game/install.sh.
+[Unit]
+Description=Watch for caches published from RSC Editor
+
+[Path]
+PathExists=/var/lib/rsc-game/inbox/request.json
+Unit=rsc-game-publish.service
+
+[Install]
+WantedBy=paths.target

@@ -17,6 +17,7 @@ import { StatusBar } from './components/StatusBar.js';
 import { ToolPalette } from './components/ToolPalette.js';
 import { AccessButton } from './components/AccessScreen.js';
 import { ExportButton } from './components/ExportButton.js';
+import { PublishButton } from './components/PublishButton.js';
 import { AssetsButton } from './components/AssetsScreen.js';
 import { ViewportHost } from './components/ViewportHost.js';
 import { WorldMapModal } from './components/WorldMapModal.js';
@@ -120,6 +121,7 @@ export function App() {
             <AccessButton />
             <AssetsButton />
             <ExportButton />
+            <PublishButton />
             <button
               type="button"
               className="btn btn--sm"

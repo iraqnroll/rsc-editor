@@ -1,0 +1,12 @@
+# Installs a published cache and restarts the game. Started by
+# rsc-game-publish.path; runs as root because it restarts rsc-game.service.
+# The script comes from the editor's own deployed checkout, so a
+# deploy/update.sh keeps it current. Installed by deploy/game/install.sh.
+[Unit]
+Description=Install a cache published from RSC Editor
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /opt/rsc-editor/deploy/game/publish.sh
+# A big world takes a while to unpack and load.
+TimeoutStartSec=5min

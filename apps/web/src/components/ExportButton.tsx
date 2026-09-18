@@ -58,7 +58,17 @@ export function ExportButton() {
   );
 }
 
-export function ExportProblems({ problems, onClose }: { problems: string[]; onClose: () => void }) {
+export function ExportProblems({
+  problems,
+  onClose,
+  title = 'Export refused',
+  lead = 'The exported cache would not read back as this project, so nothing was downloaded.'
+}: {
+  problems: string[];
+  onClose: () => void;
+  title?: string;
+  lead?: string;
+}) {
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -76,21 +86,19 @@ export function ExportProblems({ problems, onClose }: { problems: string[]; onCl
         className="modal"
         role="dialog"
         aria-modal="true"
-        aria-label="Export refused"
+        aria-label={title}
         tabIndex={-1}
         ref={ref}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="panel__header">
-          Export refused
+          {title}
           <span className="spacer" />
           <button type="button" className="btn btn--sm btn--ghost" onClick={onClose}>
             close
           </button>
         </div>
-        <p className="hint">
-          The exported cache would not read back as this project, so nothing was downloaded.
-        </p>
+        <p className="hint">{lead}</p>
         <ul className="export-problems">
           {problems.map((problem) => (
             <li key={problem}>{problem}</li>

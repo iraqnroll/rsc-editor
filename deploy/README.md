@@ -105,6 +105,52 @@ project list):
 `DISCORD_GUILD_ID` still works on top of this if you also want to require
 membership of your Discord server.
 
+## 6. The game server (optional)
+
+Runs the game — rsc-server, its data server and the rsc-client web client,
+kept together in [iraqnroll/rsc-game](https://github.com/iraqnroll/rsc-game) —
+in the same container, and turns on the editor's **Publish** button.
+
+```sh
+cd /root/rsc-editor && bash deploy/game/install.sh --game-url https://game.example.com
+```
+
+**Deploying game code** is the same command again: it fetches the branch it
+follows (`main`), reinstalls, rebuilds the client, puts the last published
+cache back and restarts. `--repo <url>` and `--ref <branch|commit>` choose
+something else and are remembered in `/etc/rsc-game/source`.
+
+Then point your front proxy at this container's port **8081** for the game's
+domain (it must pass WebSockets; Caddy does by default). Over https the
+client's socket goes to `wss://<game domain>/ws`, which the container's Caddy
+hands to rsc-server. `RSC_GAME_ADDRESS` in `/etc/default/caddy` works like
+`RSC_SITE_ADDRESS`.
+
+**Publish** (admins only, top bar) builds exactly what Export would, and the
+game restarts with it — everyone playing is disconnected. How it gets there:
+
+1. the editor writes `/var/lib/rsc-game/inbox/cache.zip`, then `request.json`;
+2. `rsc-game-publish.path` sees the request and starts
+   `rsc-game-publish.service`, which runs `deploy/game/publish.sh` as root;
+3. that installs the cache with `deploy/game/load-cache.sh`, restarts
+   `rsc-game`, waits for it to listen, and writes
+   `/var/lib/rsc-game/status.json`, which the button shows.
+
+The editor itself only ever writes to the inbox. If the game does not come
+back up with the new cache, the previous one is put back and the button
+reports the failure.
+
+Tested in a systemd Debian 12 container: the install, a publish from the
+editor's button through to the game listening on the new cache, a corrupt
+cache rolled back with the game left running, and the WebSocket handshake
+through `/ws`. A player logging in over https has not been tried.
+
+Accounts are in `/var/lib/rsc-game-accounts` and survive a reinstall. The last
+published cache is kept as `/var/lib/rsc-game/current.zip` and reinstalled by
+every deploy. `load-cache.sh --restore` (with `GAME_DIR=/opt/rsc-game
+STOCK_DIR=/var/lib/rsc-game/stock`) returns the game to the cache the
+repository ships.
+
 ## Updating
 
 ```sh
@@ -140,3 +186,6 @@ systemctl start rsc-editor
 | config | `/etc/rsc-editor/server.env`, `/etc/default/caddy` |
 | code and build | `/opt/rsc-editor` (replaced by every update) |
 | backups | `/var/backups/rsc-editor` |
+| game log | `journalctl -u rsc-game -f`, `journalctl -u rsc-game-data -f` |
+| last publish | `journalctl -u rsc-game-publish`, `/var/lib/rsc-game/status.json`, `/var/lib/rsc-game/work/log` |
+| game config | `/etc/rsc-game/server.json`, `/etc/rsc-game/data-server.json` |

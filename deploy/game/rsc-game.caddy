@@ -1,0 +1,23 @@
+# The game's own site, installed to /etc/caddy/sites/rsc-game.caddy by
+# deploy/game/install.sh and pulled in by the main Caddyfile's import.
+#
+# RSC_GAME_ADDRESS in /etc/default/caddy, like RSC_SITE_ADDRESS: ":8081" when
+# a proxy in front terminates TLS (point game.example.com at this port), or a
+# domain when this container is on the internet itself.
+{$RSC_GAME_ADDRESS::8081} {
+	encode zstd gzip
+
+	# The client's socket. Over https the patched client connects to
+	# wss://<this host>/ws; rsc-server accepts any path.
+	handle /ws* {
+		reverse_proxy 127.0.0.1:43595
+	}
+
+	handle {
+		root * /opt/rsc-game/rsc-client/dist
+		# Revalidate everything: a publish replaces the cache files in place,
+		# and a browser holding the old ones is the "hard-refresh" problem.
+		header Cache-Control "no-cache"
+		file_server
+	}
+}

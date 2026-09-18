@@ -33,6 +33,19 @@ export interface DiscordConfig {
   adminUsernames: string[];
 }
 
+/**
+ * Where Publish hands a cache to the game server, when this install runs one
+ * (`deploy/game`). The editor only ever writes into `dir/inbox`; a systemd
+ * path unit running as root does the installing and restarting, and reports
+ * back through `dir/status.json`. See deploy/README.md, "The game server".
+ */
+export interface PublishConfig {
+  /** absolute; normally /var/lib/rsc-game */
+  dir: string;
+  /** where players open the game, shown next to the button */
+  gameUrl: string | null;
+}
+
 export interface ServerConfig {
   nodeEnv: NodeEnv;
   host: string;
@@ -49,6 +62,8 @@ export interface ServerConfig {
   /** origin of the SPA; where login redirects back to, and the CORS origin. */
   webOrigin: string;
   discord: DiscordConfig;
+  /** null: no game server here, and no Publish button */
+  publish: PublishConfig | null;
 }
 
 export class ConfigError extends Error {
@@ -170,6 +185,12 @@ export function loadConfig(env: Env = process.env): ServerConfig {
     .map((name) => name.trim().replace(/^@/, '').toLowerCase())
     .filter(Boolean);
 
+  const publishDir = env.PUBLISH_DIR?.trim() || null;
+  if (publishDir && !publishDir.startsWith('/')) {
+    problems.push('PUBLISH_DIR must be an absolute path');
+  }
+  const gameUrl = env.GAME_URL?.trim() ? url(env.GAME_URL.trim(), 'GAME_URL', problems) : null;
+
   if (problems.length > 0) throw new ConfigError(problems);
 
   return {
@@ -184,7 +205,10 @@ export function loadConfig(env: Env = process.env): ServerConfig {
     cookieSecure,
     publicUrl: stripTrailingSlash(publicUrl),
     webOrigin: stripTrailingSlash(webOrigin),
-    discord: { clientId, clientSecret, scopes, requiredGuildId, adminUsernames }
+    discord: { clientId, clientSecret, scopes, requiredGuildId, adminUsernames },
+    publish: publishDir
+      ? { dir: stripTrailingSlash(publishDir), gameUrl: gameUrl ? stripTrailingSlash(gameUrl) : null }
+      : null
   };
 }
 
