@@ -7,6 +7,15 @@
 #     the Proxmox host) terminates TLS. That proxy must pass WebSockets and the
 #     X-Forwarded-* headers.
 #
+# The proxy in front of this container (on the LAN) is trusted to say who the
+# client is, so {client_ip} -- and the game's X-Real-IP -- is the player, not
+# that proxy. Narrow private_ranges to its address if the LAN is not yours.
+{
+	servers {
+		trusted_proxies static private_ranges
+	}
+}
+
 # Other sites on this container -- the game, from deploy/game/install.sh --
 # drop a file in /etc/caddy/sites. A glob that matches nothing is fine.
 import /etc/caddy/sites/*.caddy

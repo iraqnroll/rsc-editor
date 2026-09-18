@@ -14,8 +14,12 @@ WorkingDirectory=/opt/rsc-game/rsc-server
 # it is not there yet.
 ExecStartPre=/bin/sh -c 'for i in $(seq 100); do [ -S /run/rsc-game/data-server.sock ] && exit 0; sleep 0.1; done; echo "no data server socket" >&2; exit 1'
 ExecStart=/usr/bin/node src/bin.js -c /etc/rsc-game/server.json -v info
-Restart=on-failure
+# always: a restart from the Worlds screen is the world counting down and
+# exiting cleanly, and it has to come back. `systemctl stop` still stops it.
+Restart=always
 RestartSec=3
+# SIGTERM logs every player out, which saves them; give that time.
+TimeoutStopSec=30
 NoNewPrivileges=true
 
 [Install]

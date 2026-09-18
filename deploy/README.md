@@ -140,6 +140,35 @@ The editor itself only ever writes to the inbox. If the game does not come
 back up with the new cache, the previous one is put back and the button
 reports the failure.
 
+**Worlds** (admins, top bar) shows each world: up or down, players online,
+uptime and memory, and who is on (rank, level, position, address, time
+online). From there you can broadcast a message, kick a player (saved first),
+and restart with an in-game countdown — the world saves everyone at zero and
+systemd starts it again. The editor reaches each world through its control
+socket (`/run/rsc-game/world-1.sock`, listed in `/etc/rsc-game/worlds.json`);
+the editor's user is in the `rscgame` group, which is all that socket allows.
+
+A publish now warns players too: with anyone online, they get a 30-second
+countdown (`PUBLISH_COUNTDOWN` in `rsc-game-publish.service`), then the
+restart logs everyone out, which saves them. Any `systemctl stop` or
+`restart` of the game saves players the same way.
+
+Players' real addresses reach the game (`X-Real-IP`, trusted only from this
+container's Caddy), so the data server's one-login-per-address rule counts
+people, not the proxy. The main Caddyfile trusts private-range proxies to
+say who the client is; narrow `trusted_proxies` to your front proxy if the
+LAN is not yours. Raise `playersPerIP` in `/etc/rsc-game/data-server.json`
+if several people share one address.
+
+Staff ranks are set with the data server's script while the player is
+logged out:
+
+```sh
+cd /opt/rsc-game/rsc-data-server && sudo -u rscgame node src/set-rank.js <username> 3 /etc/rsc-game/data-server.json
+```
+
+In game, `::help` lists what your rank can use.
+
 Tested in a systemd Debian 12 container: the install, a publish from the
 editor's button through to the game listening on the new cache, a corrupt
 cache rolled back with the game left running, and the WebSocket handshake
@@ -188,4 +217,4 @@ systemctl start rsc-editor
 | backups | `/var/backups/rsc-editor` |
 | game log | `journalctl -u rsc-game -f`, `journalctl -u rsc-game-data -f` |
 | last publish | `journalctl -u rsc-game-publish`, `/var/lib/rsc-game/status.json`, `/var/lib/rsc-game/work/log` |
-| game config | `/etc/rsc-game/server.json`, `/etc/rsc-game/data-server.json` |
+| game config | `/etc/rsc-game/server.json`, `/etc/rsc-game/data-server.json`, `/etc/rsc-game/worlds.json` |

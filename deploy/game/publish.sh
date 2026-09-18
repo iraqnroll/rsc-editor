@@ -99,6 +99,46 @@ chown -R "$GAME_USER:$GAME_USER" \
   "$GAME_DIR/rsc-server/node_modules/@2003scape/rsc-data" \
   "$GAME_DIR/rsc-server/node_modules/@2003scape/rsc-landscape"
 
+# Ask the running world something over its control socket (rsc-server's
+# src/admin); prints the JSON result, fails if the world does not answer.
+control() {
+  node -e '
+    const fs = require("fs");
+    const net = require("net");
+    const [config, cmd, args] = process.argv.slice(1);
+    const socket = JSON.parse(fs.readFileSync(config)).adminSocket;
+    if (!socket) process.exit(2);
+    const conn = net.createConnection(socket);
+    let buffer = "";
+    const give_up = setTimeout(() => process.exit(3), 5000);
+    conn.setEncoding("utf8");
+    conn.on("error", () => process.exit(4));
+    conn.on("connect", () => conn.write(JSON.stringify({ id: 1, cmd, args: JSON.parse(args) }) + "\n"));
+    conn.on("data", (d) => {
+      buffer += d;
+      const line = buffer.split("\n")[0];
+      if (!buffer.includes("\n")) return;
+      const reply = JSON.parse(line);
+      clearTimeout(give_up);
+      conn.destroy();
+      if (!reply.ok) process.exit(5);
+      console.log(JSON.stringify(reply.result));
+    });
+  ' /etc/rsc-game/server.json "$1" "${2:-{\}}"
+}
+
+# Whoever is playing gets a countdown and a message, then the restart's
+# SIGTERM logs them all out, which saves them. Nobody online: no wait. A
+# world that does not answer (an older build, or down) is just restarted.
+COUNTDOWN="${PUBLISH_COUNTDOWN:-30}"
+online="$(control status 2>/dev/null | node -pe 'JSON.parse(require("fs").readFileSync(0)).players' 2>/dev/null || echo 0)"
+if [[ "$online" =~ ^[0-9]+$ && $online -gt 0 && $COUNTDOWN -gt 0 ]]; then
+  status running "counting down ${COUNTDOWN}s for $online player(s)"
+  echo "== countdown ${COUNTDOWN}s for $online player(s)" >>"$WORK/log"
+  control shutdown "{\"seconds\":$COUNTDOWN,\"reason\":\"The world is being updated.\",\"stop\":false}" >>"$WORK/log" 2>&1 || true
+  sleep "$COUNTDOWN"
+fi
+
 echo "== restart" >>"$WORK/log"
 systemctl restart rsc-game.service >>"$WORK/log" 2>&1 || fail "the game server did not restart"
 

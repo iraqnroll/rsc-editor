@@ -1526,3 +1526,72 @@ input[type="color"] {
 .assets__room {
   margin: 0 0 6px;
 }
+
+/* ---- worlds ------------------------------------------------------------ */
+
+.worlds__list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 14px 10px;
+}
+.worlds__card {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 8px;
+  align-items: center;
+  min-width: 220px;
+  padding: 8px 10px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--fg-0);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.worlds__card[aria-selected='true'] {
+  border-color: var(--accent, #4c9aff);
+}
+.worlds__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.worlds__dot.is-up {
+  background: #3ecf6e;
+}
+.worlds__dot.is-down {
+  background: #e5484d;
+}
+.worlds__name {
+  font-weight: 600;
+}
+.worlds__meta {
+  grid-column: 2;
+  color: var(--fg-2, #8b93a1);
+  font-size: 11px;
+}
+.worlds__row,
+.worlds__pending {
+  padding: 0 14px 8px;
+  gap: 8px;
+}
+.worlds__row input {
+  flex: 1;
+}
+.worlds__pending {
+  color: #ffb020;
+}
+.worlds__error {
+  padding: 0 14px;
+  color: #e5484d;
+}
+.worlds__notice {
+  padding: 0 14px;
+  color: #3ecf6e;
+}
+.worlds__row select {
+  flex: none;
+  width: auto;
+}

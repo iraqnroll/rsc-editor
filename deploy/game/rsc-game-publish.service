@@ -7,6 +7,8 @@ Description=Install a cache published from RSC Editor
 
 [Service]
 Type=oneshot
+# Seconds of in-game warning before the restart, when anyone is online.
+Environment=PUBLISH_COUNTDOWN=30
 ExecStart=/bin/bash /opt/rsc-editor/deploy/game/publish.sh
 # A big world takes a while to unpack and load.
 TimeoutStartSec=5min

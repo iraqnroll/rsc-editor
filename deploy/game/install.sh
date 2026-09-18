@@ -122,6 +122,27 @@ if [[ ! -f "$ETC/server.json" ]]; then
   echo "wrote $ETC/server.json and $ETC/data-server.json"
 fi
 
+# Settings that came after a first install, filled in without touching the
+# secrets above. The control socket is how the editor's Worlds screen and
+# Publish talk to the running world (rsc-server/src/admin).
+node -e '
+  const fs = require("fs");
+  const file = process.argv[1];
+  const server = JSON.parse(fs.readFileSync(file));
+  server.adminSocket = "/run/rsc-game/world-1.sock";
+  server.adminSocketMode = "660";
+  fs.writeFileSync(file, JSON.stringify(server, null, 4) + "\n");
+' "$ETC/server.json"
+# The worlds the editor can see. One for now; each entry is a control socket.
+if [[ ! -f "$ETC/worlds.json" ]]; then
+  echo '[{ "id": "main", "name": "Main world", "socket": "/run/rsc-game/world-1.sock" }]' > "$ETC/worlds.json"
+fi
+chown root:"$GAME_USER" "$ETC/worlds.json"
+chmod 0640 "$ETC/worlds.json"
+# The editor's user joins the game's group: that is what lets it open the
+# socket (mode 0660) and read worlds.json, and nothing else of the game's.
+usermod -aG "$GAME_USER" rsc
+
 echo "== game data"
 # The checkout and npm install just produced exactly what the repository
 # ships: that is the "stock" a --restore goes back to, so take it afresh each
@@ -167,6 +188,7 @@ set_env() {
   fi
 }
 set_env PUBLISH_DIR "$PUB"
+set_env WORLDS_FILE "$ETC/worlds.json"
 [[ -n "$GAME_URL" ]] && set_env GAME_URL "$GAME_URL"
 systemctl restart rsc-editor.service
 

@@ -10,7 +10,14 @@
 	# The client's socket. Over https the patched client connects to
 	# wss://<this host>/ws; rsc-server accepts any path.
 	handle /ws* {
-		reverse_proxy 127.0.0.1:43595
+		reverse_proxy 127.0.0.1:43595 {
+			# The player's own address. rsc-server trusts this header only
+			# from localhost, and the data server's one-login-per-address
+			# rule needs it: without it every player is 127.0.0.1. With the
+			# main Caddyfile's trusted_proxies, {client_ip} is the address
+			# the proxy in front of this container saw.
+			header_up X-Real-IP {client_ip}
+		}
 	}
 
 	handle {

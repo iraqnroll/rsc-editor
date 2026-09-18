@@ -23,6 +23,7 @@ import { registerCacheAssetRoutes } from './routes/cache-assets.js';
 import { registerDefinitionRoutes } from './routes/definitions.js';
 import { registerExportRoutes } from './routes/export.js';
 import { registerPublishRoutes } from './routes/publish.js';
+import { registerWorldRoutes } from './routes/worlds.js';
 import { registerHistoryRoutes } from './routes/history.js';
 import { registerLibraryRoutes } from './routes/library.js';
 import { registerMeRoutes } from './routes/me.js';
@@ -101,6 +102,7 @@ export async function buildApp(
   await registerCacheAssetRoutes(app, ctx);
   await registerExportRoutes(app, ctx);
   await registerPublishRoutes(app, ctx);
+  await registerWorldRoutes(app, ctx);
   await registerHistoryRoutes(app, ctx);
   await registerAccessRoutes(app, ctx);
   await registerLibraryRoutes(app, ctx);

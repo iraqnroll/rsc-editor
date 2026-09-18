@@ -18,6 +18,7 @@ import { ToolPalette } from './components/ToolPalette.js';
 import { AccessButton } from './components/AccessScreen.js';
 import { ExportButton } from './components/ExportButton.js';
 import { PublishButton } from './components/PublishButton.js';
+import { WorldsButton } from './components/WorldsScreen.js';
 import { AssetsButton } from './components/AssetsScreen.js';
 import { ViewportHost } from './components/ViewportHost.js';
 import { WorldMapModal } from './components/WorldMapModal.js';
@@ -119,6 +120,7 @@ export function App() {
         {apiMode === 'live' && (
           <>
             <AccessButton />
+            <WorldsButton />
             <AssetsButton />
             <ExportButton />
             <PublishButton />

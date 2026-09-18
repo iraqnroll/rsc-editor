@@ -64,6 +64,11 @@ export interface ServerConfig {
   discord: DiscordConfig;
   /** null: no game server here, and no Publish button */
   publish: PublishConfig | null;
+  /**
+   * The game worlds' control sockets, a JSON file (`WORLDS_FILE`, written by
+   * deploy/game/install.sh). null: no Worlds screen.
+   */
+  worldsFile: string | null;
 }
 
 export class ConfigError extends Error {
@@ -190,6 +195,8 @@ export function loadConfig(env: Env = process.env): ServerConfig {
     problems.push('PUBLISH_DIR must be an absolute path');
   }
   const gameUrl = env.GAME_URL?.trim() ? url(env.GAME_URL.trim(), 'GAME_URL', problems) : null;
+  const worldsFile = env.WORLDS_FILE?.trim() || null;
+  if (worldsFile && !worldsFile.startsWith('/')) problems.push('WORLDS_FILE must be an absolute path');
 
   if (problems.length > 0) throw new ConfigError(problems);
 
@@ -208,7 +215,8 @@ export function loadConfig(env: Env = process.env): ServerConfig {
     discord: { clientId, clientSecret, scopes, requiredGuildId, adminUsernames },
     publish: publishDir
       ? { dir: stripTrailingSlash(publishDir), gameUrl: gameUrl ? stripTrailingSlash(gameUrl) : null }
-      : null
+      : null,
+    worldsFile
   };
 }
 
