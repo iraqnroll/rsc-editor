@@ -14,6 +14,8 @@ import { applyGesture } from '../state/gesture.js';
 import { Viewport, type ViewportLock, type ViewportSector } from '../scene/Viewport.js';
 import type { ViewportEntity } from '../scene/viewport-props.js';
 import { gameToWorldTile } from '../ops/entities.js';
+import { groupTarget } from '../ops/group.js';
+import type { WorldTile } from '../ops/coords.js';
 import { NoticeBanner } from './NoticeBanner.js';
 
 export function ViewportHost() {
@@ -96,7 +98,17 @@ export function ViewportHost() {
               ? { radius: toolSettings.eraser.radius, shape: toolSettings.eraser.shape }
               : { radius: 0, shape: 'square' as const };
 
-  const regionDrag = activeTool === 'region' && toolSettings.region.mode === 'select';
+  const regionDrag =
+    (activeTool === 'region' && toolSettings.region.mode === 'select') ||
+    (activeTool === 'group' && toolSettings.group.mode === 'select');
+  // Moving or copying a group: the cursor is where it will land.
+  const ghost = useMemo(
+    () =>
+      activeTool === 'group' && toolSettings.group.mode !== 'select' && selection
+        ? (hover: WorldTile) => groupTarget(hover, selection)
+        : null,
+    [activeTool, toolSettings.group.mode, selection]
+  );
 
   return (
     <div className="pane pane--center">
@@ -119,6 +131,7 @@ export function ViewportHost() {
         libraryVersion={libraryVersion}
         painting={activeTool !== 'select'}
         regionDrag={regionDrag}
+        ghost={ghost}
         onPick={(tile, mods) => applyGesture(tile, mods)}
         onHover={(tile) => {
           setHoverTile(tile);

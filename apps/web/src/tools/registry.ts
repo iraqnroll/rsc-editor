@@ -26,7 +26,8 @@ export const TOOL_IDS = [
   'npc',
   'item',
   'hole',
-  'eraser'
+  'eraser',
+  'group'
 ] as const;
 export type ToolId = (typeof TOOL_IDS)[number];
 
@@ -129,6 +130,14 @@ export const TOOLS: readonly ToolMeta[] = [
     hotkey: 'x',
     blurb: 'Clear scenery, NPCs, items, doors, walls and overlays under the brush.',
     mutates: true
+  },
+  {
+    id: 'group',
+    label: 'Group',
+    glyph: '⧉',
+    hotkey: 'v',
+    blurb: 'Select walls, scenery, roofs, NPCs, items and doors in a rectangle; move or copy them.',
+    mutates: true
   }
 ];
 
@@ -214,6 +223,17 @@ export interface EraserSettings {
   roofs: boolean;
 }
 
+export interface GroupSettings {
+  /** select: drag a rectangle; move / copy: click to drop the group there */
+  mode: 'select' | 'move' | 'copy';
+  walls: boolean;
+  scenery: boolean;
+  roofs: boolean;
+  npcs: boolean;
+  items: boolean;
+  doors: boolean;
+}
+
 export interface RegionSettings {
   mode: 'select' | 'fill' | 'paste';
   fillLane: Lane;
@@ -233,6 +253,7 @@ export interface ToolSettings {
   item: ItemSettings;
   hole: HoleSettings;
   eraser: EraserSettings;
+  group: GroupSettings;
 }
 
 export const DEFAULT_TOOL_SETTINGS: ToolSettings = {
@@ -255,6 +276,7 @@ export const DEFAULT_TOOL_SETTINGS: ToolSettings = {
     overlay: true,
     roofs: false
   },
+  group: { mode: 'select', walls: true, scenery: true, roofs: true, npcs: true, items: true, doors: true },
   region: {
     mode: 'select',
     fillLane: 'colour',

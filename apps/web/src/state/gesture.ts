@@ -8,7 +8,7 @@
  * behaviour is identical and lives here.
  */
 
-import { parseSectorKey } from '@rsc-editor/schema';
+import { parseSectorKey, sectorKey } from '@rsc-editor/schema';
 import type { Lane, SectorCoord } from '@rsc-editor/schema';
 import {
   brushWorldTiles,
@@ -39,6 +39,7 @@ import {
   type OpResult
 } from '../ops/entities.js';
 import type { EntityKind } from '@rsc-editor/schema';
+import { buildGroupDrop, groupTarget, isEmptyGroup, pickGroup } from '../ops/group.js';
 import { useEditor } from './editorStore.js';
 
 export interface GestureModifiers {
@@ -249,6 +250,49 @@ export function applyGesture(tile: WorldTile, mods: GestureModifiers): void {
         conflicts: lanes.conflicts
       };
       state.commit(merged, 'Erase');
+      return;
+    }
+
+    case 'group': {
+      // Select is a drag, handled like the Region tool's. Move and copy are a
+      // click each: one drop per click, never a smear along a drag.
+      const g = s.group;
+      if (g.mode === 'select' || mods.continued) return;
+      const selection = state.selection;
+      if (!selection) {
+        state.setNotice({ kind: 'info', message: 'Drag a rectangle around what to move or copy first.' });
+        return;
+      }
+      const objects = state.config?.objects;
+      if (!objects) {
+        state.setNotice({ kind: 'info', message: 'Definitions are still loading.' });
+        return;
+      }
+      const picked = pickGroup(selection, g, read, objects, state.entities);
+      if (picked.missing.length > 0) {
+        state.commit({ ops: [], missing: picked.missing, touched: [], conflicts: [] });
+        return;
+      }
+      if (isEmptyGroup(picked.group)) {
+        state.setNotice({ kind: 'info', message: 'Nothing in the selection matches what is ticked.' });
+        return;
+      }
+      const target = groupTarget(tile, selection);
+      const result = buildGroupDrop(picked.group, target, g.mode === 'move', read, objects, loaded);
+      const mine = state.me?.userId;
+      const goesThrough =
+        result.conflicts.length === 0 &&
+        result.missing.length === 0 &&
+        result.ops.length > 0 &&
+        result.touched.every((c) => state.locks[sectorKey(c)]?.userId === mine);
+      state.commit(result, g.mode === 'move' ? 'Move group' : 'Copy group');
+      // The selection follows a move, and the tool goes back to selecting so
+      // the next click cannot move it again by accident. Copy stays armed, to
+      // stamp as many as you like.
+      if (goesThrough && g.mode === 'move') {
+        state.setSelection(target);
+        state.updateToolSettings('group', { mode: 'select' });
+      }
       return;
     }
 

@@ -845,12 +845,18 @@ function Overlays(props: SceneProps) {
     );
   }, [selection, plane, heights]);
 
+  const ghost = props.ghost ?? null;
   const brushGeometry = useMemo(() => {
     if (!hoverTile || hoverTile.plane !== plane) return null;
+    if (ghost) {
+      // The Group tool's drop preview: where the group will land.
+      const r = ghost(hoverTile);
+      return lineGeometry(buildRectOutline(heights, r.x0, r.y0, r.x1, r.y1));
+    }
     return lineGeometry(
       buildBrushOutline(heights, hoverTile.wx, hoverTile.wy, brushRadius, brushShape)
     );
-  }, [hoverTile, plane, brushRadius, brushShape, heights]);
+  }, [hoverTile, plane, brushRadius, brushShape, heights, ghost]);
 
   // Server-side placements: one line buffer per kind, plus the selection on
   // top of them. Only the plane being edited, like the other overlays.
@@ -972,7 +978,7 @@ function Overlays(props: SceneProps) {
       {brushGeometry && (
         <lineSegments geometry={brushGeometry}>
           <lineBasicMaterial
-            color="#ffffff"
+            color={ghost ? '#ffb020' : '#ffffff'}
             transparent
             opacity={painting ? 1 : 0.55}
             toneMapped={false}

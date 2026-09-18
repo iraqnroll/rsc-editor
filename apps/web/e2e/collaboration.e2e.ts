@@ -113,7 +113,7 @@ test('every editing tool writes an op that a peer receives', async ({ browser, b
   await expect(status(a).getByText('you hold this sector')).toBeVisible();
 
   // Eraser last: it has the other tools' walls, overlay, scenery, NPC and item to clear.
-  for (const tool of ['Elevation', 'Paint', 'Walls', 'Roof', 'Scenery', 'Region', 'NPCs', 'Items', 'Holes', 'Eraser']) {
+  for (const tool of ['Elevation', 'Paint', 'Walls', 'Roof', 'Scenery', 'Region', 'NPCs', 'Items', 'Group', 'Holes', 'Eraser']) {
     await test.step(tool, async () => {
       const head = await seq(a);
       await a.getByRole('button', { name: new RegExp(`${tool}$`) }).first().click();
@@ -125,6 +125,13 @@ test('every editing tool writes an op that a peer receives', async ({ browser, b
         await a.getByRole('spinbutton', { name: 'Value' }).fill('7');
         const box = (await a.locator('.pane--center canvas').first().boundingBox())!;
         await a.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+      }
+      if (tool === 'Group') {
+        // The drag selected what the tools above left there; copy drops it
+        // beside the original.
+        await a.getByRole('group', { name: 'Mode' }).getByRole('button', { name: 'copy' }).click();
+        const box = (await a.locator('.pane--center canvas').first().boundingBox())!;
+        await a.mouse.click(box.x + box.width / 2 + 120, box.y + box.height / 2 + 60);
       }
       await expect.poll(() => seq(a), { message: `${tool} wrote nothing` }).toBeGreaterThan(head);
       const after = await settledSeq(a);

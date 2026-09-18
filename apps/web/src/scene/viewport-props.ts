@@ -60,6 +60,11 @@ export interface ViewportProps {
   onPick: (tile: WorldTile, mods: { alt: boolean; shift: boolean; continued: boolean }) => void;
   onHover: (tile: WorldTile | null) => void;
   onDragRegion: (rect: RegionRect | null) => void;
+  /**
+   * The Group tool's drop preview: while set, the cursor is drawn as this
+   * rectangle (relative to the hovered tile) instead of the brush.
+   */
+  ghost?: ((hover: WorldTile) => RegionRect) | null;
 
   /* ------------------------------------------------------------ additions -- */
 

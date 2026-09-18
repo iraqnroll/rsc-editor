@@ -6,6 +6,7 @@
  * and `src/state/gesture.ts` turns (tool + settings + tile) into ops.
  */
 
+import { useMemo } from 'react';
 import { clampLane } from '../ops/apply.js';
 import {
   BRUSH_SHAPES,
@@ -16,6 +17,7 @@ import {
   holeOverlays
 } from '../ops/builders.js';
 import { TOOLS, type ToolId } from '../tools/registry.js';
+import { groupCounts, pickGroup, type GroupCounts } from '../ops/group.js';
 import { useEditor } from '../state/editorStore.js';
 import { copySelection, repairHeldScenery } from '../state/gesture.js';
 import { TERRAIN_PALETTE, terrainBand, terrainColour } from '../data/terrain-palette.js';
@@ -92,7 +94,79 @@ function ToolOptions({ tool }: { tool: ToolId }) {
       return <HoleOptions />;
     case 'eraser':
       return <EraserOptions />;
+    case 'group':
+      return <GroupOptions />;
   }
+}
+
+const GROUP_LABELS: Array<[keyof GroupCounts, string]> = [
+  ['scenery', 'Scenery (whole objects)'],
+  ['walls', 'Walls'],
+  ['roofs', 'Roofs'],
+  ['npcs', 'NPCs'],
+  ['items', 'Ground items'],
+  ['doors', 'Doors']
+];
+
+function GroupOptions() {
+  const s = useEditor((st) => st.toolSettings.group);
+  const update = useEditor((st) => st.updateToolSettings);
+  const selection = useEditor((st) => st.selection);
+  const sectors = useEditor((st) => st.sectors);
+  const entities = useEditor((st) => st.entities);
+  const objects = useEditor((st) => st.config?.objects);
+
+  // What the selection holds, with everything ticked so the count shows what
+  // un-ticking would leave behind.
+  const counts = useMemo(() => {
+    if (!selection || !objects) return null;
+    const all = { walls: true, scenery: true, roofs: true, npcs: true, items: true, doors: true };
+    const picked = pickGroup(selection, all, useEditor.getState().readSector, objects, entities);
+    return picked.missing.length > 0 ? null : groupCounts(picked.group);
+  }, [selection, objects, entities, sectors]);
+
+  const w = selection ? Math.abs(selection.x1 - selection.x0) + 1 : 0;
+  const h = selection ? Math.abs(selection.y1 - selection.y0) + 1 : 0;
+
+  return (
+    <Section title="Group">
+      <Segmented
+        label="Mode"
+        value={s.mode}
+        options={['select', 'move', 'copy']}
+        onChange={(mode) => update('group', { mode })}
+      />
+      <Readout label="Selection" value={selection ? `${w} x ${h} tiles` : 'none — drag a rectangle'} />
+      {GROUP_LABELS.map(([part, label]) => (
+        <Toggle
+          key={part}
+          label={counts ? `${label} (${counts[part]})` : label}
+          checked={s[part]}
+          onChange={(on) => update('group', { [part]: on })}
+        />
+      ))}
+      <div className="field__row">
+        <button
+          type="button"
+          className="btn btn--sm"
+          disabled={!selection}
+          onClick={() => useEditor.getState().setSelection(null)}
+        >
+          Clear selection
+        </button>
+      </div>
+      <p className="hint">
+        <b>Select</b>: drag a rectangle. An object is taken whole if the rectangle touches any
+        part of it; NPCs take their wander box with them. Terrain height, colour and overlay
+        stay where they are.
+        <br />
+        <b>Move</b> / <b>Copy</b>: the orange outline is where the group lands; click to drop it.
+        A move takes it away from where it was and goes back to Select; Copy stays on so you can
+        stamp more. A drop that would put an object on another object is refused whole. One undo
+        per drop. You need to hold every sector it touches, source and destination.
+      </p>
+    </Section>
+  );
 }
 
 function HoleOptions() {

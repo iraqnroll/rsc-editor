@@ -95,7 +95,7 @@ function brushTiles(
  * Accumulates (worldTile, lane, newValue) writes and emits one op per sector.
  * This is where CLAUDE.md rule 6 is actually enforced.
  */
-class DeltaCollector {
+export class DeltaCollector {
   private readonly bySector = new Map<string, { coord: SectorCoord; changes: TileDelta[] }>();
   private readonly missing = new Map<string, SectorCoord>();
   readonly conflicts: string[] = [];
@@ -487,7 +487,7 @@ export interface SceneryFootprint {
   height: number;
 }
 
-interface SceneryAt {
+export interface SceneryAt {
   id: number;
   direction: number;
   /** sector-local tile index of the origin */
@@ -497,7 +497,7 @@ interface SceneryAt {
 }
 
 /** `sceneryFootprint` in packages/cache: odd directions transpose, the sector edge clips. */
-function footprintTiles(origin: number, direction: number, def: SceneryFootprint): number[] {
+export function footprintTiles(origin: number, direction: number, def: SceneryFootprint): number[] {
   const ox = Math.floor(origin / SECTOR_WIDTH);
   const oy = origin % SECTOR_WIDTH;
   const square = direction === 0 || direction === 4;
@@ -517,7 +517,7 @@ function footprintTiles(origin: number, direction: number, def: SceneryFootprint
  * (`listPlacements`): an x-then-y scan, where the first unclaimed tile of an id
  * is its origin and claims the matching tiles of its footprint.
  */
-function sceneryInSector(buffers: SectorBuffers, objects: readonly SceneryFootprint[]): SceneryAt[] {
+export function sceneryInSector(buffers: SectorBuffers, objects: readonly SceneryFootprint[]): SceneryAt[] {
   const lane = buffers.wallsDiagonal;
   const claimed = new Uint8Array(lane.length);
   const out: SceneryAt[] = [];
@@ -549,7 +549,7 @@ function sectorOf(tile: WorldTile, read: SectorReader) {
   return { ...st, buffers: read(st.coord) };
 }
 
-function worldOf(coord: SectorCoord, i: number): WorldTile {
+export function worldOf(coord: SectorCoord, i: number): WorldTile {
   return {
     plane: coord.plane,
     wx: coord.x * SECTOR_WIDTH + Math.floor(i / SECTOR_WIDTH),
