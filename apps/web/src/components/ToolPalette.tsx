@@ -7,7 +7,14 @@
  */
 
 import { clampLane } from '../ops/apply.js';
-import { BRUSH_SHAPES, ELEVATION_MODES, FALLOFFS, WALL_EDGES, WALL_EDGE_LABELS } from '../ops/builders.js';
+import {
+  BRUSH_SHAPES,
+  ELEVATION_MODES,
+  FALLOFFS,
+  WALL_EDGES,
+  WALL_EDGE_LABELS,
+  holeOverlays
+} from '../ops/builders.js';
 import { TOOLS, type ToolId } from '../tools/registry.js';
 import { useEditor } from '../state/editorStore.js';
 import { copySelection, repairHeldScenery } from '../state/gesture.js';
@@ -81,7 +88,91 @@ function ToolOptions({ tool }: { tool: ToolId }) {
       return <NpcOptions />;
     case 'item':
       return <ItemOptions />;
+    case 'hole':
+      return <HoleOptions />;
+    case 'eraser':
+      return <EraserOptions />;
   }
+}
+
+function HoleOptions() {
+  const s = useEditor((st) => st.toolSettings.hole);
+  const update = useEditor((st) => st.updateToolSettings);
+  const tiles = useEditor((st) => st.config?.tiles);
+  const holes = tiles ? holeOverlays(tiles) : [];
+
+  return (
+    <Section title="Holes">
+      <div className="list" role="radiogroup" aria-label="Hole type">
+        {holes.map((overlay) => {
+          const see = tiles![overlay - 1]!.colour === 'transparent';
+          return (
+            <button
+              key={overlay}
+              type="button"
+              className="row"
+              aria-selected={s.overlay === overlay}
+              onClick={() => update('hole', { overlay })}
+            >
+              <span className="row__idx">{overlay}</span>
+              <span
+                className="swatch"
+                style={see ? { background: 'transparent', borderStyle: 'dashed' } : { background: tiles![overlay - 1]!.colour ?? '#000' }}
+              />
+              <span className="row__name">{see ? 'see-through' : 'black void'}</span>
+            </button>
+          );
+        })}
+      </div>
+      <Segmented label="Shape" value={s.shape} options={BRUSH_SHAPES} onChange={(shape) => update('hole', { shape })} />
+      <Slider
+        label="Radius"
+        value={s.radius}
+        min={0}
+        max={12}
+        suffix=" tiles"
+        onChange={(radius) => update('hole', { radius })}
+      />
+      <p className="hint">
+        A hole is an overlay the game treats as nothing to stand on: it blocks movement. A
+        see-through one draws no ground at all, so on an upper floor you look down through it;
+        a black one is the void at the edge of a dungeon. Hold <span className="kbd">Alt</span>{' '}
+        to fill holes back in — only holes, never the paths or floors beside them.
+      </p>
+    </Section>
+  );
+}
+
+function EraserOptions() {
+  const s = useEditor((st) => st.toolSettings.eraser);
+  const update = useEditor((st) => st.updateToolSettings);
+
+  return (
+    <Section title="Eraser">
+      <Segmented label="Shape" value={s.shape} options={BRUSH_SHAPES} onChange={(shape) => update('eraser', { shape })} />
+      <Slider
+        label="Radius"
+        value={s.radius}
+        min={0}
+        max={12}
+        suffix=" tiles"
+        onChange={(radius) => update('eraser', { radius })}
+      />
+      <Toggle label="Scenery (whole objects)" checked={s.scenery} onChange={(scenery) => update('eraser', { scenery })} />
+      <Toggle label="NPCs" checked={s.npcs} onChange={(npcs) => update('eraser', { npcs })} />
+      <Toggle label="Ground items" checked={s.items} onChange={(items) => update('eraser', { items })} />
+      <Toggle label="Doors" checked={s.doors} onChange={(doors) => update('eraser', { doors })} />
+      <Toggle label="Walls" checked={s.walls} onChange={(walls) => update('eraser', { walls })} />
+      <Toggle label="Overlay paint and holes" checked={s.overlay} onChange={(overlay) => update('eraser', { overlay })} />
+      <Toggle label="Roofs" checked={s.roofs} onChange={(roofs) => update('eraser', { roofs })} />
+      <p className="hint">
+        Clears what is ticked on every tile under the brush; drag to sweep. An object is removed
+        whole if the brush touches any part of it. Terrain height and colour are never touched.
+        Roofs are off by default: you cannot see one from inside a building, so it is easy to
+        erase by accident. One undo takes back the whole stroke.
+      </p>
+    </Section>
+  );
 }
 
 function ElevationOptions() {
@@ -242,8 +333,8 @@ function PaintOptions() {
             ))}
           </div>
           <p className="hint">
-            Overlay 7 is the &quot;hole&quot; tile — its colour is literally{' '}
-            <code>transparent</code>, which is geometry, not a missing value.
+            Overlays 8 and 10 are holes (see-through and black); the Holes tool paints them,
+            and fills in only holes when you hold <span className="kbd">Alt</span>.
           </p>
         </Section>
       )}

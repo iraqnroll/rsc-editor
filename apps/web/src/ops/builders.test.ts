@@ -9,6 +9,8 @@ import {
 import type { Op, SectorBuffers, SectorCoord } from '@rsc-editor/schema';
 import {
   buildElevationOp,
+  buildEraseOp,
+  buildHoleOp,
   buildPaintOp,
   buildRegionFillOp,
   buildSceneryPlaceOp,
@@ -18,6 +20,7 @@ import {
   buildWallOp,
   copyRegion,
   falloffWeight,
+  holeOverlays,
   readDiagonalLane
 } from './builders.js';
 import { applySectorOp } from './apply.js';
@@ -423,5 +426,119 @@ describe('region', () => {
       read
     );
     expect(clip).toBeNull();
+  });
+});
+
+describe('holes', () => {
+  // The shipped tile definitions' types, in order: 8 and 10 are the holes.
+  const TILE_TYPES = [
+    'ground', 'liquid', 'floor', 'bridge', 'floor', 'floor', 'liquid', 'hole', 'ground', 'hole',
+    'liquid', 'bridge', 'floor', 'floor', 'floor', 'floor', 'floor', 'floor', 'liquid', 'bridge',
+    'bridge', null, 'floor', 'ground', 'liquid'
+  ].map((type) => ({ type }));
+  const HOLES = holeOverlays(TILE_TYPES);
+
+  it('finds the hole overlays from the tile definitions', () => {
+    expect(HOLES).toEqual([8, 10]);
+  });
+
+  it('punches a hole under the brush', () => {
+    const { read, sectors } = makeWorld([S]);
+    applyAll(sectors, buildHoleOp(at(10, 10), { radius: 1, shape: 'square', overlay: 8 }, HOLES, read).ops);
+    const b = sectors.get(sectorKey(S))!;
+    expect(b.overlay[idx(9, 9)]).toBe(8);
+    expect(b.overlay[idx(11, 11)]).toBe(8);
+    expect(b.overlay[idx(12, 12)]).toBe(0);
+  });
+
+  it('fills in holes only, leaving the path beside them', () => {
+    const { read, sectors } = makeWorld([S]);
+    const b = sectors.get(sectorKey(S))!;
+    b.overlay[idx(10, 10)] = 8;
+    b.overlay[idx(10, 11)] = 10;
+    b.overlay[idx(11, 10)] = 3; // a floor
+    applyAll(sectors, buildHoleOp(at(10, 10), { radius: 1, shape: 'square', overlay: null }, HOLES, read).ops);
+    expect(b.overlay[idx(10, 10)]).toBe(0);
+    expect(b.overlay[idx(10, 11)]).toBe(0);
+    expect(b.overlay[idx(11, 10)]).toBe(3);
+  });
+});
+
+describe('eraser', () => {
+  const ALL = { radius: 1, shape: 'square' as const, scenery: true, walls: true, overlay: true, roofs: false };
+
+  /** A sector with a bit of everything around (10, 10). */
+  function cluttered() {
+    const world = makeWorld([S]);
+    const b = world.sectors.get(sectorKey(S))!;
+    // a 2x3 object whose origin (8, 8) is OUTSIDE a radius-1 brush at (10, 10)
+    applyAll(world.sectors, buildSceneryPlaceOp(at(8, 8), 2, 0, world.read, OBJECTS).ops);
+    b.wallsHorizontal[idx(10, 10)] = 1;
+    b.wallsVertical[idx(11, 11)] = 5;
+    b.wallsDiagonal[idx(11, 9)] = 3; // a diagonal wall, not scenery
+    b.overlay[idx(10, 11)] = 3;
+    b.wallsRoof[idx(10, 10)] = 2;
+    b.elevation[idx(10, 10)] = 140;
+    b.colour[idx(10, 10)] = 20;
+    return { ...world, b };
+  }
+
+  it('clears scenery, walls and overlay under the brush, and nothing else', () => {
+    const { read, sectors, b } = cluttered();
+    const result = buildEraseOp(at(10, 10), ALL, read, OBJECTS);
+    applyAll(sectors, result.ops);
+
+    // The object is gone whole, although only its corner (9, 9) was under the brush.
+    expect(sceneryTiles(b)).toEqual([]);
+    expect(b.wallsHorizontal[idx(10, 10)]).toBe(0);
+    expect(b.wallsVertical[idx(11, 11)]).toBe(0);
+    expect(b.wallsDiagonal[idx(11, 9)]).toBe(0);
+    expect(b.overlay[idx(10, 11)]).toBe(0);
+    // Roofs are opt-in; terrain is never the eraser's business.
+    expect(b.wallsRoof[idx(10, 10)]).toBe(2);
+    expect(b.elevation[idx(10, 10)]).toBe(140);
+    expect(b.colour[idx(10, 10)]).toBe(20);
+  });
+
+  it('leaves alone whatever is not ticked', () => {
+    const { read, sectors, b } = cluttered();
+    applyAll(sectors, buildEraseOp(at(10, 10), { ...ALL, scenery: false, overlay: false, roofs: true }, read, OBJECTS).ops);
+    expect(sceneryTiles(b)).toHaveLength(6);
+    expect(b.overlay[idx(10, 11)]).toBe(3);
+    expect(b.wallsHorizontal[idx(10, 10)]).toBe(0);
+    expect(b.wallsRoof[idx(10, 10)]).toBe(0);
+  });
+
+  it('does not take a scenery tile for a diagonal wall', () => {
+    const { read, sectors, b } = cluttered();
+    applyAll(sectors, buildEraseOp(at(10, 10), { ...ALL, scenery: false }, read, OBJECTS).ops);
+    expect(sceneryTiles(b)).toHaveLength(6);
+    expect(b.wallsDiagonal[idx(11, 9)]).toBe(0);
+  });
+
+  it('undoes exactly', () => {
+    const { read, sectors, b } = cluttered();
+    const before = structuredClone(b);
+    const ops = buildEraseOp(at(10, 10), { ...ALL, roofs: true }, read, OBJECTS).ops;
+    applyAll(sectors, ops);
+    applyAll(sectors, [...ops].reverse().map((op) => invert(op)));
+    expect(b).toEqual(before);
+  });
+
+  it('writes one op per sector across a boundary', () => {
+    const left = { plane: 0, x: 50, y: 50 };
+    const right = { plane: 0, x: 51, y: 50 };
+    const { read, sectors } = makeWorld([left, right]);
+    sectors.get(sectorKey(left))!.overlay[idx(47, 5)] = 3;
+    sectors.get(sectorKey(right))!.overlay[idx(0, 5)] = 3;
+    const result = buildEraseOp({ plane: 0, wx: 51 * 48, wy: 50 * 48 + 5 }, ALL, read, OBJECTS);
+    expect(new Set(result.ops.map((op) => sectorKey(op.sector)))).toEqual(new Set([sectorKey(left), sectorKey(right)]));
+    expect(result.touched).toHaveLength(2);
+  });
+
+  it('asks for a sector it needs but does not have', () => {
+    const { read } = makeWorld([S]);
+    const result = buildEraseOp({ plane: 0, wx: 51 * 48, wy: 50 * 48 + 5 }, ALL, read, OBJECTS);
+    expect(result.missing.map(sectorKey)).toEqual([sectorKey({ plane: 0, x: 51, y: 50 })]);
   });
 });

@@ -91,9 +91,9 @@ export function useKeyboard(onShowShortcuts: () => void): void {
             store.updateToolSettings('paint', {
               radius: clamp(store.toolSettings.paint.radius + delta, 0, 12)
             });
-          } else if (t === 'roof') {
-            store.updateToolSettings('roof', {
-              radius: clamp(store.toolSettings.roof.radius + delta, 0, 12)
+          } else if (t === 'roof' || t === 'hole' || t === 'eraser') {
+            store.updateToolSettings(t, {
+              radius: clamp(store.toolSettings[t].radius + delta, 0, 12)
             });
           }
           e.preventDefault();

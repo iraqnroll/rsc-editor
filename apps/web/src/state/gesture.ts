@@ -11,7 +11,10 @@
 import { parseSectorKey } from '@rsc-editor/schema';
 import type { Lane, SectorCoord } from '@rsc-editor/schema';
 import {
+  brushWorldTiles,
   buildElevationOp,
+  buildEraseOp,
+  buildHoleOp,
   buildPaintOp,
   buildRegionFillOp,
   buildRegionPasteOp,
@@ -22,6 +25,7 @@ import {
   buildSceneryRotateOp,
   buildWallOp,
   copyRegion,
+  holeOverlays,
   normaliseRect,
   type BuildResult
 } from '../ops/builders.js';
@@ -31,8 +35,10 @@ import {
   buildEntityAdd,
   buildEntityRemove,
   entitiesAt,
-  wanderAround
+  wanderAround,
+  type OpResult
 } from '../ops/entities.js';
+import type { EntityKind } from '@rsc-editor/schema';
 import { useEditor } from './editorStore.js';
 
 export interface GestureModifiers {
@@ -185,6 +191,64 @@ export function applyGesture(tile: WorldTile, mods: GestureModifiers): void {
       } else {
         state.commit(buildSceneryRemoveOp(tile, read, objects));
       }
+      return;
+    }
+
+    case 'hole': {
+      const tiles = state.config?.tiles;
+      if (!tiles) {
+        state.setNotice({ kind: 'info', message: 'Definitions are still loading.' });
+        return;
+      }
+      const holes = holeOverlays(tiles);
+      if (!mods.alt && !holes.includes(s.hole.overlay)) {
+        state.setNotice({
+          kind: 'info',
+          message: holes.length === 0
+            ? 'This project defines no hole tiles (a tile definition with type "hole").'
+            : `Overlay ${s.hole.overlay} is not a hole in this project; pick one in the Holes panel.`
+        });
+        return;
+      }
+      state.commit(
+        buildHoleOp(
+          tile,
+          { radius: s.hole.radius, shape: s.hole.shape, overlay: mods.alt ? null : s.hole.overlay },
+          holes,
+          read
+        ),
+        mods.alt ? 'Fill holes' : 'Make holes'
+      );
+      return;
+    }
+
+    case 'eraser': {
+      const e = s.eraser;
+      const objects = state.config?.objects;
+      if (e.scenery && !objects) {
+        state.setNotice({ kind: 'info', message: 'Definitions are still loading.' });
+        return;
+      }
+      const lanes = buildEraseOp(tile, e, read, objects ?? []);
+      // Entities live beside the lanes, one per tile index, so the brush picks
+      // them up tile by tile. A door belongs to the tile whose edge it is on.
+      const kinds = new Set<EntityKind>();
+      if (e.npcs) kinds.add('npc');
+      if (e.items) kinds.add('item');
+      if (e.doors) kinds.add('door');
+      const refs = kinds.size === 0
+        ? []
+        : brushWorldTiles(tile, e.radius, e.shape).flatMap((t) =>
+            entitiesAt(state.entities, t).filter((r) => kinds.has(r.data.kind))
+          );
+      const entities = buildEntityRemove(refs);
+      const merged: OpResult = {
+        ops: [...lanes.ops, ...entities.ops],
+        missing: lanes.missing,
+        touched: [...lanes.touched, ...entities.touched],
+        conflicts: lanes.conflicts
+      };
+      state.commit(merged, 'Erase');
       return;
     }
 

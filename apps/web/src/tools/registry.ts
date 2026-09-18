@@ -24,7 +24,9 @@ export const TOOL_IDS = [
   'scenery',
   'region',
   'npc',
-  'item'
+  'item',
+  'hole',
+  'eraser'
 ] as const;
 export type ToolId = (typeof TOOL_IDS)[number];
 
@@ -111,6 +113,22 @@ export const TOOLS: readonly ToolMeta[] = [
     hotkey: '9',
     blurb: 'Place and remove ground items and their respawn time. Server-side.',
     mutates: true
+  },
+  {
+    id: 'hole',
+    label: 'Holes',
+    glyph: '◯',
+    hotkey: '0',
+    blurb: 'Punch see-through or black holes in the ground. Alt fills them back in.',
+    mutates: true
+  },
+  {
+    id: 'eraser',
+    label: 'Eraser',
+    glyph: '⌫',
+    hotkey: 'x',
+    blurb: 'Clear scenery, NPCs, items, doors, walls and overlays under the brush.',
+    mutates: true
   }
 ];
 
@@ -175,6 +193,27 @@ export interface ItemSettings {
   respawnSeconds: number;
 }
 
+export interface HoleSettings {
+  /** lane value of a hole overlay (a tile definition with type 'hole') */
+  overlay: number;
+  radius: number;
+  shape: BrushShape;
+}
+
+export interface EraserSettings {
+  radius: number;
+  shape: BrushShape;
+  scenery: boolean;
+  npcs: boolean;
+  items: boolean;
+  doors: boolean;
+  walls: boolean;
+  /** overlay paint, holes included */
+  overlay: boolean;
+  /** off by default: a roof is invisible from inside, so it is easy to punch through by accident */
+  roofs: boolean;
+}
+
 export interface RegionSettings {
   mode: 'select' | 'fill' | 'paste';
   fillLane: Lane;
@@ -192,6 +231,8 @@ export interface ToolSettings {
   region: RegionSettings;
   npc: NpcSettings;
   item: ItemSettings;
+  hole: HoleSettings;
+  eraser: EraserSettings;
 }
 
 export const DEFAULT_TOOL_SETTINGS: ToolSettings = {
@@ -202,6 +243,18 @@ export const DEFAULT_TOOL_SETTINGS: ToolSettings = {
   scenery: { mode: 'place', objectId: 0, direction: 0 },
   npc: { mode: 'place', npcId: 0, wanderRadius: 5 },
   item: { mode: 'place', itemId: 0, amount: 1, respawnSeconds: 60 },
+  hole: { overlay: 8, radius: 0, shape: 'square' },
+  eraser: {
+    radius: 0,
+    shape: 'square',
+    scenery: true,
+    npcs: true,
+    items: true,
+    doors: true,
+    walls: true,
+    overlay: true,
+    roofs: false
+  },
   region: {
     mode: 'select',
     fillLane: 'colour',

@@ -89,6 +89,16 @@ async function setUp(
   expect(
     (await alice.api.put(`/api/projects/${projectId}/definitions/objects/0`, { data: { data: object } })).ok()
   ).toBe(true);
+  // The Holes tool paints a tile definition of type "hole"; the shipped cache
+  // has its first at overlay 8, so define tiles up to there.
+  for (let i = 0; i < 8; i++) {
+    const tile = i === 7
+      ? { colour: 'transparent', texture: null, type: 'hole', blocked: true }
+      : { colour: 'rgb(128, 128, 128)', texture: null, type: 'ground', blocked: false };
+    expect(
+      (await alice.api.put(`/api/projects/${projectId}/definitions/tiles/${i}`, { data: { data: tile } })).ok()
+    ).toBe(true);
+  }
   expect(
     (await alice.api.put(`/api/projects/${projectId}/members/${bob.id}`, { data: { role: 'editor' } })).ok()
   ).toBe(true);
@@ -102,7 +112,8 @@ test('every editing tool writes an op that a peer receives', async ({ browser, b
   await a.getByRole('button', { name: 'Claim', exact: true }).click();
   await expect(status(a).getByText('you hold this sector')).toBeVisible();
 
-  for (const tool of ['Elevation', 'Paint', 'Walls', 'Roof', 'Scenery', 'Region', 'NPCs', 'Items']) {
+  // Eraser last: it has the other tools' walls, overlay, scenery, NPC and item to clear.
+  for (const tool of ['Elevation', 'Paint', 'Walls', 'Roof', 'Scenery', 'Region', 'NPCs', 'Items', 'Holes', 'Eraser']) {
     await test.step(tool, async () => {
       const head = await seq(a);
       await a.getByRole('button', { name: new RegExp(`${tool}$`) }).first().click();

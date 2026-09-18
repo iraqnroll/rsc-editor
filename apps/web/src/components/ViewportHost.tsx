@@ -90,7 +90,11 @@ export function ViewportHost() {
         ? { radius: toolSettings.paint.radius, shape: toolSettings.paint.shape }
         : activeTool === 'roof'
           ? { radius: toolSettings.roof.radius, shape: toolSettings.roof.shape }
-          : { radius: 0, shape: 'square' as const };
+          : activeTool === 'hole'
+            ? { radius: toolSettings.hole.radius, shape: toolSettings.hole.shape }
+            : activeTool === 'eraser'
+              ? { radius: toolSettings.eraser.radius, shape: toolSettings.eraser.shape }
+              : { radius: 0, shape: 'square' as const };
 
   const regionDrag = activeTool === 'region' && toolSettings.region.mode === 'select';
 

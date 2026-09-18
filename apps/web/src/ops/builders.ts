@@ -264,6 +264,145 @@ export function buildPaintOp(centre: WorldTile, brush: PaintBrush, read: SectorR
   return c.finish(brush.lane === 'colour' ? 'paint.colour' : 'paint.overlay');
 }
 
+/* ----------------------------------------------------------------- holes -- */
+
+/**
+ * Overlays whose tile definition is a hole (`type: 'hole'`), as lane values.
+ * The shipped cache has two: 8, drawn as nothing at all (see-through), and
+ * 10, drawn black. Both block movement. Read from the config rather than
+ * hard-coded, so a project that adds or reorders tile definitions still works.
+ */
+export function holeOverlays(tiles: readonly { type: string | null }[]): number[] {
+  return tiles.flatMap((t, i) => (t.type === 'hole' ? [i + 1] : []));
+}
+
+/**
+ * Make holes (`overlay` = a hole overlay) under the brush, or with `overlay`
+ * null fill them back in: only tiles that ARE holes go back to no overlay, so
+ * filling a hole next to a path does not strip the path.
+ */
+export function buildHoleOp(
+  centre: WorldTile,
+  brush: { radius: number; shape: BrushShape; overlay: number | null },
+  holes: readonly number[],
+  read: SectorReader
+): BuildResult {
+  const c = new DeltaCollector(read);
+  for (const { tile } of brushTiles(centre, brush.radius, brush.shape, 'constant')) {
+    if (brush.overlay !== null) {
+      c.write(tile, 'overlay', brush.overlay);
+      continue;
+    }
+    const current = c.peek(tile, 'overlay');
+    // undefined: not loaded -- the write records the sector as missing.
+    if (current === undefined || holes.includes(current)) c.write(tile, 'overlay', 0);
+  }
+  return c.finish('paint.overlay');
+}
+
+/* ---------------------------------------------------------------- eraser -- */
+
+/** What the eraser takes off the map lanes. NPCs, items and doors are entities; see gesture.ts. */
+export interface EraseLanes {
+  radius: number;
+  shape: BrushShape;
+  scenery: boolean;
+  walls: boolean;
+  overlay: boolean;
+  roofs: boolean;
+}
+
+/** The tiles a flat brush covers. */
+export function brushWorldTiles(centre: WorldTile, radius: number, shape: BrushShape): WorldTile[] {
+  return brushTiles(centre, radius, shape, 'constant').map((t) => t.tile);
+}
+
+/**
+ * Clear everything selected under the brush, as one op per sector and
+ * category. A scenery object is removed whole when the brush touches any of
+ * its tiles -- the same rule as the Scenery tool's remove, for the same
+ * reason: the export cannot reproduce half an object. Walls are all three
+ * lanes of each tile; a diagonal lane holding scenery is left to `scenery`.
+ */
+export function buildEraseOp(
+  centre: WorldTile,
+  brush: EraseLanes,
+  read: SectorReader,
+  objects: readonly SceneryFootprint[]
+): BuildResult {
+  const tiles = brushWorldTiles(centre, brush.radius, brush.shape);
+  const parts: BuildResult[] = [];
+
+  if (brush.walls) {
+    const c = new DeltaCollector(read);
+    for (const t of tiles) {
+      c.write(t, 'wallsHorizontal', 0);
+      c.write(t, 'wallsVertical', 0);
+      const diagonal = c.peek(t, 'wallsDiagonal');
+      if (diagonal !== undefined && diagonal > 0 && diagonal < OBJECT_OFFSET) c.write(t, 'wallsDiagonal', 0);
+    }
+    parts.push(c.finish('wall.clear'));
+  }
+
+  if (brush.overlay) {
+    const c = new DeltaCollector(read);
+    for (const t of tiles) c.write(t, 'overlay', 0);
+    parts.push(c.finish('paint.overlay'));
+  }
+
+  if (brush.roofs) {
+    const c = new DeltaCollector(read);
+    for (const t of tiles) c.write(t, 'wallsRoof', 0);
+    parts.push(c.finish('roof.set'));
+  }
+
+  if (brush.scenery) {
+    const c = new DeltaCollector(read);
+    const bySector = new Map<string, { coord: SectorCoord; found: SceneryAt[] }>();
+    const cleared = new Set<string>();
+    for (const t of tiles) {
+      const at = sectorOf(t, read);
+      if (!at) continue;
+      if (!at.buffers) {
+        c.write(t, 'wallsDiagonal', 0); // records the sector as missing
+        continue;
+      }
+      const key = sectorKey(at.coord);
+      let sector = bySector.get(key);
+      if (!sector) {
+        sector = { coord: at.coord, found: sceneryInSector(at.buffers, objects) };
+        bySector.set(key, sector);
+      }
+      const object = sector.found.find((o) => o.tiles.includes(at.i));
+      if (!object || cleared.has(`${key}:${object.origin}`)) continue;
+      cleared.add(`${key}:${object.origin}`);
+      for (const i of object.tiles) {
+        const w = worldOf(sector.coord, i);
+        c.write(w, 'wallsDiagonal', 0);
+        c.write(w, 'direction', 0);
+      }
+    }
+    parts.push(c.finish('scenery.remove'));
+  }
+
+  return mergeResults(parts);
+}
+
+function mergeResults(parts: readonly BuildResult[]): BuildResult {
+  const missing = new Map<string, SectorCoord>();
+  const touched = new Map<string, SectorCoord>();
+  const out: BuildResult = { ops: [], missing: [], touched: [], conflicts: [] };
+  for (const p of parts) {
+    out.ops.push(...p.ops);
+    for (const m of p.missing) missing.set(sectorKey(m), m);
+    for (const t of p.touched) touched.set(sectorKey(t), t);
+    out.conflicts.push(...p.conflicts);
+  }
+  out.missing = [...missing.values()];
+  out.touched = [...touched.values()];
+  return out;
+}
+
 /* ----------------------------------------------------------------- walls -- */
 
 export const WALL_EDGES = ['horizontal', 'vertical', 'diagonal-nesw', 'diagonal-nwse'] as const;
