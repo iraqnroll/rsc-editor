@@ -57,7 +57,11 @@ describe.skipIf(!available)('worlds', () => {
     mute: ({ username, minutes, reason }) => ({ username, until: minutes === 0 ? null : 'later', reason }),
     ban: ({ username, minutes }) => ({ username, until: minutes === -1 ? 'forever' : 'later', kicked: false }),
     setRank: ({ username, rank }) => ({ username, rank }),
-    resetPassword: ({ username }) => ({ username, password: 'secretpass42' })
+    resetPassword: ({ username }) => ({ username, password: 'secretpass42' }),
+    teleport: ({ username, region, x, y }) => {
+      if (region === 'narnia') throw new Error('no region "narnia"');
+      return { username, x: region ? 120 : x, y: region ? 648 : y };
+    }
   });
   let handle: DbHandle;
   let app: FastifyInstance;
@@ -211,6 +215,11 @@ describe.skipIf(!available)('worlds', () => {
     expect((await post('rank', { rank: 2, reason: 'new moderator' })).json().result).toEqual({ username: 'bob', rank: 2 });
     expect((await post('rank', { rank: 1, reason: 'odd' })).statusCode).toBe(400);
 
+    expect((await post('teleport', { region: 'lumbridge', reason: 'stuck in a wall' })).json().result).toEqual({ username: 'bob', x: 120, y: 648 });
+    expect((await post('teleport', { x: 10, y: 20, reason: 'event' })).json().result).toEqual({ username: 'bob', x: 10, y: 20 });
+    expect((await post('teleport', { reason: 'nowhere' })).statusCode).toBe(400);
+    expect((await post('teleport', { region: 'narnia', reason: 'odd' })).statusCode).toBe(422);
+
     const reset = await post('password', { reason: 'forgot it' });
     expect(reset.json().result.password).toBe('secretpass42');
     expect(reset.headers['cache-control']).toBe('no-store');
@@ -222,6 +231,7 @@ describe.skipIf(!available)('worlds', () => {
     expect(byAction('player.mute')).toMatchObject({ target: 'bob', details: { minutes: 60, reason: 'spamming trade' }, result: 'ok' });
     expect(byAction('player.ban').details).toEqual({ minutes: -1, reason: 'botting' });
     expect(byAction('player.password-reset').details).toEqual({ reason: 'forgot it' });
+    expect(log.some((row: { action: string; details: { region?: string } }) => row.action === 'player.teleport' && row.details.region === 'lumbridge')).toBe(true);
     expect(JSON.stringify(log)).not.toContain('secretpass42');
   });
 

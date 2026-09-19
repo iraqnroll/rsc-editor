@@ -189,6 +189,19 @@ export async function registerWorldRoutes(app: FastifyInstance, ctx: AppContext)
     return relay(reply, () => link.request('setRank', args));
   });
 
+  /** Body: `{ region, reason }` or `{ x, y, reason }`. The player must be on. */
+  app.post('/api/worlds/:worldId/players/:username/teleport', playerAudited('player.teleport', ['region', 'x', 'y', 'reason']), async (request, reply) => {
+    requireGlobalAdmin(request);
+    const link = linkFor((request.params as { worldId?: unknown }).worldId);
+    const b = body(request);
+    const region = typeof b.region === 'string' && b.region.trim() ? b.region.trim() : undefined;
+    if (!region && (!Number.isInteger(b.x) || !Number.isInteger(b.y))) {
+      throw badRequest('give a region name, or whole-number x and y');
+    }
+    const args = { username: who(request), reason: reason(request), ...(region ? { region } : { x: b.x, y: b.y }) };
+    return relay(reply, () => link.request('teleport', args));
+  });
+
   // The new password is in this reply and nowhere else: not in the audit
   // (which records only the reason), not in any log.
   app.post('/api/worlds/:worldId/players/:username/password', playerAudited('player.password-reset', ['reason']), async (request, reply) => {

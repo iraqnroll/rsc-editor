@@ -6,6 +6,7 @@ import {
   resetPlayerPassword,
   searchEvents,
   setPlayerRank,
+  teleportPlayer,
   type GameEvent,
   type PlayerAccount
 } from '../data/worlds.js';
@@ -51,6 +52,8 @@ export function PlayerPanel({ world, username, onBack }: { world: string; userna
   const [banFor, setBanFor] = useState(1440);
   const [rank, setRank] = useState(0);
   const [password, setPassword] = useState<string | null>(null);
+  /** a region name, or "x y" */
+  const [where, setWhere] = useState('lumbridge');
 
   const load = useCallback(async () => {
     try {
@@ -241,6 +244,30 @@ export function PlayerPanel({ world, username, onBack }: { world: string; userna
                 Set rank
               </button>
             </div>
+
+            {account.online && (
+              <div className="field__row">
+                <span className="player__label">Teleport</span>
+                <input
+                  aria-label="Teleport to"
+                  placeholder="region (lumbridge) or x y (120 648)"
+                  value={where}
+                  onChange={(e) => setWhere(e.target.value)}
+                />
+                <button
+                  type="button"
+                  className="btn btn--sm"
+                  disabled={!ready || !where.trim()}
+                  onClick={() => {
+                    const coords = /^\s*(\d+)[\s,]+(\d+)\s*$/.exec(where);
+                    const to = coords ? { x: Number(coords[1]), y: Number(coords[2]) } : { region: where.trim() };
+                    void act(`${name} was moved.`, () => teleportPlayer(world, name, to, reason.trim()));
+                  }}
+                >
+                  Teleport
+                </button>
+              </div>
+            )}
 
             <div className="field__row">
               <span className="player__label">Password</span>

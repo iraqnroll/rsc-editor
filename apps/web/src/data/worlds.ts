@@ -154,5 +154,12 @@ export const banPlayer = (world: string, username: string, minutes: number, reas
   playerAction<{ kicked: boolean }>(world, username, 'ban', { minutes, reason });
 export const setPlayerRank = (world: string, username: string, rank: number, reason: string) =>
   playerAction(world, username, 'rank', { rank, reason });
+/** To a region by name, or to x, y. The player must be online. */
+export const teleportPlayer = (
+  world: string,
+  username: string,
+  to: { region: string } | { x: number; y: number },
+  reason: string
+) => playerAction<{ x: number; y: number }>(world, username, 'teleport', { ...to, reason });
 export const resetPlayerPassword = (world: string, username: string, reason: string) =>
   playerAction<{ password: string }>(world, username, 'password', { reason });
