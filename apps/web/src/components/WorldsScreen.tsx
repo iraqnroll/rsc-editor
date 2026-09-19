@@ -11,6 +11,7 @@ import {
 } from '../data/worlds.js';
 import { isApiHttpError } from '../data/http.js';
 import { AdminLogPanel, EventsPanel } from './AuditPanels.js';
+import { PlayerPanel } from './PlayerPanel.js';
 
 /**
  * The game worlds: are they up, who is on, and the few things an admin does
@@ -46,6 +47,8 @@ export function WorldsScreen({ onClose }: { onClose: () => void }) {
   const [reason, setReason] = useState('');
   const [tab, setTab] = useState<'world' | 'events' | 'admin'>('world');
   const [retention, setRetention] = useState<Record<string, number> | null>(null);
+  /** the Player page, over whichever tab opened it */
+  const [player, setPlayer] = useState<string | null>(null);
 
   const world = worlds?.find((w) => w.id === selected) ?? null;
 
@@ -146,7 +149,16 @@ export function WorldsScreen({ onClose }: { onClose: () => void }) {
 
         {configError && <p className="hint worlds__error">Worlds file: {configError}</p>}
 
-        {tab === 'events' && (
+        {player && (
+          <PlayerPanel
+            // Any world that is up can answer: they share one account database.
+            world={(worlds ?? []).find((w) => w.id === selected && w.up)?.id ?? (worlds ?? []).find((w) => w.up)?.id ?? selected ?? ''}
+            username={player}
+            onBack={() => setPlayer(null)}
+          />
+        )}
+
+        {!player && tab === 'events' && (
           <>
             {retention && (
               <p className="hint audit__scope">
@@ -157,11 +169,11 @@ export function WorldsScreen({ onClose }: { onClose: () => void }) {
                 . Chat and private messages are personal data: tell your players they are logged.
               </p>
             )}
-            <EventsPanel worlds={worlds ?? []} />
+            <EventsPanel worlds={worlds ?? []} onOpenPlayer={setPlayer} />
           </>
         )}
-        {tab === 'admin' && <AdminLogPanel />}
-        {tab === 'world' && (
+        {!player && tab === 'admin' && <AdminLogPanel />}
+        {!player && tab === 'world' && (
         <>
         {worlds && worlds.length === 0 && !configError && (
           <p className="hint access__intro">
@@ -304,7 +316,11 @@ export function WorldsScreen({ onClose }: { onClose: () => void }) {
                   )}
                   {players.map((p) => (
                     <tr key={p.username}>
-                      <td>{p.username}</td>
+                      <td>
+                        <button type="button" className="link" title="Open the player page" onClick={() => setPlayer(p.username)}>
+                          {p.username}
+                        </button>
+                      </td>
                       <td>{p.rankName}</td>
                       <td>{p.combatLevel}</td>
                       <td>

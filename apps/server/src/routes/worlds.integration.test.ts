@@ -49,7 +49,15 @@ describe.skipIf(!available)('worlds', () => {
       if (username !== 'bob') throw new Error(`${String(username)} is not online`);
       return { kicked: 'bob' };
     },
-    shutdown: (args) => ({ at: 'soon', args })
+    shutdown: (args) => ({ at: 'soon', args }),
+    playerInfo: ({ username }) => {
+      if (username !== 'bob') throw new Error(`no account called ${String(username)}`);
+      return { username: 'bob', rank: 0, rankName: 'player', bannedUntil: null, mutedUntil: null, online: null, skills: {} };
+    },
+    mute: ({ username, minutes, reason }) => ({ username, until: minutes === 0 ? null : 'later', reason }),
+    ban: ({ username, minutes }) => ({ username, until: minutes === -1 ? 'forever' : 'later', kicked: false }),
+    setRank: ({ username, rank }) => ({ username, rank }),
+    resetPassword: ({ username }) => ({ username, password: 'secretpass42' })
   });
   let handle: DbHandle;
   let app: FastifyInstance;
@@ -186,11 +194,44 @@ describe.skipIf(!available)('worlds', () => {
     });
   });
 
+  it('acts on accounts, with a reason for the admin log and the password nowhere else', async () => {
+    const cookie = await login(true);
+    const post = (action: string, payload: Record<string, unknown>) =>
+      app.inject({ method: 'POST', url: `/api/worlds/main/players/bob/${action}`, headers: { cookie }, payload });
+
+    const info = await app.inject({ method: 'GET', url: '/api/worlds/main/players/bob', headers: { cookie } });
+    expect(info.json().result).toMatchObject({ username: 'bob', rankName: 'player' });
+    const missing = await app.inject({ method: 'GET', url: '/api/worlds/main/players/ghost', headers: { cookie } });
+    expect(missing.statusCode).toBe(422);
+
+    expect((await post('mute', { minutes: 60 })).statusCode).toBe(400);
+    expect((await post('mute', { minutes: 60, reason: 'spamming trade' })).json().result).toMatchObject({ until: 'later' });
+    expect((await post('ban', { minutes: -1, reason: 'botting' })).json().result).toMatchObject({ until: 'forever' });
+    expect((await post('ban', { minutes: -5, reason: 'botting' })).statusCode).toBe(400);
+    expect((await post('rank', { rank: 2, reason: 'new moderator' })).json().result).toEqual({ username: 'bob', rank: 2 });
+    expect((await post('rank', { rank: 1, reason: 'odd' })).statusCode).toBe(400);
+
+    const reset = await post('password', { reason: 'forgot it' });
+    expect(reset.json().result.password).toBe('secretpass42');
+    expect(reset.headers['cache-control']).toBe('no-store');
+
+    const log = (await app.inject({ method: 'GET', url: '/api/audit/admin?who=bob', headers: { cookie } })).json().actions;
+    // Refused attempts are recorded too (as failures); these look at the ones that went through.
+    const byAction = (a: string) => log.find((row: { action: string; result: string }) => row.action === a && row.result === 'ok');
+    expect(log.some((row: { action: string; result: string }) => row.action === 'player.ban' && row.result.startsWith('failed (400)'))).toBe(true);
+    expect(byAction('player.mute')).toMatchObject({ target: 'bob', details: { minutes: 60, reason: 'spamming trade' }, result: 'ok' });
+    expect(byAction('player.ban').details).toEqual({ minutes: -1, reason: 'botting' });
+    expect(byAction('player.password-reset').details).toEqual({ reason: 'forgot it' });
+    expect(JSON.stringify(log)).not.toContain('secretpass42');
+  });
+
   it('is for admins only', async () => {
     const cookie = await login(false);
     expect((await app.inject({ method: 'GET', url: '/api/worlds', headers: { cookie } })).statusCode).toBe(403);
     const kick = await app.inject({ method: 'POST', url: '/api/worlds/main/kick', headers: { cookie }, payload: { username: 'bob' } });
     expect(kick.statusCode).toBe(403);
+    const mute = await app.inject({ method: 'POST', url: '/api/worlds/main/players/bob/mute', headers: { cookie }, payload: { minutes: 60, reason: 'because' } });
+    expect(mute.statusCode).toBe(403);
     const events = await app.inject({ method: 'GET', url: '/api/audit/events', headers: { cookie } });
     expect(events.statusCode).toBe(403);
     // A non-admin trying is itself worth recording.

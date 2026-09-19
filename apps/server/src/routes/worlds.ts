@@ -125,6 +125,80 @@ export async function registerWorldRoutes(app: FastifyInstance, ctx: AppContext)
     return { worlds, configError: loaded.error, retentionDays: ctx.config.eventRetentionDays };
   });
 
+  /* ---------------------------------------------------------- players -- */
+
+  // One account, as its world sees it: the stored account plus, if they are
+  // on, what is true right now. Any world can answer for any account -- they
+  // share the data server.
+  app.get('/api/worlds/:worldId/players/:username', guard, async (request, reply) => {
+    requireGlobalAdmin(request);
+    const link = linkFor((request.params as { worldId?: unknown }).worldId);
+    const username = String((request.params as { username?: unknown }).username ?? '');
+    return relay(reply, () => link.request('playerInfo', { username }));
+  });
+
+  /** Every account action needs a reason: it goes in the Admin log. */
+  const reason = (request: { body: unknown }): string => {
+    const value = body(request).reason;
+    if (typeof value !== 'string' || value.trim().length < 3 || value.length > 200) {
+      throw badRequest('give a reason (3 to 200 characters); it goes in the admin log');
+    }
+    return value.trim();
+  };
+  /** minutes: -1 for good, 0 to lift, or a length up to ten years. */
+  const minutes = (request: { body: unknown }): number => {
+    const value = body(request).minutes;
+    if (typeof value !== 'number' || !Number.isInteger(value) || value < -1 || value > 60 * 24 * 3650) {
+      throw badRequest('minutes must be -1 (for good), 0 (lift it) or a whole number of minutes');
+    }
+    return value;
+  };
+  const playerAudited = (action: string, fields: string[]) => ({
+    ...guard,
+    config: {
+      audit: {
+        action,
+        world: params('worldId'),
+        target: params('username'),
+        details: bodyFields(...fields)
+      }
+    }
+  });
+  const who = (request: { params: unknown }) => String((request.params as { username?: unknown }).username ?? '');
+
+  app.post('/api/worlds/:worldId/players/:username/mute', playerAudited('player.mute', ['minutes', 'reason']), async (request, reply) => {
+    requireGlobalAdmin(request);
+    const link = linkFor((request.params as { worldId?: unknown }).worldId);
+    const args = { username: who(request), minutes: minutes(request), reason: reason(request) };
+    return relay(reply, () => link.request('mute', args));
+  });
+
+  app.post('/api/worlds/:worldId/players/:username/ban', playerAudited('player.ban', ['minutes', 'reason']), async (request, reply) => {
+    requireGlobalAdmin(request);
+    const link = linkFor((request.params as { worldId?: unknown }).worldId);
+    const args = { username: who(request), minutes: minutes(request), reason: reason(request) };
+    return relay(reply, () => link.request('ban', args));
+  });
+
+  app.post('/api/worlds/:worldId/players/:username/rank', playerAudited('player.rank', ['rank', 'reason']), async (request, reply) => {
+    requireGlobalAdmin(request);
+    const link = linkFor((request.params as { worldId?: unknown }).worldId);
+    const rank = body(request).rank;
+    if (rank !== 0 && rank !== 2 && rank !== 3) throw badRequest('rank must be 0 (player), 2 (moderator) or 3 (administrator)');
+    const args = { username: who(request), rank, reason: reason(request) };
+    return relay(reply, () => link.request('setRank', args));
+  });
+
+  // The new password is in this reply and nowhere else: not in the audit
+  // (which records only the reason), not in any log.
+  app.post('/api/worlds/:worldId/players/:username/password', playerAudited('player.password-reset', ['reason']), async (request, reply) => {
+    requireGlobalAdmin(request);
+    const link = linkFor((request.params as { worldId?: unknown }).worldId);
+    reason(request);
+    reply.header('cache-control', 'no-store');
+    return relay(reply, () => link.request('resetPassword', { username: who(request) }));
+  });
+
   /* ------------------------------------------------------------ audit -- */
 
   const query = (request: { query: unknown }) => (request.query ?? {}) as Record<string, string | undefined>;

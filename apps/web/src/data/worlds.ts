@@ -113,3 +113,46 @@ export async function searchAdminActions(f: { who?: string; action?: string; bef
   const body = await apiJson<{ actions: AdminAction[] }>(`/api/audit/admin${query({ ...f, limit: 100 })}`);
   return body.actions;
 }
+
+/* -------------------------------------------------------------- players -- */
+
+export interface PlayerAccount {
+  username: string;
+  rank: number;
+  rankName: string;
+  createdAt: string | null;
+  createdFrom: string | null;
+  lastLoginAt: string | null;
+  lastLoginFrom: string | null;
+  /** the world they are on, 0 when offline */
+  world: number;
+  questPoints: number;
+  /** ISO date, 'forever', or null */
+  bannedUntil: string | null;
+  mutedUntil: string | null;
+  skills: Record<string, { level: number; current: number; experience: number }>;
+  online: { x: number; y: number; combatLevel: number; ip: string | null; loggedInAt: string | null } | null;
+}
+
+const playerPath = (world: string, username: string) => `/api/worlds/${enc(world)}/players/${enc(username)}`;
+
+export async function playerInfo(world: string, username: string): Promise<PlayerAccount> {
+  return (await apiJson<{ result: PlayerAccount }>(playerPath(world, username))).result;
+}
+
+function playerAction<T = unknown>(world: string, username: string, action: string, body: Record<string, unknown>): Promise<T> {
+  return apiJson<{ result: T }>(`${playerPath(world, username)}/${action}`, {
+    method: 'POST',
+    body: JSON.stringify(body)
+  }).then((b) => b.result);
+}
+
+/** minutes: -1 for good, 0 to lift it. */
+export const mutePlayer = (world: string, username: string, minutes: number, reason: string) =>
+  playerAction(world, username, 'mute', { minutes, reason });
+export const banPlayer = (world: string, username: string, minutes: number, reason: string) =>
+  playerAction<{ kicked: boolean }>(world, username, 'ban', { minutes, reason });
+export const setPlayerRank = (world: string, username: string, rank: number, reason: string) =>
+  playerAction(world, username, 'rank', { rank, reason });
+export const resetPlayerPassword = (world: string, username: string, reason: string) =>
+  playerAction<{ password: string }>(world, username, 'password', { reason });

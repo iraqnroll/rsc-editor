@@ -176,7 +176,19 @@ actions, publishes, Access changes — with who, what, whom, and whether it
 worked, including attempts by people who were not allowed. It is
 append-only in the database itself and kept for good.
 
-Staff ranks are set with the data server's script while the player is
+**Player page**: click a player's name — in the online list, or "open player
+page" on an Events timeline — for their account (created, last login and
+from where, whether they are on, mutes and bans, skills, recent events) and
+four actions, each needing a reason that goes in the Admin log:
+
+- **Mute** for 1 hour, 1 day, 7 days, 30 days or for good; **Unmute**.
+- **Ban** for the same; a player who is on is kicked at once. **Unban**.
+- **Rank**: player, moderator (2) or administrator (3). Applies at once,
+  online or not — the easy way to make your own account an admin.
+- **Reset password**: a new one is shown once, to you, and not stored
+  anywhere else — not in the Admin log, not in any log.
+
+Staff ranks can also be set with the data server's script while the player is
 logged out:
 
 ```sh

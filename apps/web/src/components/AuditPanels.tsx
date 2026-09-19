@@ -56,7 +56,13 @@ export function describeEvent(e: GameEvent): string {
   }
 }
 
-export function EventsPanel({ worlds }: { worlds: Array<{ id: string; name: string }> }) {
+export function EventsPanel({
+  worlds,
+  onOpenPlayer
+}: {
+  worlds: Array<{ id: string; name: string }>;
+  onOpenPlayer?: (username: string) => void;
+}) {
   const [filter, setFilter] = useState<EventFilter>({});
   const [draft, setDraft] = useState<EventFilter>({});
   const [rows, setRows] = useState<GameEvent[]>([]);
@@ -157,6 +163,14 @@ export function EventsPanel({ worlds }: { worlds: Array<{ id: string; name: stri
           <button type="button" className="link" onClick={() => apply({ ...draft, player: undefined })}>
             show everyone
           </button>
+          {onOpenPlayer && (
+            <>
+              {' · '}
+              <button type="button" className="link" onClick={() => onOpenPlayer(filter.player!)}>
+                open player page (mute, ban, rank, password)
+              </button>
+            </>
+          )}
         </p>
       )}
       {error && <p className="hint worlds__error">{error}</p>}

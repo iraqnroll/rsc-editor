@@ -1689,3 +1689,67 @@ input[type="color"] {
   flex: none;
   width: auto;
 }
+
+/* ---- player page ------------------------------------------------------- */
+
+.player {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 14px 10px;
+}
+.player__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.player__name {
+  font-size: 15px;
+  font-weight: 600;
+}
+.player__facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  column-gap: 14px;
+  row-gap: 3px;
+  margin: 0;
+}
+.player__facts dt {
+  color: var(--fg-2, #8b93a1);
+}
+.player__facts dd {
+  margin: 0;
+}
+.player__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.player__actions .field__row {
+  gap: 8px;
+  align-items: center;
+}
+.player__actions select {
+  flex: none;
+  width: auto;
+}
+.player__label {
+  width: 70px;
+  color: var(--fg-2, #8b93a1);
+}
+.player__password {
+  padding: 2px 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-size: 13px;
+  user-select: all;
+}
+.player__skills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-size: 11px;
+}
