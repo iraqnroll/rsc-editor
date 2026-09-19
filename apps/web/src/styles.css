@@ -1753,3 +1753,11 @@ input[type="color"] {
   gap: 4px 14px;
   font-size: 11px;
 }
+/* Walkability warnings: overlays players cannot stand on, shut doors. */
+.row__tag--warn {
+  color: #ffb020;
+  border-color: #5c4a1f;
+}
+.hint--warn {
+  color: #ffb020;
+}

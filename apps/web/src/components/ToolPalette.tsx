@@ -22,7 +22,7 @@ import { useEditor } from '../state/editorStore.js';
 import { copySelection, repairHeldScenery } from '../state/gesture.js';
 import { TERRAIN_PALETTE, terrainBand, terrainColour } from '../data/terrain-palette.js';
 import { NumberField, Readout, Section, Segmented, Slider, Toggle } from './controls.js';
-import { DefPicker } from './DefPicker.js';
+import { DefPicker, WalkTag } from './DefPicker.js';
 import { SectorBrowser } from './SectorBrowser.js';
 
 export function ToolPalette() {
@@ -403,9 +403,16 @@ function PaintOptions() {
                   {t.colour === 'transparent' ? ' — transparent (hole)' : ''}
                 </span>
                 {typeof t.texture === 'number' && <span className="row__tag">tex {t.texture}</span>}
+                <WalkTag kind="tiles" entry={t as unknown as Record<string, unknown>} />
               </button>
             ))}
           </div>
+          {tiles?.[s.overlayIndex - 1]?.blocked && (
+            <p className="hint hint--warn">
+              Overlay {s.overlayIndex} is <b>blocked</b>: players cannot walk on it. That is right for
+              water or rock, not for a path.
+            </p>
+          )}
           <p className="hint">
             Overlays 8 and 10 are holes (see-through and black); the Holes tool paints them,
             and fills in only holes when you hold <span className="kbd">Alt</span>.
@@ -535,6 +542,13 @@ function SceneryOptions() {
         preview
         onChange={(objectId) => update('scenery', { objectId })}
       />
+      {selected?.type === 'closed-door' && (
+        <p className="hint hint--warn">
+          A <b>closed</b> door or gate: players cannot walk through it until they open it in game, and
+          that needs a server script for this object (the stock gates and doors have one). Pick its
+          open version to place it already open.
+        </p>
+      )}
       {selected && (
         <Readout
           label="Footprint"

@@ -96,6 +96,7 @@ export function DefPicker({ kind, value, onChange, label, preview }: DefPickerPr
                 hidden in game
               </span>
             )}
+            <WalkTag kind={kind} entry={entry} />
             {isZeroFootprint(entry) && (
               <span className="row__tag" title="Width and height are both 0 in the cache">
                 0x0
@@ -112,6 +113,46 @@ export function DefPicker({ kind, value, onChange, label, preview }: DefPickerPr
       </div>
     </div>
   );
+}
+
+/**
+ * Whether players can walk where this goes -- the thing the map does not
+ * show. A brown overlay that looks like a path can be solid ground, a gate
+ * looks passable until the game refuses the step.
+ */
+export function WalkTag({ kind, entry }: { kind: string; entry: Record<string, unknown> }) {
+  if (kind === 'tiles' && entry.blocked === true) {
+    return (
+      <span className="row__tag row__tag--warn" title="Players cannot walk on this overlay (blocked in the tile definition).">
+        blocked
+      </span>
+    );
+  }
+  if (kind === 'objects' && entry.type === 'closed-door') {
+    return (
+      <span
+        className="row__tag row__tag--warn"
+        title="A shut door or gate: it blocks the way until a player opens it in game, which needs a server script for it (the stock gates and doors have one). To place it already open, pick its open version."
+      >
+        closed door
+      </span>
+    );
+  }
+  if (kind === 'objects' && entry.type === 'open-door') {
+    return (
+      <span className="row__tag" title="An open door or gate: players walk through it.">
+        open door
+      </span>
+    );
+  }
+  if (kind === 'wallObjects' && entry.blocked === false) {
+    return (
+      <span className="row__tag" title="Players walk straight through this wall (not blocked in its definition), like a doorframe.">
+        walk-through
+      </span>
+    );
+  }
+  return null;
 }
 
 function asColour(v: unknown): string | null {
