@@ -37,7 +37,12 @@ export const SHORTCUTS: Shortcut[] = [
   { keys: '?', description: 'This sheet' }
 ];
 
-function inTextField(target: EventTarget | null): boolean {
+/**
+ * Whether a key belongs to whatever the user is typing in rather than to a
+ * shortcut. Every window-level key handler has to ask, or a search box eats
+ * nothing and the shortcut fires as well.
+ */
+export function inTextField(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   const tag = target.tagName;
   return (

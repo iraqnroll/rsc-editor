@@ -92,6 +92,7 @@ import { loadSceneryModels, type ResolvedModels } from './scenery-models.js';
 import { refreshLibraryAssets } from './library-refresh.js';
 import { EntitySprites } from './EntitySprites.js';
 import type { ViewportProps } from './viewport-props.js';
+import { inTextField } from '../hooks/useKeyboard.js';
 
 // The vertex colours are final sRGB values, not linear working-space colours.
 // See the header.
@@ -1310,6 +1311,12 @@ export function Viewport3D(props: ViewportProps) {
     }
     const down = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey) return;
+      // WASD is also how you type; a search box or a definition form gets the
+      // keys, and the camera stays put.
+      if (inTextField(e.target)) {
+        flyRef.current.clear();
+        return;
+      }
       const key = e.key.toLowerCase();
       if (FLY_KEYS.has(key)) {
         flyRef.current.add(key);
@@ -1321,11 +1328,18 @@ export function Viewport3D(props: ViewportProps) {
       flyRef.current.delete(e.key.toLowerCase());
       if (!e.shiftKey) flyRef.current.delete('shift');
     };
+    // Held keys with no keyup to match: clicking into a field, or leaving the
+    // window, would otherwise leave the camera drifting forever.
+    const stop = () => flyRef.current.clear();
     window.addEventListener('keydown', down);
     window.addEventListener('keyup', up);
+    window.addEventListener('blur', stop);
+    document.addEventListener('focusin', stop);
     return () => {
       window.removeEventListener('keydown', down);
       window.removeEventListener('keyup', up);
+      window.removeEventListener('blur', stop);
+      document.removeEventListener('focusin', stop);
       flyRef.current.clear();
     };
   }, [mode]);
