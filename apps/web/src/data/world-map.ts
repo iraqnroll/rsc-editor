@@ -248,13 +248,28 @@ export function sectorPixels(frame: MapFrame): number {
 }
 
 /**
- * The game's own coordinate for a tile.
+ * The game's own coordinate for a tile: the space `rsc-server` is written in
+ * — `player.teleport(x, y)`, the spawn lists, `regions.json`.
  *
- * The upper planes are stacked in y by PLANE_HEIGHT (944), which is what the
- * client does and what makes "2 planes up at the same place" a different
- * coordinate rather than the same one. Shown next to the raw tile in the map
- * hover readout because the two are easy to confuse.
+ * Two differences from a world tile, and BOTH are needed:
+ *
+ *  - World tiles count sectors from 0, game coordinates from the first
+ *    populated region, so the origin moves by `MIN_REGION_X` sectors in x and
+ *    `MIN_REGION_Y` in y — 2304 and 1776 tiles.
+ *  - The upper planes are stacked in y by PLANE_HEIGHT (944), which is what
+ *    the client does and what makes "2 planes up at the same place" a
+ *    different coordinate rather than the same one.
+ *
+ * This used to apply the plane and skip the origin, which made the readout a
+ * plausible-looking lie: world tile 2424, 2419 was shown as game 2424, 2419
+ * when the server calls that tile 120, 643. Pasted into a plugin it teleports
+ * a player clean off the 2304-wide map, and nothing on either side validates
+ * it. `gameToWorldTile` in ops/entities.ts is the inverse; world-map.test.ts
+ * pins the two against each other and against the known Lumbridge spawn.
  */
 export function gameCoord(plane: number, wx: number, wy: number): { x: number; y: number } {
-  return { x: wx, y: wy + plane * PLANE_HEIGHT };
+  return {
+    x: wx - MIN_REGION_X * SECTOR_WIDTH,
+    y: wy - MIN_REGION_Y * SECTOR_WIDTH + plane * PLANE_HEIGHT
+  };
 }

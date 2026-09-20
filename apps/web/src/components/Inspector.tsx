@@ -8,6 +8,8 @@ import type { RscConfig } from '@rsc-editor/schema';
 import { useEditor } from '../state/editorStore.js';
 import { isSpawnTile } from '../data/spawn.js';
 import { readDiagonalLane } from '../ops/builders.js';
+import { gameCoord } from '../data/world-map.js';
+import type { WorldTile } from '../ops/coords.js';
 import { DefinitionEditor } from '../defs/DefinitionEditor.js';
 import { HistoryPanel } from './HistoryPanel.js';
 import { EntitiesOnTile, SelectedEntity } from './EntityInspector.js';
@@ -75,6 +77,7 @@ function TileInspector() {
     return (
       <Section title="Tile">
         <Readout label="World" value={`${hoverTile.wx}, ${hoverTile.wy}`} />
+        <GameCoords tile={hoverTile} />
         <p className="hint">Sector {sectorKey(coord)} is not loaded.</p>
       </Section>
     );
@@ -88,6 +91,7 @@ function TileInspector() {
   return (
     <Section title="Tile">
       <Readout label="World tile" value={`${hoverTile.wx}, ${hoverTile.wy}`} />
+      <GameCoords tile={hoverTile} />
       <Readout label="Sector" value={sectorKey(coord)} />
       {isSpawnTile(hoverTile.plane, hoverTile.wx, hoverTile.wy) && (
         <div className="field__label" title="rsc-server teleports arriving and respawning players here">
@@ -145,6 +149,31 @@ function TileInspector() {
 
 function valueOrNone(v: number | undefined): string {
   return !v ? 'none' : String(v);
+}
+
+/**
+ * The tile in game coordinates, which is the space `rsc-server` plugins are
+ * written in -- `player.teleport(x, y)`, spawn lists, region bounds.
+ *
+ * Worth its own readout because the two spaces differ by a constant nobody
+ * remembers: world tiles count sectors from 0 and keep the plane separate,
+ * game coordinates drop the unpopulated regions (x - 2304, y - 1776) and fold
+ * the plane back in (+944 per storey). Someone pasting a world tile into a
+ * plugin lands 2304 tiles east of where they meant, which is off the map --
+ * silently, because nothing on either side validates it.
+ */
+function GameCoords({ tile }: { tile: WorldTile }) {
+  const game = gameCoord(tile.plane, tile.wx, tile.wy);
+
+  return (
+    <div
+      className="field__label"
+      title={`Game coordinates -- paste into rsc-server plugins, e.g. player.teleport(${game.x}, ${game.y})`}
+    >
+      <span>Game (x, y)</span>
+      <span className="meta">{`${game.x}, ${game.y}`}</span>
+    </div>
+  );
 }
 
 /* --------------------------------------------------------------- sector -- */

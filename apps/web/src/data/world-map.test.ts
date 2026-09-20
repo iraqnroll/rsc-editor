@@ -8,6 +8,8 @@
 
 import { describe, expect, it } from 'vitest';
 import { MIN_REGION_X, MIN_REGION_Y, SECTOR_WIDTH } from '@rsc-editor/schema';
+import { PLAYER_SPAWN } from './spawn.js';
+import { gameToWorldTile } from '../ops/entities.js';
 import {
   contractPixel,
   FALLBACK_FRAME,
@@ -170,9 +172,33 @@ describe('sector -> pixel', () => {
 });
 
 describe('game coordinates', () => {
+  const originX = MIN_REGION_X * SECTOR_WIDTH; // 2304
+  const originY = MIN_REGION_Y * SECTOR_WIDTH; // 1776
+
   it('stacks the upper planes by PLANE_HEIGHT', () => {
-    expect(gameCoord(0, 2400, 1800)).toEqual({ x: 2400, y: 1800 });
-    expect(gameCoord(1, 2400, 1800)).toEqual({ x: 2400, y: 1800 + 944 });
-    expect(gameCoord(3, 2400, 1800)).toEqual({ x: 2400, y: 1800 + 2832 });
+    expect(gameCoord(0, 2400, 1800)).toEqual({ x: 2400 - originX, y: 1800 - originY });
+    expect(gameCoord(1, 2400, 1800)).toEqual({ x: 2400 - originX, y: 1800 - originY + 944 });
+    expect(gameCoord(3, 2400, 1800)).toEqual({ x: 2400 - originX, y: 1800 - originY + 2832 });
+  });
+
+  // The readout gets pasted straight into rsc-server plugins, so a missing
+  // origin is not cosmetic: it teleports players off a 2304-wide map.
+  it('drops the unpopulated regions, so the spawn tile reads as the server knows it', () => {
+    const { plane } = PLAYER_SPAWN.coord;
+    expect(gameCoord(plane, PLAYER_SPAWN.world.wx, PLAYER_SPAWN.world.wy)).toEqual(PLAYER_SPAWN.game);
+  });
+
+  it('is the exact inverse of gameToWorldTile', () => {
+    const cases: Array<[number, number, number]> = [
+      [0, 120, 643],
+      [0, 0, 0],
+      [1, 118, 643 + 944],
+      [3, 400, 12 + 2832]
+    ];
+
+    for (const [plane, x, y] of cases) {
+      const { wx, wy } = gameToWorldTile(x, y, plane);
+      expect(gameCoord(plane, wx, wy)).toEqual({ x, y });
+    }
   });
 });

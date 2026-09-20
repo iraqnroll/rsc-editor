@@ -17,6 +17,7 @@
 import { sectorKey } from '@rsc-editor/schema';
 import type { LinkState } from '../data/api.js';
 import { useEditor } from '../state/editorStore.js';
+import { gameCoord } from '../data/world-map.js';
 import { TOOL_BY_ID } from '../tools/registry.js';
 
 const LINK_LABEL: Record<LinkState, string> = {
@@ -55,6 +56,7 @@ export function StatusBar({ onShowShortcuts }: { onShowShortcuts: () => void }) 
   const headSeq = useEditor((s) => s.headSeq);
   const sectors = useEditor((s) => s.sectors);
 
+  const hoverGame = hoverTile ? gameCoord(hoverTile.plane, hoverTile.wx, hoverTile.wy) : null;
   const lock = activeSector ? locks[sectorKey(activeSector)] : undefined;
   const mine = !!lock && lock.userId === me?.userId;
   const owner = lock ? (mine ? me : peers[lock.userId]) : undefined;
@@ -95,8 +97,21 @@ export function StatusBar({ onShowShortcuts }: { onShowShortcuts: () => void }) 
         )}
       </span>
 
-      <span className="statusbar__item statusbar__item--mono">
+      <span className="statusbar__item statusbar__item--mono" title="World tile: the space the map and the tools work in.">
         {hoverTile ? `${hoverTile.wx}, ${hoverTile.wy}` : '—, —'}
+      </span>
+
+      {/* The same tile in the server's space, so a teleport destination can be
+          read straight off the bar. See GameCoords in Inspector.tsx. */}
+      <span
+        className="statusbar__item statusbar__item--mono"
+        title={
+          hoverGame
+            ? `Game coordinates -- paste into rsc-server plugins, e.g. player.teleport(${hoverGame.x}, ${hoverGame.y})`
+            : 'Game coordinates, the space rsc-server plugins are written in.'
+        }
+      >
+        game {hoverGame ? `${hoverGame.x}, ${hoverGame.y}` : '—, —'}
       </span>
 
       <span className="statusbar__item statusbar__item--mono">
