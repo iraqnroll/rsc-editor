@@ -67,6 +67,34 @@ describe('world map SVG', () => {
     expect(svg).toContain('ground');
   });
 
+  it('draws the editor\'s own sectors over the photograph, in sector order', () => {
+    const svg = worldMapSvg({
+      frame,
+      plane: 0,
+      png: PNG,
+      present: null,
+      sectorImages: [{ sx: 50, sy: 50, href: 'data:image/png;base64,AAAA' }],
+      date: new Date(0)
+    });
+    const at = sectorToMap(frame, 50, 50);
+    expect(svg).toContain(`<image x="${at.x}" y="${at.y}" width="48" height="48"`);
+    expect(svg).toContain('href="data:image/png;base64,AAAA"');
+    // The live sector belongs ON TOP of the plane image, not under it.
+    expect(svg.indexOf('base64,AAAA')).toBeGreaterThan(svg.indexOf(base64(new Uint8Array(PNG))));
+  });
+
+  it('is not an empty grid for a project with no map image but loaded sectors', () => {
+    const svg = worldMapSvg({
+      frame,
+      plane: 0,
+      png: null,
+      present: [sectorKey({ x: 50, y: 50, plane: 0 })],
+      sectorImages: [{ sx: 50, sy: 50, href: 'data:image/png;base64,BBBB' }],
+      date: new Date(0)
+    });
+    expect(svg).toContain('base64,BBBB');
+  });
+
   it('marks the spawn on the ground plane only', () => {
     const ground = worldMapSvg({ frame, plane: 0, png: PNG, present: null, date: new Date(0) });
     const upstairs = worldMapSvg({ frame, plane: 1, png: PNG, present: null, date: new Date(0) });

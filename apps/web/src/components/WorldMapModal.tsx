@@ -21,12 +21,12 @@ export function WorldMapModal({ onClose }: { onClose: () => void }) {
   const activeSector = useEditor((s) => s.activeSector);
   const [plane, setPlane] = useState(activeSector?.plane ?? 0);
   const [saving, setSaving] = useState(false);
-  const [problem, setProblem] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
 
   async function saveSvg(): Promise<void> {
     setSaving(true);
-    setProblem(await downloadWorldMapSvg(plane));
+    setNote(await downloadWorldMapSvg(plane));
     setSaving(false);
   }
 
@@ -74,9 +74,9 @@ export function WorldMapModal({ onClose }: { onClose: () => void }) {
           </button>
         </div>
 
-        {problem && (
+        {note && (
           <p className="hint worlds__error" role="alert">
-            The SVG could not be made: {problem}
+            {note}
           </p>
         )}
 

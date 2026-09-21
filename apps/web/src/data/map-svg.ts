@@ -31,6 +31,13 @@ export interface WorldMapSvgOptions {
   present: string[] | null;
   /** sectorKey() -> true for members-only sectors. */
   members?: Record<string, boolean>;
+  /**
+   * Per-sector images for the sectors the editor holds in memory, as data
+   * URIs, 48x48 px each. The plane PNG is a photograph taken at import time
+   * (see `data/live-map.ts`); these are the sectors as they are now, and on a
+   * project with no imported landscape they are the only picture there is.
+   */
+  sectorImages?: Array<{ sx: number; sy: number; href: string }>;
   /** Shown in the corner caption. */
   projectName?: string;
   /** Defaults to now; a test pins it. */
@@ -82,7 +89,16 @@ export function base64(bytes: Uint8Array): string {
 }
 
 export function worldMapSvg(options: WorldMapSvgOptions): string {
-  const { frame, plane, png, present, members = {}, projectName, date = new Date() } = options;
+  const {
+    frame,
+    plane,
+    png,
+    present,
+    members = {},
+    sectorImages = [],
+    projectName,
+    date = new Date()
+  } = options;
   const { width, height } = frame.image;
   const span = SECTOR_WIDTH * frame.tileSize; // px per sector
   const parts: string[] = [];
@@ -102,17 +118,21 @@ export function worldMapSvg(options: WorldMapSvgOptions): string {
   // Sector fills: without an image, the same flat grid the panel falls back to;
   // with one, only the sectors that hold nothing, dimmed so the populated part
   // of the world reads at a glance.
-  const fills: string[] = [];
+  const absentFills: string[] = [];
+  const presentFills: string[] = [];
   const memberMarks: string[] = [];
   for (let sy = frame.originSector.y; sy < frame.originSector.y + frame.sectors.height; sy++) {
     for (let sx = frame.originSector.x; sx < frame.originSector.x + frame.sectors.width; sx++) {
       const key = sectorKey({ x: sx, y: sy, plane });
       const here = present ? present.includes(key) : true;
       const at = sectorToMap(frame, sx, sy);
+      const rect = `<rect x="${at.x}" y="${at.y}" width="${span}" height="${span}"/>`;
       if (!here) {
-        fills.push(`<rect x="${at.x}" y="${at.y}" width="${span}" height="${span}"/>`);
+        absentFills.push(rect);
       } else if (!png) {
-        fills.push(`<rect x="${at.x}" y="${at.y}" width="${span}" height="${span}"/>`);
+        // A sector that exists but has no photograph: lighter, so the shape of
+        // the built world is visible even on a project with no imported map.
+        presentFills.push(rect);
       }
       if (members[key]) {
         memberMarks.push(
@@ -121,8 +141,21 @@ export function worldMapSvg(options: WorldMapSvgOptions): string {
       }
     }
   }
-  if (fills.length) {
-    parts.push(`<g fill="${png ? INK.absent : INK.fallback}">${fills.join('')}</g>`);
+  if (absentFills.length) {
+    parts.push(`<g fill="${INK.absent}">${absentFills.join('')}</g>`);
+  }
+  if (presentFills.length) {
+    parts.push(`<g fill="${INK.fallback}">${presentFills.join('')}</g>`);
+  }
+
+  // The sectors the editor has in memory, drawn over whatever is underneath --
+  // the same "live over photograph" order the panel uses.
+  for (const tile of sectorImages) {
+    const at = sectorToMap(frame, tile.sx, tile.sy);
+    parts.push(
+      `<image x="${at.x}" y="${at.y}" width="${span}" height="${span}" ` +
+        `image-rendering="pixelated" preserveAspectRatio="none" href="${tile.href}"/>`
+    );
   }
   if (memberMarks.length) {
     parts.push(
