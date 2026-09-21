@@ -13,13 +13,22 @@ import { MAX_PLANES } from '@rsc-editor/schema';
 import { useEditor } from '../state/editorStore.js';
 import { PanelBoundary } from './PanelBoundary.js';
 import { WorldMap } from './WorldMap.js';
+import { downloadWorldMapSvg } from '../data/download-map-svg.js';
 
 const PLANE_LABELS = ['ground', 'floor 1', 'floor 2', 'dungeon'];
 
 export function WorldMapModal({ onClose }: { onClose: () => void }) {
   const activeSector = useEditor((s) => s.activeSector);
   const [plane, setPlane] = useState(activeSector?.plane ?? 0);
+  const [saving, setSaving] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
+
+  async function saveSvg(): Promise<void> {
+    setSaving(true);
+    setProblem(await downloadWorldMapSvg(plane));
+    setSaving(false);
+  }
 
   useEffect(() => {
     ref.current?.focus();
@@ -51,10 +60,25 @@ export function WorldMapModal({ onClose }: { onClose: () => void }) {
               </button>
             ))}
           </div>
+          <button
+            type="button"
+            className="btn btn--sm"
+            disabled={saving}
+            title="Download this plane as an SVG: the map image, the sector grid and sector numbers"
+            onClick={() => void saveSvg()}
+          >
+            {saving ? 'saving…' : 'SVG'}
+          </button>
           <button type="button" className="btn btn--sm btn--ghost" onClick={onClose}>
             close
           </button>
         </div>
+
+        {problem && (
+          <p className="hint worlds__error" role="alert">
+            The SVG could not be made: {problem}
+          </p>
+        )}
 
         <PanelBoundary label="World map">
           <WorldMap plane={plane} variant="full" onJump={onClose} />
