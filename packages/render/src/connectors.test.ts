@@ -129,6 +129,28 @@ describe('plane stacking', () => {
     expect(planeElevation(3)).toBe(-STOREY_HEIGHT);
   });
 
+  it('never solves the dungeon above the ground', () => {
+    // A trapdoor on a hilltop at 600 over a dungeon at elevation 0. The ladder
+    // formula alone says +408, which floats the dungeon deck over the lower
+    // ground of the whole sector -- the "black hole" bug.
+    const at = (plane: number, sense: 'up' | 'down', groundY: number): ConnectorPlacement => ({
+      objectId: 6,
+      name: 'ladder',
+      command: 'climb',
+      sense,
+      plane,
+      storey: planeStorey(plane),
+      wx: 100,
+      wy: 100,
+      x: 0,
+      z: 0,
+      groundY,
+      y: groundY
+    });
+    const offsets = planeOffsets([at(0, 'down', 600), at(3, 'up', 0)]);
+    expect(offsets.get(3)).toBe(-STOREY_HEIGHT);
+  });
+
   it('chooses plane sets bottom to top', () => {
     expect(planesFor(1, 'single')).toEqual([1]);
     expect(planesFor(1, 'below')).toEqual([3, 0, 1]);

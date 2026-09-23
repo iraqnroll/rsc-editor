@@ -281,13 +281,19 @@ export function planeOffsets(
     );
   }
 
+  // Downwards the ladder formula can come out POSITIVE: a trapdoor on a hilltop
+  // (ground 600) over a dungeon at elevation 0 solves to +408, which floats the
+  // whole dungeon deck above every tile of that sector lower than the hill. As
+  // a ghost it then reads as a dark sheet over the ground, and every hollow in
+  // the hill as a black pit. So a step down is never less than a storey: the
+  // ladder still decides how FAR down, but never that down is up.
   for (let s = ground - 1; s >= 0; s--) {
     const lower = storeyPlane(s);
     const upper = storeyPlane(s + 1);
     const measured = gap(lower, upper);
     offsets.set(
       lower,
-      offsets.get(upper)! - (measured ?? storeyHeight)
+      offsets.get(upper)! - Math.max(measured ?? storeyHeight, storeyHeight)
     );
   }
 
