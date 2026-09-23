@@ -9,6 +9,9 @@ Requires=postgresql.service
 Type=simple
 User=rsc
 Group=rsc
+# The Worlds screen reads the game's journal (journalctl -u rsc-game ...).
+# Reading other units' logs needs this group; it grants no write of any kind.
+SupplementaryGroups=systemd-journal
 WorkingDirectory=/opt/rsc-editor/apps/server
 # tsx runs the TypeScript workspace sources directly; there is no separate
 # server build. --env-file is read by node, not by systemd, so the file keeps

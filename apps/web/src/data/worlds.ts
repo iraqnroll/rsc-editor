@@ -163,3 +163,23 @@ export const teleportPlayer = (
 ) => playerAction<{ x: number; y: number }>(world, username, 'teleport', { ...to, reason });
 export const resetPlayerPassword = (world: string, username: string, reason: string) =>
   playerAction<{ password: string }>(world, username, 'password', { reason });
+
+/* --------------------------------------------------------- systemd logs -- */
+
+export interface JournalLines {
+  unit: string;
+  lines: string[];
+  /** why the log could not be read: not installed, not permitted, ... */
+  error: string | null;
+}
+
+/** Which unit logs this install will show; empty on a host with none. */
+export async function listLogUnits(): Promise<string[]> {
+  const body = await apiJson<{ units: Array<{ id: string }> }>('/api/logs/units');
+  return body.units.map((u) => u.id);
+}
+
+/** The tail of one unit's journal, oldest first. */
+export function readLog(unit: string, lines = 200): Promise<JournalLines> {
+  return apiJson<JournalLines>(`/api/logs/${enc(unit)}?lines=${lines}`);
+}

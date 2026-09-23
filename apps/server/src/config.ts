@@ -12,6 +12,8 @@
  * covers the one shape that is purely deployment-local.
  */
 
+import { parseLogUnits, type JournalUnit } from './worlds/journal.js';
+
 export type NodeEnv = 'development' | 'production' | 'test';
 
 export interface DiscordConfig {
@@ -69,6 +71,12 @@ export interface ServerConfig {
    * deploy/game/install.sh). null: no Worlds screen.
    */
   worldsFile: string | null;
+  /**
+   * systemd units whose journal the Worlds screen may read
+   * (`GAME_LOG_UNITS`). A fixed list: a request picks one of these and never
+   * names a unit of its own (worlds/journal.ts).
+   */
+  logUnits: JournalUnit[];
   /**
    * Days to keep each kind of game event, from GAME_EVENT_RETENTION
    * ("chat=90,pm=90,drop=30,pickup=30,*=365"). `*` is every other kind; 0
@@ -239,6 +247,7 @@ export function loadConfig(env: Env = process.env): ServerConfig {
       ? { dir: stripTrailingSlash(publishDir), gameUrl: gameUrl ? stripTrailingSlash(gameUrl) : null }
       : null,
     worldsFile,
+    logUnits: parseLogUnits(env.GAME_LOG_UNITS),
     eventRetentionDays
   };
 }

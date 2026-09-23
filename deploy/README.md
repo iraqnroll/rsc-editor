@@ -243,6 +243,6 @@ systemctl start rsc-editor
 | config | `/etc/rsc-editor/server.env`, `/etc/default/caddy` |
 | code and build | `/opt/rsc-editor` (replaced by every update) |
 | backups | `/var/backups/rsc-editor` |
-| game log | `journalctl -u rsc-game -f`, `journalctl -u rsc-game-data -f` |
+| game log | `journalctl -u rsc-game -f`, `journalctl -u rsc-game-data -f`, or Worlds -> Server logs in the editor |
 | last publish | `journalctl -u rsc-game-publish`, `/var/lib/rsc-game/status.json`, `/var/lib/rsc-game/work/log` |
 | game config | `/etc/rsc-game/server.json`, `/etc/rsc-game/data-server.json`, `/etc/rsc-game/worlds.json` |

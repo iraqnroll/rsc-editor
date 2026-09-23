@@ -1761,3 +1761,44 @@ input[type="color"] {
 .hint--warn {
   color: #ffb020;
 }
+
+/* --- the Worlds screen's systemd logs (components/LogPanel.tsx) --------- */
+.logs {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  gap: 6px;
+  padding: 8px 12px 12px;
+}
+.logs__pane {
+  overflow: auto;
+  flex: 1;
+  min-height: 220px;
+  padding: 6px 8px;
+  border: 1px solid var(--line, #2a2f3a);
+  border-radius: 4px;
+  background: var(--bg-0, #0a0c0f);
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.logs__line {
+  display: flex;
+  gap: 8px;
+  /* A wrapped line stays readable; a truncated one hides the error. */
+  overflow-wrap: anywhere;
+}
+.logs__line--error {
+  color: var(--bad, #ff6b6b);
+}
+.logs__when {
+  white-space: nowrap;
+  color: var(--fg-2, #8b93a1);
+}
+.logs__unit {
+  white-space: nowrap;
+  color: var(--accent, #7cc5ff);
+}
+.logs__text {
+  flex: 1;
+}

@@ -5,6 +5,7 @@ import { badRequest, notFound } from '../errors.js';
 import { authGuard, requireGlobalAdmin } from '../guards.js';
 import { WorldLink, WorldUnavailable, type WorldConfig } from '../worlds/link.js';
 import { EventIngest } from '../worlds/ingest.js';
+import { readJournal } from '../worlds/journal.js';
 import { listAdminActions, listGameEvents, pruneGameEvents } from '@rsc-editor/db';
 import { body as bodyField, bodyFields, params } from '../audit.js';
 
@@ -49,6 +50,7 @@ function loadWorlds(file: string | null): { worlds: WorldConfig[]; error: string
 
 export async function registerWorldRoutes(app: FastifyInstance, ctx: AppContext): Promise<void> {
   const loaded = loadWorlds(ctx.config.worldsFile);
+  const logUnits = ctx.config.logUnits;
   if (loaded.error) app.log.error(loaded.error);
   const ingests = new Map<string, EventIngest>();
   const links = new Map(
@@ -258,6 +260,28 @@ export async function registerWorldRoutes(app: FastifyInstance, ctx: AppContext)
       limit: q.limit ? Math.min(Number(q.limit) || 100, 500) : 100
     });
     return { actions: rows };
+  });
+
+  /**
+   * The game's systemd logs: which units may be read, and the tail of one.
+   *
+   * Not per world -- the units are the host's, and a world that is down is
+   * exactly when its log is wanted.
+   */
+  app.get('/api/logs/units', guard, async (request) => {
+    requireGlobalAdmin(request);
+    return { units: logUnits.map(({ id }) => ({ id })) };
+  });
+
+  /** ?lines=200 -- oldest first, as journalctl prints them. */
+  app.get('/api/logs/:unitId', guard, async (request) => {
+    requireGlobalAdmin(request);
+    const { unitId } = request.params as { unitId?: unknown };
+    // The REQUEST picks an entry; the entry's own value is what runs.
+    const found = logUnits.find((u) => u.id === unitId);
+    if (!found) throw notFound('no such log');
+    const q = query(request);
+    return readJournal(found.unit, Number(q.lines) || 200);
   });
 
   app.get('/api/worlds/:worldId/players', guard, async (request, reply) => {

@@ -10,6 +10,7 @@ import {
   type WorldSummary
 } from '../data/worlds.js';
 import { isApiHttpError } from '../data/http.js';
+import { LogPanel } from './LogPanel.js';
 import { AdminLogPanel, EventsPanel } from './AuditPanels.js';
 import { PlayerPanel } from './PlayerPanel.js';
 
@@ -45,7 +46,7 @@ export function WorldsScreen({ onClose }: { onClose: () => void }) {
   const [text, setText] = useState('');
   const [seconds, setSeconds] = useState(60);
   const [reason, setReason] = useState('');
-  const [tab, setTab] = useState<'world' | 'events' | 'admin'>('world');
+  const [tab, setTab] = useState<'world' | 'events' | 'admin' | 'logs'>('world');
   const [retention, setRetention] = useState<Record<string, number> | null>(null);
   /** the Player page, over whichever tab opened it */
   const [player, setPlayer] = useState<string | null>(null);
@@ -126,7 +127,8 @@ export function WorldsScreen({ onClose }: { onClose: () => void }) {
               [
                 ['world', 'World'],
                 ['events', 'Events'],
-                ['admin', 'Admin log']
+                ['admin', 'Admin log'],
+                ['logs', 'Server logs']
               ] as const
             ).map(([id, label]) => (
               <button
@@ -173,6 +175,7 @@ export function WorldsScreen({ onClose }: { onClose: () => void }) {
           </>
         )}
         {!player && tab === 'admin' && <AdminLogPanel />}
+        {!player && tab === 'logs' && <LogPanel />}
         {!player && tab === 'world' && (
         <>
         {worlds && worlds.length === 0 && !configError && (
