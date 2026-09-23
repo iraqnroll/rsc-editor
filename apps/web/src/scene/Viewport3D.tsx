@@ -83,6 +83,7 @@ import { sameTile, tilesBetween, tileOfFace, tileOfGroundPlane, worldTileAt } fr
 import {
   SectorGeometryCache,
   SECTOR_SPAN,
+  setShading,
   WorldHeights,
   type SceneryDraw,
   type SectorGeometrySet,
@@ -196,6 +197,8 @@ interface SceneProps extends ViewportProps {
   showConnectors: boolean;
   showHiddenWalls: boolean;
   showEntitySprites: boolean;
+  /** false: the editor's plain colours instead of the client's shading */
+  shading: boolean;
 }
 
 interface Plate {
@@ -423,6 +426,7 @@ function SceneContents(props: SceneProps) {
             ghost={ghost}
             showDeck={!above}
             showHiddenWalls={props.showHiddenWalls && !ghost}
+            shading={props.shading}
             planeY={planeY(set.coord.plane)}
             wallY={set.absoluteWalls ? absoluteWallY(set.coord.plane) : planeY(set.coord.plane)}
             register={
@@ -683,8 +687,11 @@ function SectorLayer({
   planeY,
   wallY,
   register,
-  showHiddenWalls
+  showHiddenWalls,
+  shading
 }: {
+  /** see `setShading` */
+  shading: boolean;
   /** overlay the walls the client skips as a wireframe */
   showHiddenWalls: boolean;
   set: SectorGeometrySet;
@@ -720,6 +727,13 @@ function SectorLayer({
   /** omitted for a ghost plane, which is not pickable */
   register?: (mesh: Mesh | null) => void;
 }) {
+  // Before paint, so a toggle never shows a frame of the other colours.
+  useLayoutEffect(() => {
+    for (const geometry of [set.terrain, set.walls, set.roofs]) {
+      if (geometry) setShading(geometry, shading);
+    }
+  }, [set, shading]);
+
   // The ACTIVE plane: `alphaTest` WITHOUT `transparent`. A cutout is a hole, not
   // a translucent surface: leaving the material opaque keeps it in the
   // depth-sorted opaque queue and discards the cut texels in the shader, which
@@ -1123,6 +1137,11 @@ export function Viewport3D(props: ViewportProps) {
   const [showConnectors, setShowConnectors] = useState(true);
   const [showHiddenWalls, setShowHiddenWalls] = useState(true);
   const [showEntitySprites, setShowEntitySprites] = useState(true);
+  /**
+   * The client's shading wraps to black on steep terrain -- faithful, and
+   * useless to paint on. Off swaps in `plainColours`; see `setShading`.
+   */
+  const [shading, setShadingOn] = useState(true);
   const [hud, setHud] = useState({
     triangles: 0,
     sectors: 0,
@@ -1581,6 +1600,7 @@ export function Viewport3D(props: ViewportProps) {
             showConnectors={showConnectors}
             showHiddenWalls={showHiddenWalls}
             showEntitySprites={showEntitySprites}
+            shading={shading}
             cache={cache}
             atlas={atlas?.texture ?? null}
             orbitRef={orbitRef}
@@ -1754,6 +1774,13 @@ export function Viewport3D(props: ViewportProps) {
               title="Draw NPCs and ground items as their sprites; off shows markers"
             >
               sprites
+            </CameraButton>
+            <CameraButton
+              active={shading}
+              onClick={() => setShadingOn((v) => !v)}
+              title="The client's own shading. Off: plain colours with a hint of slope, for painting on steep ground where the client's shade turns black"
+            >
+              shading
             </CameraButton>
           </div>
         </div>

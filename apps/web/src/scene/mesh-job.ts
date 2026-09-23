@@ -205,8 +205,8 @@ export function transferables(result: MeshResult): ArrayBuffer[] {
   const out = new Set<ArrayBuffer>();
   const add = (g: GeometryData | undefined) => {
     if (!g) return;
-    for (const a of [g.positions, g.colours, g.uvs, g.normals, g.indices, g.triangleTextures, g.triangleTiles]) {
-      if (a.buffer instanceof ArrayBuffer) out.add(a.buffer);
+    for (const a of [g.positions, g.colours, g.plainColours, g.uvs, g.normals, g.indices, g.triangleTextures, g.triangleTiles]) {
+      if (a && a.buffer instanceof ArrayBuffer) out.add(a.buffer);
     }
   };
   add(result.terrain);

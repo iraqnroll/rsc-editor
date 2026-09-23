@@ -119,6 +119,15 @@ export interface GeometryData {
   positions: Float32Array;
   /** rgb triples in 0..1, already shaded. Render unlit. */
   colours: Float32Array;
+  /**
+   * The same surfaces with the client's shading turned down to a hint of
+   * relief: no directional light to speak of and no wrap. The editor's
+   * "shading off" view, for painting on steep terrain, where the faithful
+   * shade overflows and wraps to black (`shadeChannel`). Not client-accurate
+   * and never used for anything that claims to be. Absent from geometry that
+   * was merged from other geometry (scenery).
+   */
+  plainColours?: Float32Array;
   /** per-face uv, (0,0)-(1,1) across each source polygon */
   uvs: Float32Array;
   /** flat face normal, render space, repeated per vertex */
@@ -142,6 +151,12 @@ export interface BuildOptions {
    */
   clampShade?: boolean;
 }
+
+/**
+ * How much of the lit shade's departure from level ground the "shading off"
+ * view keeps: enough to read a slope, never enough to wrap.
+ */
+const PLAIN_RELIEF = 0.25;
 
 export function emptyGeometry(): GeometryData {
   return {
@@ -288,6 +303,8 @@ export class RscModel {
     faceIntensity: Int32Array;
     vertexIntensity: Int32Array;
     lightAmbience: number;
+    /** the intensity divisor, for a caller that needs one more dot product */
+    divisor: number;
   } {
     const faceCount = this.faces.length;
     const vertexCount = this.vertexX.length;
@@ -409,7 +426,8 @@ export class RscModel {
       faceNormalZ,
       faceIntensity,
       vertexIntensity,
-      lightAmbience
+      lightAmbience,
+      divisor
     };
   }
 
@@ -426,7 +444,14 @@ export class RscModel {
 
     const positions: number[] = [];
     const colours: number[] = [];
+    const plainColours: number[] = [];
     const uvs: number[] = [];
+
+    // The shade a level, upward-facing surface gets: the "shading off" view is
+    // pinned to it, so flat ground reads the same with shading on or off.
+    // `faceNormalY` of a level face is -256 in client space (Y is down), front
+    // side up, and a front fill SUBTRACTS its intensity.
+    const levelShade = lit.lightAmbience - (((-256 * settings.y) / lit.divisor) | 0);
     const normals: number[] = [];
     const indices: number[] = [];
     const triangleTextures: number[] = [];
@@ -509,6 +534,16 @@ export class RscModel {
           ? lit.lightAmbience - intensity + ambience
           : lit.lightAmbience + intensity + ambience;
 
+        const plain = Math.max(
+          0,
+          Math.min(255, (levelShade + (shade - levelShade) * PLAIN_RELIEF) | 0)
+        );
+        plainColours.push(
+          shadeChannel(baseRgb.r, plain) / 255,
+          shadeChannel(baseRgb.g, plain) / 255,
+          shadeChannel(baseRgb.b, plain) / 255
+        );
+
         if (options.clampShade) shade = Math.max(0, Math.min(255, shade));
 
         colours.push(
@@ -566,6 +601,7 @@ export class RscModel {
     return {
       positions: new Float32Array(positions),
       colours: new Float32Array(colours),
+      plainColours: new Float32Array(plainColours),
       uvs: new Float32Array(uvs),
       normals: new Float32Array(normals),
       indices: new Uint32Array(indices),

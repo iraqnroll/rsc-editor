@@ -357,3 +357,30 @@ function nearBridge(view: LandscapeView, x: number, y: number): boolean {
   }
   return false;
 }
+
+describe('plain colours (the editor\'s "shading off")', () => {
+  // A 250-high block on ground at 20: steep enough that the client's shade
+  // overflows and wraps to black, which is what the plain set exists to avoid.
+  const steep = () => {
+    const { view, centre } = flatView({ elevation: 20, colour: 0 });
+    for (let x = 20; x < 28; x++) for (let y = 20; y < 28; y++) centre.elevation[x * 48 + y] = 250;
+    return buildTerrain(view, realConfig(), { vertexNoise: false });
+  };
+  const green = (a: Float32Array) => {
+    let min = 1;
+    for (let i = 1; i < a.length; i += 3) min = Math.min(min, a[i]!);
+    return min;
+  };
+
+  it('leaves level ground exactly as the client shades it', () => {
+    const { view } = flatView({ colour: 0 });
+    const g = buildTerrain(view, realConfig(), { vertexNoise: false });
+    expect(Array.from(g.plainColours!)).toEqual(Array.from(g.colours));
+  });
+
+  it('never goes black on a cliff the client shades black', () => {
+    const g = steep();
+    expect(green(g.colours)).toBeLessThan(0.05);
+    expect(green(g.plainColours!)).toBeGreaterThan(0.25);
+  });
+});
