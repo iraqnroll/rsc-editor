@@ -42,6 +42,15 @@ echo "== migrate"
 DATABASE_URL="$(sed -n 's/^DATABASE_URL=//p' "$ENV_FILE" | tail -1)"
 as_rsc "cd packages/db && DATABASE_URL='$DATABASE_URL' pnpm exec drizzle-kit migrate"
 
+echo "== services"
+# Re-installed on every update, not only by install.sh: a unit change (such as
+# the systemd-journal group the Server logs tab needs) otherwise never reaches
+# a running host, and the restart below keeps the old unit.
+install -m 0644 "$SRC_DIR/deploy/rsc-editor.service" /etc/systemd/system/
+install -m 0644 "$SRC_DIR/deploy/rsc-editor-backup.service" /etc/systemd/system/
+install -m 0644 "$SRC_DIR/deploy/rsc-editor-backup.timer" /etc/systemd/system/
+systemctl daemon-reload
+
 echo "== restart"
 if ! grep -qE '^DISCORD_CLIENT_ID=.+' "$ENV_FILE" || ! grep -qE '^DISCORD_CLIENT_SECRET=.+' "$ENV_FILE"; then
   # The server refuses to boot without them (src/config.ts); say so plainly
